@@ -1,0 +1,18 @@
+# Dependencies (also covers the pnpm links node_modules/.pnpm/node_modules/api
+# and /web, which point to apps/api and apps/web).
+node_modules/
+.pnpm-store/
+
+# Secrets: never commit environment files.
+.env
+.env.*
+!.env.example
+
+# Build output and local artifacts
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Temporary local test credentials
+.env.browser-test

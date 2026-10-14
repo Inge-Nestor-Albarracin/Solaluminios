@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment files: VITE_* values end up in the browser bundle, but local
+# overrides must not be committed.
+.env
+.env.*
+!.env.example

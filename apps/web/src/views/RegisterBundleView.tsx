@@ -1,12 +1,13 @@
 import { useRef, useState, type FormEvent } from 'react'
-import { describeError } from '../api/client'
-import type { BundleDetail } from '../api/types'
+import { ApiError, describeError } from '../api/client'
+import type { Bundle } from '../api/types'
 import { ArrivalFields } from '../components/ArrivalFields'
 import { CatalogSelectors, type CatalogLabels } from '../components/CatalogSelectors'
 import { IconArrow, IconScan } from '../components/icons'
 import { LocationSelectors } from '../components/LocationSelectors'
+import { RegistrationQueuePanel } from '../components/RegistrationQueuePanel'
 import { Field, Notice, PageHeader, Section } from '../components/ui'
-import { MONTHS, bundlePlace, finishLabel, referenceLabel } from '../lib/format'
+import { MONTHS } from '../lib/format'
 import {
   EMPTY_ARRIVAL,
   EMPTY_CATALOG,
@@ -16,6 +17,8 @@ import {
   type CatalogValue,
   type LocationValue,
 } from '../lib/forms'
+import { MAX_QUEUE_SIZE, useRegistrationQueue, type QueueItem } from '../lib/registrationQueue'
+import { uuid } from '../lib/uuid'
 import { useSession } from '../session/session-context'
 import type { Navigate } from './navigation'
 
@@ -39,8 +42,16 @@ function arrivalText(arrival: ArrivalValue): string | null {
   return `${MONTHS[Number(arrival.month) - 1]} de ${arrival.year}`
 }
 
+interface BatchResult {
+  count: number
+  bundles: Bundle[]
+}
+
+// Registration in two steps: "Guardar y continuar" adds the bundle to a local
+// list; "Guardar definitivo" sends the whole list in one transaction.
 export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: string; navigate: Navigate }) {
-  const { request } = useSession()
+  const { request, user } = useSession()
+  const queue = useRegistrationQueue(user?.id ?? 'anonymous')
   const [registrationType, setRegistrationType] = useState<RegistrationType>('INITIAL_STOCK')
   const [catalog, setCatalog] = useState<CatalogValue>(EMPTY_CATALOG)
   const [catalogLabels, setCatalogLabels] = useState<CatalogLabels>({ family: '', reference: '', finish: '' })
@@ -50,16 +61,26 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
   const [quantity, setQuantity] = useState('')
   const [epc, setEpc] = useState(initialEpc ?? '')
   const [notes, setNotes] = useState('')
-  const [pending, setPending] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [added, setAdded] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [created, setCreated] = useState<BundleDetail | null>(null)
+  // Final save state.
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [problemEpcs, setProblemEpcs] = useState<string[]>([])
+  const [registeredEpcs, setRegisteredEpcs] = useState<string[]>([])
+  const [saved, setSaved] = useState<BatchResult | null>(null)
   const epcInput = useRef<HTMLInputElement>(null)
+  // Blocks a second click before React re-renders with the busy state.
+  const lock = useRef(false)
 
   const normalizedEpc = epc.trim().toUpperCase()
   const epcInvalid = normalizedEpc !== '' && !EPC_PATTERN.test(normalizedEpc)
   const amount = Number(quantity)
   const quantityValid = quantity !== '' && Number.isInteger(amount) && amount >= 1
   const arrivalLabel = arrivalText(arrival)
+  const queueFull = queue.items.length >= MAX_QUEUE_SIZE
+  const busy = checking || saving
 
   const steps = [
     true,
@@ -70,9 +91,17 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
   ]
   const completed = steps.filter(Boolean).length
 
-  const submit = async (event: FormEvent) => {
+  // "Guardar y continuar": validates and adds to the list. Nothing is written
+  // to the inventory yet.
+  const addToQueue = async (event: FormEvent) => {
     event.preventDefault()
-    if (pending) return
+    if (lock.current) return
+    setAdded(null)
+    setSaved(null)
+    if (queueFull) {
+      setError(`La lista admite hasta ${MAX_QUEUE_SIZE} paquetes. Guarda la lista antes de continuar.`)
+      return
+    }
     if (!quantityValid) {
       setError('La cantidad debe ser un número entero de perfiles mayor que cero.')
       return
@@ -81,34 +110,91 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
       setError('El código del chip solo puede contener letras y números, sin espacios.')
       return
     }
-    setPending(true)
+    const position = queue.items.findIndex((item) => item.body.epc === normalizedEpc)
+    if (position >= 0) {
+      setError(`Este chip ya está en la lista (paquete ${position + 1}).`)
+      return
+    }
+
+    lock.current = true
+    setChecking(true)
     setError(null)
-    setCreated(null)
     try {
-      const { data } = await request<BundleDetail>('/inventory/bundles', {
-        method: 'POST',
-        body: {
-          epc: normalizedEpc,
-          referenceId: catalog.referenceId,
-          finishId: catalog.finishId,
-          quantity: amount,
-          inventoryLocationId: location.inventoryLocationId,
-          rackId: location.rackId,
-          registrationType,
-          ...arrivalPayload(arrival),
-          notes: notes.trim() || undefined,
-        },
-      })
-      setCreated(data)
-      // Keep product, arrival and location to speed up consecutive bundles.
-      setEpc('')
-      setQuantity('')
-      setNotes('')
-      epcInput.current?.focus({ preventScroll: true })
+      // Early warning: the final save checks again inside its transaction.
+      await request(`/inventory/bundles/epc/${encodeURIComponent(normalizedEpc)}`)
+      setError(`El chip ${normalizedEpc} ya está registrado en el inventario.`)
+      return
     } catch (err) {
-      setError(describeError(err))
+      if (!(err instanceof ApiError && err.status === 404)) {
+        setError(describeError(err))
+        return
+      }
     } finally {
-      setPending(false)
+      lock.current = false
+      setChecking(false)
+    }
+
+    const item: QueueItem = {
+      id: uuid(),
+      body: {
+        epc: normalizedEpc,
+        referenceId: catalog.referenceId,
+        finishId: catalog.finishId,
+        quantity: amount,
+        inventoryLocationId: location.inventoryLocationId,
+        rackId: location.rackId,
+        registrationType,
+        ...arrivalPayload(arrival),
+        notes: notes.trim() || undefined,
+      },
+      labels: {
+        type: TYPES.find((t) => t.value === registrationType)?.label ?? '',
+        reference: catalogLabels.reference,
+        finish: catalogLabels.finish,
+        arrival: arrivalLabel ?? '',
+        location: locationLabel,
+      },
+    }
+    queue.add(item)
+    setAdded(`Chip ${normalizedEpc} agregado a la lista (${queue.items.length + 1}). Lee el siguiente.`)
+    // Keep product, arrival and location to speed up consecutive bundles.
+    setEpc('')
+    setQuantity('')
+    setNotes('')
+    epcInput.current?.focus({ preventScroll: true })
+  }
+
+  // "Guardar definitivo": one transaction for the whole list.
+  const saveAll = async () => {
+    if (lock.current || queue.items.length === 0) return false
+    lock.current = true
+    setSaving(true)
+    setSaveError(null)
+    setProblemEpcs([])
+    setRegisteredEpcs([])
+    setAdded(null)
+    try {
+      const { data } = await request<BatchResult>('/inventory/bundles/batch', {
+        method: 'POST',
+        body: { bundles: queue.items.map((item) => item.body) },
+      })
+      queue.clear()
+      setSaved(data)
+      return true
+    } catch (err) {
+      const data = err instanceof ApiError ? (err.data as { itemIndex?: number; epcs?: string[] } | null) : null
+      const failed = typeof data?.itemIndex === 'number' ? queue.items[data.itemIndex]?.body.epc : undefined
+      setProblemEpcs([...(data?.epcs ?? []), ...(failed ? [failed] : [])])
+      setRegisteredEpcs(data?.epcs ?? [])
+      setSaveError(
+        err instanceof ApiError && (err.status === 0 || err.status >= 500)
+          ? `${describeError(err)} No se confirmó el guardado: revisa la lista en Paquetes antes de reintentar.`
+          : `${describeError(err)} No se guardó ningún paquete de la lista.`,
+      )
+      return false
+    } finally {
+      lock.current = false
+      setSaving(false)
     }
   }
 
@@ -126,14 +212,14 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
     <>
       <PageHeader
         eyebrow="Inventario · Registro"
-        title="Registrar paquete"
-        description="Asocia la etiqueta RFID de fábrica al paquete físico. Guardar crea el paquete y su primer movimiento en una sola operación."
+        title="Registrar paquetes"
+        description="Lee cada paquete y pulsa «Guardar y continuar» para agregarlo a la lista. Al terminar, confirma el guardado definitivo: toda la lista se guarda junta o no se guarda ninguno."
       />
 
-      <form className="register-layout" onSubmit={submit}>
+      <form className="register-layout" onSubmit={addToQueue}>
         <div>
           <Section number="01" title="Tipo de registro" description="Define qué movimiento inicial se registra.">
-            <fieldset className="field field-wide fieldset" disabled={pending} aria-label="Tipo de registro">
+            <fieldset className="field field-wide fieldset" disabled={busy} aria-label="Tipo de registro">
               <div className="segmented" role="radiogroup">
                 {TYPES.map((type) => (
                   <label key={type.value} className={registrationType === type.value ? 'segment selected' : 'segment'}>
@@ -160,7 +246,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
               value={catalog}
               onChange={setCatalog}
               onDescribe={setCatalogLabels}
-              disabled={pending}
+              disabled={busy}
             />
             <Field label="Perfiles en el paquete" hint="Cantidad física disponible hoy, en perfiles enteros.">
               <input
@@ -170,7 +256,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
                 step={1}
                 required
                 placeholder="Ej. 10"
-                disabled={pending}
+                disabled={busy}
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
               />
@@ -178,7 +264,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
           </Section>
 
           <Section number="03" title="Llegada física" description="No se inventa un día si solo se conoce el mes o no hay registro.">
-            <ArrivalFields value={arrival} onChange={setArrival} disabled={pending} />
+            <ArrivalFields value={arrival} onChange={setArrival} disabled={busy} />
           </Section>
 
           <Section number="04" title="Ubicación" description="Sucursal, bodega, pasillo y burro donde queda el paquete.">
@@ -187,7 +273,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
               value={location}
               onChange={setLocation}
               onDescribe={setLocationLabel}
-              disabled={pending}
+              disabled={busy}
             />
           </Section>
 
@@ -209,7 +295,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
                   spellCheck={false}
                   required
                   placeholder="E2003412…"
-                  disabled={pending}
+                  disabled={busy}
                   value={epc}
                   aria-invalid={epcInvalid}
                   onChange={(e) => setEpc(e.target.value.toUpperCase())}
@@ -222,7 +308,7 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
                 rows={2}
                 maxLength={500}
                 placeholder="Observaciones del paquete"
-                disabled={pending}
+                disabled={busy}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
@@ -231,9 +317,9 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
         </div>
 
         <aside className="register-aside">
-          <section className="summary-panel" aria-label="Resumen del registro">
+          <section className="summary-panel" aria-label="Paquete actual">
             <header>
-              <p className="eyebrow">Resumen</p>
+              <p className="eyebrow">Paquete actual</p>
               <h2>Nuevo paquete</h2>
               <div className="progress-steps" aria-label={`${completed} de ${steps.length} secciones completas`}>
                 {steps.map((done, index) => (
@@ -250,28 +336,48 @@ export function RegisterBundleView({ initialEpc, navigate }: { initialEpc?: stri
               ))}
             </dl>
             <footer>
-              {created ? (
-                <Notice kind="success">
-                  <strong>Paquete registrado.</strong> {created.epc} · {referenceLabel(created.reference)} ·{' '}
-                  {finishLabel(created.finish)} · {created.quantity} perfiles · {bundlePlace(created)}.{' '}
-                  <button type="button" className="link" onClick={() => navigate({ name: 'bundle', id: created.id })}>
-                    Ver detalle
-                  </button>
-                </Notice>
-              ) : null}
+              {added ? <Notice kind="success">{added}</Notice> : null}
               {error ? <Notice kind="error">{error}</Notice> : null}
 
-              <button type="submit" className="cta" disabled={pending}>
-                <span aria-live="polite">{pending ? 'Guardando…' : 'Guardar paquete'}</span>
+              <button type="submit" className="cta" disabled={busy || queueFull}>
+                <span aria-live="polite">{checking ? 'Verificando chip…' : 'Guardar y continuar'}</span>
                 <span className="cta-icon" aria-hidden="true">
-                  {pending ? <span className="cta-progress" /> : <IconArrow />}
+                  {checking ? <span className="cta-progress" /> : <IconArrow />}
                 </span>
               </button>
               <p className="summary-note">
-                Tras guardar se limpian chip, cantidad y notas; producto, llegada y ubicación se conservan para el siguiente paquete.
+                Se agrega a la lista; nada se guarda en el inventario hasta el guardado definitivo. Producto, llegada y
+                ubicación se conservan para el siguiente paquete.
               </p>
             </footer>
           </section>
+
+          <RegistrationQueuePanel
+            items={queue.items}
+            saving={saving}
+            saveError={saveError}
+            problemEpcs={problemEpcs}
+            registeredEpcs={registeredEpcs}
+            saved={saved}
+            onRemove={(id) => {
+              queue.remove(id)
+              setSaveError(null)
+            }}
+            onRemoveRegistered={() => {
+              queue.removeEpcs(registeredEpcs)
+              setRegisteredEpcs([])
+              setProblemEpcs([])
+              setSaveError(null)
+            }}
+            onClear={() => {
+              queue.clear()
+              setSaveError(null)
+              setProblemEpcs([])
+              setRegisteredEpcs([])
+            }}
+            onSave={saveAll}
+            onOpen={(id) => navigate({ name: 'bundle', id })}
+          />
         </aside>
       </form>
     </>

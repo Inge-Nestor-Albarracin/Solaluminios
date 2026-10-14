@@ -20,7 +20,8 @@ export class PrismaService
 
     const adapter = new PrismaPg({
       connectionString,
-      max: 5,
+      // DATABASE_POOL_MAX overrides the pool size; invalid values fall back to 10.
+      max: Math.min(50, Math.max(1, Number(process.env.DATABASE_POOL_MAX) || 10)),
       connectionTimeoutMillis: 5000,
     });
 

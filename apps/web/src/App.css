@@ -1734,3 +1734,143 @@ tr.subrow td:first-child {
     white-space: nowrap;
   }
 }
+
+/* ==========================================================================
+   Registration queue ("Guardar y continuar" → "Guardar definitivo")
+   ========================================================================== */
+
+.queue-panel {
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--focus);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.queue-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-head .eyebrow {
+  margin-bottom: 6px;
+}
+
+.queue-head h2 {
+  font: normal 22px/1.15 var(--serif);
+}
+
+.queue-head h2 small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font: 12px/1.4 var(--sans);
+}
+
+.queue-clear-confirm {
+  display: flex;
+  gap: 12px;
+}
+
+.text-button.danger {
+  color: var(--danger);
+}
+
+.queue-panel > .notice {
+  margin: 14px 18px 0;
+}
+
+.saved-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.notice-actions {
+  margin-top: 10px;
+}
+
+.queue-empty {
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.queue-list {
+  max-height: 340px;
+  margin: 0;
+  padding: 6px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px 10px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-item:last-child {
+  border-bottom: 0;
+}
+
+.queue-item.problem {
+  background: var(--error-bg);
+  box-shadow: inset 4px 0 0 var(--error-border);
+}
+
+.queue-index {
+  padding-top: 2px;
+  color: var(--focus);
+  font: 13px/1.4 var(--mono);
+}
+
+.queue-info {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.queue-info strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.queue-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queue-remove {
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+}
+
+.queue-remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--error-bg);
+}
+
+.queue-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.queue-footer {
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.queue-save {
+  width: 100%;
+}

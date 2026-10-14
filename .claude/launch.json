@@ -12,6 +12,20 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "apps/web", "dev"],
       "port": 5173
+    },
+    {
+      "name": "api-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/api", "start"],
+      "env": { "PORT": "3101" },
+      "port": 3101
+    },
+    {
+      "name": "web-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/web", "dev"],
+      "env": { "VITE_API_URL": "http://localhost:3101" },
+      "port": 5173
     }
   ]
 }

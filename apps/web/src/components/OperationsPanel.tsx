@@ -3,6 +3,7 @@ import { ApiError, describeError } from '../api/client'
 import type { BundleDetail, OperationResult } from '../api/types'
 import { canAdjust, canOperate, useSession } from '../session/session-context'
 import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
+import { uuid } from '../lib/uuid'
 import { LocationSelectors } from './LocationSelectors'
 import { Field, Notice } from './ui'
 
@@ -16,6 +17,7 @@ const REPLAYED = 'La operación ya estaba registrada; no se modificó el inventa
 function useOperation(bundleId: string, onDone: (message: string) => void) {
   const { request } = useSession()
   const key = useRef<string | null>(null)
+  const inFlight = useRef(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -25,8 +27,10 @@ function useOperation(bundleId: string, onDone: (message: string) => void) {
   }, [])
 
   const run = async (action: Action, body: Record<string, unknown>, success: (r: OperationResult) => string) => {
-    if (pending) return false
-    key.current ??= crypto.randomUUID()
+    // The ref blocks a second click before React re-renders with pending.
+    if (inFlight.current) return false
+    inFlight.current = true
+    key.current ??= uuid()
     setPending(true)
     setError(null)
     try {
@@ -46,6 +50,7 @@ function useOperation(bundleId: string, onDone: (message: string) => void) {
       )
       return false
     } finally {
+      inFlight.current = false
       setPending(false)
     }
   }

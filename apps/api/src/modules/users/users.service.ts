@@ -42,7 +42,18 @@ export class UsersService {
       throw new BadRequestException('No puedes desactivar tu propia cuenta');
     }
     try {
-      return await this.prisma.user.update({ where: { id }, data: { active }, select: SAFE_SELECT });
+      return await this.prisma.$transaction(async (tx) => {
+        if (!active) {
+          // Lock the active administrators so two admins deactivating each
+          // other concurrently cannot leave the system without any admin.
+          const admins = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "users" WHERE role = 'ADMIN' AND active = true FOR UPDATE`;
+          if (admins.length === 1 && admins[0].id === id) {
+            throw new BadRequestException('No se puede desactivar al último administrador activo');
+          }
+        }
+        return tx.user.update({ where: { id }, data: { active }, select: SAFE_SELECT });
+      });
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
         throw new NotFoundException('El usuario no existe');

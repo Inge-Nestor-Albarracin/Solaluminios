@@ -542,6 +542,64 @@ cambios: no se repitieron sus pruebas.
   Para retirarlos: desactivarlos con PATCH (ADMIN) o borrarlos por esos IDs
   exactos, siempre que no tengan paquetes asociados.
 
+## Cola de registro + auditoría de seguridad (15/10/2026)
+
+### Cola de registro ("Guardar y continuar" → "Guardar definitivo")
+- API: `POST /inventory/bundles/batch` (ADMIN, WAREHOUSE), body
+  `{ bundles: RegisterBundleDto[] }`, 1–50 ítems. Todos los paquetes y sus
+  movimientos iniciales se crean en UNA transacción: o se guardan todos o
+  ninguno. Rechaza EPC repetidos en la lista (400 con `itemIndex`) y EPC ya
+  registrados (409 con `epcs`, antes de escribir). Errores por ítem:
+  "Paquete N (EPC …): …" + `itemIndex`. `POST /inventory/bundles` se conserva.
+- Web: "Guardar y continuar" valida y agrega a la lista (verifica que el chip
+  no esté en la lista ni registrado). La lista vive en `sessionStorage` por
+  usuario (sobrevive a cambiar de vista, recargar o sesión vencida en la misma
+  pestaña). "Guardar definitivo" pide confirmación (paquetes y perfiles) y
+  envía el lote; si falla, resalta el ítem y ofrece quitar los ya registrados.
+- Archivos: `inventory.service.ts` (createBundle compartido, registerBundles),
+  `dto/register-bundle.dto.ts` (RegisterBundleBatchDto, MAX_BATCH_SIZE),
+  `inventory.controller.ts`; web `lib/registrationQueue.ts`,
+  `components/RegistrationQueuePanel.tsx`, `views/RegisterBundleView.tsx`,
+  `api/client.ts` (ApiError.data).
+
+### Auditoría (agente de solo lectura) y correcciones aplicadas
+Sin hallazgos críticos. Aplicado:
+- A1 `.gitignore` raíz (node_modules, .env*, dist, tsbuildinfo) y `.env*` en
+  `apps/web/.gitignore`: un `.env` ya no puede entrar por las rutas enlazadas
+  `node_modules/.pnpm/node_modules/{api,web}`. Ruta corregida de Prisma
+  generado en `apps/api/.gitignore`. (No se des-versionó nada.)
+- A2 Bloqueo por cuenta en login (`auth/login-attempts.ts`): 5 fallos en
+  15 min → 429 durante 15 min; cuenta también emails inexistentes (no
+  enumera). `TRUST_PROXY` (número de saltos) para la IP real tras proxy.
+- M1 Cabeceras: sin `X-Powered-By`; `nosniff`, `X-Frame-Options DENY`,
+  `Referrer-Policy no-referrer`, CSP `default-src 'none'`, `Cache-Control:
+  no-store` (sin dependencia nueva).
+- M2 `SET LOCAL lock_timeout = '5s'` en operaciones → 409 "paquete ocupado"
+  en vez de esperar; pool `DATABASE_POOL_MAX` (por defecto 10, antes 5).
+- M3 Detalle de paquete: solo los 20 movimientos más recientes (desc).
+- M4 Web: UUID con respaldo `crypto.getRandomValues` (tablets por HTTP en LAN).
+- B1 No se puede desactivar al último ADMIN activo (bloqueo FOR UPDATE).
+- B3 Ajuste IN con tope de 1.000.000 perfiles → 400 (antes 500).
+- B11 Doble clic: guardas con `useRef` en operaciones y registro.
+Pendiente (no urgente o requiere decisión): des-versionar `node_modules`,
+Prisma generado, zip y tsbuildinfo; `sessionVersion` en JWT para revocar
+tokens (migración); paginar el resumen en SQL; límite de concurrencia de
+scrypt; health público; `HOST` del API; fallo de build sin `VITE_API_URL`;
+contador de intentos compartido si hay varias instancias.
+
+### Pruebas
+- API: build y lint OK; `pnpm test` 8/8 (nuevos: login-attempts, users
+  último admin); e2e 43/43 en 7 archivos (nuevos: inventory-batch 7,
+  security 5).
+- Web: build y lint OK. Navegador (API en 3101, web en 5173): 3 chips a la
+  lista, chip repetido rechazado, BD sin cambios hasta confirmar, lista
+  conservada al cambiar de vista, guardado definitivo → 3 paquetes con 1
+  movimiento cada uno; lote con un chip ya registrado → nada guardado, ítem
+  resaltado, "Quitar de la lista los ya registrados".
+- Datos temporales borrados por ID (3 paquetes, 3 movimientos, usuario,
+  acabado, ubicaciones). En la BD hay 6 paquetes reales de prueba del usuario
+  "Wetracking" (14/10, chips E2801160…, referencia PRUEBA-001): no se tocaron.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

@@ -46,8 +46,11 @@ export const bundleListInclude = {
 
 export const bundleDetailInclude = {
   ...bundleListInclude,
+  // Latest movements only, newest first; the full history is paginated at
+  // GET /inventory/bundles/:id/movements. Keeps responses bounded.
   movements: {
-    orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    take: 20,
     include: { performedBy: performedBySelect },
   },
 } satisfies Prisma.BundleInclude;

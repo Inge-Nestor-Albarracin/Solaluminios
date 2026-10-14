@@ -23,6 +23,18 @@ import {
   type Tx,
 } from './inventory.shared.js';
 
+// Fixed server-side value (never user input), used in SET LOCAL lock_timeout.
+const LOCK_TIMEOUT = '5s';
+// Business ceiling for one bundle; also keeps the balance inside int4.
+const MAX_BUNDLE_QUANTITY = 1_000_000;
+
+// PostgreSQL 55P03 lock_not_available, raised when lock_timeout expires.
+function isLockTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const meta = (error as { meta?: Record<string, unknown> }).meta;
+  return meta?.code === '55P03' || /55P03|lock timeout/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
+}
+
 type MovementData = Pick<
   Prisma.InventoryMovementUncheckedCreateInput,
   | 'type'
@@ -150,6 +162,11 @@ export class InventoryOperationsService {
       apply: async (tx, bundle) => {
         const incoming = dto.type === 'ADJUSTMENT_IN';
         if (!incoming) this.requireBalance(bundle, dto.quantity);
+        if (incoming && bundle.quantity + dto.quantity > MAX_BUNDLE_QUANTITY) {
+          throw new BadRequestException(
+            `El saldo resultante superaría el máximo de ${MAX_BUNDLE_QUANTITY} perfiles por paquete`,
+          );
+        }
         const quantityAfter = incoming
           ? bundle.quantity + dto.quantity
           : bundle.quantity - dto.quantity;
@@ -182,6 +199,9 @@ export class InventoryOperationsService {
     try {
       return await this.prisma.$transaction(
         async (tx) => {
+          // Wait at most LOCK_TIMEOUT for a bundle busy with another operation
+          // instead of holding a pool connection until the transaction timeout.
+          await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
           const locked = await tx.$queryRaw<{ id: string }[]>`
             SELECT id FROM "bundles" WHERE id = ${bundleId} FOR UPDATE`;
 
@@ -218,6 +238,11 @@ export class InventoryOperationsService {
         { maxWait: 10000, timeout: 15000 },
       );
     } catch (error: unknown) {
+      if (isLockTimeout(error)) {
+        throw new ConflictException(
+          'El paquete está siendo modificado por otra operación. Inténtalo de nuevo en unos segundos.',
+        );
+      }
       // The same key was committed concurrently by another transaction.
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&

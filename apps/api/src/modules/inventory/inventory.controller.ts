@@ -23,7 +23,10 @@ import {
   ListBundlesQueryDto,
   PaginationQueryDto,
 } from './dto/inventory-query.dto.js';
-import { RegisterBundleDto } from './dto/register-bundle.dto.js';
+import {
+  RegisterBundleBatchDto,
+  RegisterBundleDto,
+} from './dto/register-bundle.dto.js';
 import { InventoryOperationsService } from './inventory-operations.service.js';
 import { InventoryQueriesService } from './inventory-queries.service.js';
 import { InventoryService } from './inventory.service.js';
@@ -44,6 +47,16 @@ export class InventoryController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.inventory.registerBundle(dto, sessionUser(request));
+  }
+
+  // Final save of the registration queue: all bundles or none.
+  @Roles('ADMIN', 'WAREHOUSE')
+  @Post('bundles/batch')
+  registerBundles(
+    @Body() dto: RegisterBundleBatchDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.inventory.registerBundles(dto.bundles, sessionUser(request));
   }
 
   @Get('bundles')

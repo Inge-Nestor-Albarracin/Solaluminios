@@ -1,5 +1,8 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsEnum,
   IsIn,
   IsInt,
@@ -11,6 +14,7 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { ArrivalDatePrecision } from '../../../generated/prisma/client.js';
 
@@ -104,4 +108,19 @@ export class RegisterBundleDto {
   @IsString()
   @MaxLength(500)
   notes?: string | null;
+}
+
+// Upper bound of bundles saved in one batch (one transaction).
+export const MAX_BATCH_SIZE = 50;
+
+// Final save of the registration queue.
+export class RegisterBundleBatchDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'La lista de paquetes está vacía' })
+  @ArrayMaxSize(MAX_BATCH_SIZE, {
+    message: `Máximo ${MAX_BATCH_SIZE} paquetes por guardado`,
+  })
+  @ValidateNested({ each: true })
+  @Type(() => RegisterBundleDto)
+  bundles!: RegisterBundleDto[];
 }

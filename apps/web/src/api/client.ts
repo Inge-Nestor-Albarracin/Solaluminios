@@ -2,10 +2,13 @@ export const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3000')
 
 export class ApiError extends Error {
   readonly status: number
+  // Parsed error body, e.g. { itemIndex } or { epcs } from the batch save.
+  readonly data: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, data: unknown = null) {
     super(message)
     this.status = status
+    this.data = data
   }
 }
 
@@ -26,7 +29,7 @@ const STATUS_MESSAGES: Record<number, string> = {
 
 // The API says "EPC"; users know it as "chip". Only the displayed text changes.
 function userWording(text: string): string {
-  return text.replace(/\bEPC\b/g, 'chip')
+  return text.replace(/\bestos EPC\b/g, 'estos chips').replace(/\bEPC\b/g, 'chip')
 }
 
 function errorMessage(status: number, data: unknown): string {
@@ -67,7 +70,7 @@ export async function apiRequest<T>(
       data = null
     }
   }
-  if (!response.ok) throw new ApiError(response.status, errorMessage(response.status, data))
+  if (!response.ok) throw new ApiError(response.status, errorMessage(response.status, data), data)
   return { status: response.status, data: data as T }
 }
 
