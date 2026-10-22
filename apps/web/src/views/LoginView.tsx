@@ -38,7 +38,6 @@ export function LoginView() {
         <BrandLogo className="login-logo" variant="full" tone="negative" />
 
         <section className="login-card" aria-labelledby="login-welcome">
-          <h1 id="login-welcome">¡Bienvenido!</h1>
           <p className="login-lead">Ingresa tus datos para comenzar</p>
 
           <form onSubmit={submit} aria-labelledby="login-welcome" aria-busy={pending}>
