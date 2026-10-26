@@ -1,3 +1,6 @@
+import { configureProbe, reportReachable, reportUnreachable } from '../pwa/connectivity'
+import { beginWork } from '../pwa/workGuard'
+
 export const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
 
 export class ApiError extends Error {
@@ -39,6 +42,22 @@ function errorMessage(status: number, data: unknown): string {
   return STATUS_MESSAGES[status] ?? 'Ocurrió un error en el servidor. Inténtalo de nuevo.'
 }
 
+// Without an answer in this time the request is abandoned and reported as
+// "no response" (status 0). For a write that means an UNCERTAIN outcome: the
+// callers keep the same operationKey for the retry, never a new one.
+export const REQUEST_TIMEOUT_MS = 30_000
+
+configureProbe(`${API_URL}/`)
+
+function noResponseMessage(timedOut: boolean): string {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return 'Sin conexión: el dispositivo no tiene red. No se envió ni se guardó nada nuevo.'
+  }
+  return timedOut
+    ? 'El servidor no respondió a tiempo.'
+    : 'No se pudo conectar con el servidor. Verifica la conexión o que el API esté en ejecución.'
+}
+
 export async function apiRequest<T>(
   path: string,
   token: string | null,
@@ -47,21 +66,41 @@ export async function apiRequest<T>(
   const headers: Record<string, string> = {}
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
   if (token) headers.Authorization = `Bearer ${token}`
+  const method = options.method ?? 'GET'
+
+  // Own controller: aborts on timeout or when the caller aborts.
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
+  const forwardAbort = () => controller.abort()
+  options.signal?.addEventListener('abort', forwardAbort)
+  // A write waiting for the server must not be cut by an app update.
+  const endWork = method === 'GET' ? null : beginWork('Una operación se está enviando al servidor')
 
   let response: Response
+  let text: string
   try {
     response = await fetch(`${API_URL}${path}`, {
-      method: options.method ?? 'GET',
+      method,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: options.signal,
+      signal: controller.signal,
     })
+    text = await response.text()
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new ApiError(0, 'No se pudo conectar con el servidor. Verifica que el API esté en ejecución.')
+    if (options.signal?.aborted) throw error
+    reportUnreachable()
+    throw new ApiError(0, noResponseMessage(timedOut))
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', forwardAbort)
+    endWork?.()
   }
+  reportReachable()
 
-  const text = await response.text()
   let data: unknown = null
   if (text) {
     try {

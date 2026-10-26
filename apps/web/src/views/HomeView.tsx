@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react'
 import { IconChevron } from '../components/icons'
+import { DevicePanel } from '../pwa/DevicePanel'
 import type { Navigate, View } from './navigation'
 
 type Section = Exclude<View['name'], 'bundle' | 'home'>
@@ -136,6 +137,8 @@ export function HomeView({
           </button>
         ))}
       </nav>
+
+      <DevicePanel />
     </div>
   )
 }

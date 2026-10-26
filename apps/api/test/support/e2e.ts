@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { App } from 'supertest/types.js';
@@ -20,10 +20,16 @@ export function uniqueSuffix(): string {
   return randomBytes(4).toString('hex').toUpperCase();
 }
 
-export async function createE2eApp(): Promise<INestApplication<App>> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+// `customize` replaces providers for a test file (e.g. the push sender, so
+// tests never contact real push services).
+export async function createE2eApp(
+  customize: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder,
+): Promise<INestApplication<App>> {
+  const moduleRef = await customize(
+    Test.createTestingModule({
+      imports: [AppModule],
+    }),
+  ).compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);

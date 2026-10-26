@@ -3230,3 +3230,125 @@ tr.subrow td:first-child {
     padding: 10px 12px;
   }
 }
+
+/* ==========================================================================
+   PWA: connection / new version notices and "Este dispositivo"
+   ========================================================================== */
+
+/* Fixed at the bottom (above the phone bottom bar), so they never push or
+   cover the form being filled in. */
+.pwa-banners {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: grid;
+  gap: 10px;
+  width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.pwa-banner {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--brand-blue);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lift);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+
+.pwa-banner-offline {
+  border-left-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.pwa-banner-text {
+  display: grid;
+  gap: 4px;
+}
+
+.pwa-banner-text strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.pwa-banner-text ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.pwa-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pwa-banner-actions .button {
+  min-height: 40px;
+  padding-block: 8px;
+}
+
+.view-request .link {
+  font-weight: 700;
+}
+
+.device-panel {
+  margin-top: 24px;
+}
+
+.device-panel .subtitle {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.device-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.device-row > div:first-child {
+  display: grid;
+  flex: 1 1 260px;
+  gap: 2px;
+}
+
+.device-row small {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.device-message {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 13.5px;
+}
+
+.device-message-error {
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .pwa-banners {
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
+  }
+}

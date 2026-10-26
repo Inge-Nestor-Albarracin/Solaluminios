@@ -3,6 +3,7 @@ import type { Family } from '../../api/types'
 import { matches } from '../../lib/admin'
 import { useLoad } from '../../lib/useLoad'
 import { useMutation } from '../../lib/useMutation'
+import { useUnsavedWork } from '../../pwa/workGuard'
 import { useSession } from '../../session/session-context'
 import { IconArrow } from '../icons'
 import { Empty, Field, Loading, Notice } from '../ui'
@@ -197,6 +198,7 @@ function NewFamilyForm({ onCreated }: { onCreated: (family: Family) => void }) {
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const create = useMutation()
+  useUnsavedWork(code.trim() || name.trim() ? 'Formulario de familia sin guardar' : null)
   const normalized = code.trim().toUpperCase()
   const codeInvalid = normalized !== '' && !CODE_PATTERN.test(normalized)
 

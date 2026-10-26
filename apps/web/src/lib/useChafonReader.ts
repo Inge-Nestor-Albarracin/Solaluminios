@@ -49,6 +49,11 @@ interface Connection {
   onDisconnect: () => void
 }
 
+// Last reader chosen in this page (memory only, never stored): «Reconectar»
+// uses it without opening the device chooser again, also after leaving the
+// bulk reading screen and coming back. A reload forgets it.
+let rememberedDevice: BluetoothDevice | null = null
+
 // Web Bluetooth needs Chrome (Android or desktop) and HTTPS (or localhost).
 export const bluetoothSupported = () =>
   typeof navigator !== 'undefined' && !!navigator.bluetooth && window.isSecureContext
@@ -63,6 +68,7 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
   const [trigger, setTrigger] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [power, setPowerState] = useState<ReaderPower>(initialPower)
+  const [canReconnect, setCanReconnect] = useState(() => rememberedDevice !== null)
   const connection = useRef<Connection | null>(null)
   const onTagRef = useRef(onTag)
   // Command responses awaited by `request`, by command code.
@@ -177,15 +183,11 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
     [readParams, request],
   )
 
-  const connect = useCallback(async () => {
-    if (!navigator.bluetooth || connection.current) return
-    setError(null)
-    setStatus('connecting')
-    let device: BluetoothDevice | null = null
+  // Opens the GATT link to `device` and subscribes to its notifications.
+  // Exactly one set of listeners per connection: they are removed on any
+  // disconnection (expected or not), so reconnecting never duplicates them.
+  const attach = useCallback(async (device: BluetoothDevice) => {
     try {
-      // The reader does not always advertise its service: let the user pick
-      // it from the list and request access to the Chafon service.
-      device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [CHAFON_SERVICE] })
       const server = await device.gatt!.connect()
       let service: BluetoothRemoteGATTService
       try {
@@ -219,7 +221,11 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
         }
       }
       const onDisconnect = () => {
-        // Only unexpected disconnections land here (release() unsubscribes).
+        // Only unexpected disconnections land here (release() unsubscribes):
+        // reader turned off or out of range, screen locked, app in the
+        // background… Nothing is read meanwhile; the list is kept.
+        notify.removeEventListener('characteristicvaluechanged', onValue)
+        device.removeEventListener('gattserverdisconnected', onDisconnect)
         connection.current = null
         waiters.current.clear()
         params.current = null
@@ -227,7 +233,7 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
         setStatus('idle')
         setReading(false)
         setTrigger(false)
-        setError('Se perdió la conexión con el lector. Vuelve a conectarlo; las lecturas de la lista se conservan.')
+        setError('Se perdió la conexión con el lector (por ejemplo al bloquear la pantalla, salir de la app o alejarse). Pulsa «Reconectar»; las lecturas de la lista se conservan.')
       }
 
       notify.addEventListener('characteristicvaluechanged', onValue)
@@ -235,14 +241,14 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
       connection.current = { device, write, notify, onValue, onDisconnect }
       await notify.startNotifications()
       setDeviceName(device.name || 'Lector Chafon')
+      rememberedDevice = device
+      setCanReconnect(true)
       setStatus('connected')
       void loadPower()
     } catch (err) {
       release()
-      if (device?.gatt?.connected) device.gatt.disconnect()
+      if (device.gatt?.connected) device.gatt.disconnect()
       setStatus('idle')
-      // Closing the device chooser is not an error.
-      if (err instanceof DOMException && err.name === 'NotFoundError') return
       setError(
         err instanceof Error && !(err instanceof DOMException)
           ? err.message
@@ -250,6 +256,35 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
       )
     }
   }, [loadPower, release])
+
+  const connect = useCallback(async () => {
+    if (!navigator.bluetooth || connection.current) return
+    setError(null)
+    setStatus('connecting')
+    let device: BluetoothDevice
+    try {
+      // The reader does not always advertise its service: let the user pick
+      // it from the list and request access to the Chafon service.
+      device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [CHAFON_SERVICE] })
+    } catch (err) {
+      setStatus('idle')
+      // Closing the device chooser is not an error.
+      if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
+        setError('No se pudo abrir la lista de dispositivos Bluetooth.')
+      }
+      return
+    }
+    await attach(device)
+  }, [attach])
+
+  // Same reader as before, without the chooser (after a lost connection).
+  const reconnect = useCallback(async () => {
+    const device = rememberedDevice
+    if (!device || connection.current) return
+    setError(null)
+    setStatus('connecting')
+    await attach(device)
+  }, [attach])
 
   const start = useCallback(async () => {
     setError(null)
@@ -290,5 +325,20 @@ export function useChafonReader(onTag: (tag: TagRead) => void) {
     [release],
   )
 
-  return { status, deviceName, reading, trigger, error, connect, disconnect, start, stop, power, setPower, reloadPower: loadPower }
+  return {
+    status,
+    deviceName,
+    reading,
+    trigger,
+    error,
+    connect,
+    reconnect,
+    canReconnect,
+    disconnect,
+    start,
+    stop,
+    power,
+    setPower,
+    reloadPower: loadPower,
+  }
 }

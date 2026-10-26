@@ -6,6 +6,8 @@ export interface LoadState<T> {
   data: T | null
   error: string | null
   loading: boolean
+  // When `data` was received (ms since epoch), to tell how fresh it is.
+  loadedAt: number | null
   reload: () => void
 }
 
@@ -13,6 +15,7 @@ interface Result<T> {
   key: string
   data: T | null
   error: string | null
+  at: number
 }
 
 // Loads a GET path; a null path means "nothing to load yet". While a new
@@ -27,9 +30,9 @@ export function useLoad<T>(path: string | null): LoadState<T> {
     if (path === null || key === null) return
     const controller = new AbortController()
     request<T>(path, { signal: controller.signal })
-      .then(({ data }) => setResult({ key, data, error: null }))
+      .then(({ data }) => setResult({ key, data, error: null, at: Date.now() }))
       .catch((err: unknown) => {
-        if (!controller.signal.aborted) setResult({ key, data: null, error: describeError(err) })
+        if (!controller.signal.aborted) setResult({ key, data: null, error: describeError(err), at: Date.now() })
       })
     return () => controller.abort()
   }, [path, key, request])
@@ -40,6 +43,7 @@ export function useLoad<T>(path: string | null): LoadState<T> {
     data: key === null ? null : (result?.data ?? null),
     error: current ? result.error : null,
     loading: key !== null && !current,
+    loadedAt: key !== null && result?.data != null ? result.at : null,
     reload,
   }
 }

@@ -3,6 +3,7 @@ import { describeError } from '../api/client'
 import { todayIso } from '../lib/format'
 import { addDaysIso, bogotaTime, dueAtIso, relative, type Task, type TaskPerson } from '../lib/tasks'
 import { useNow } from '../lib/useNow'
+import { useUnsavedWork } from '../pwa/workGuard'
 import { useSession } from '../session/session-context'
 import { IconArrow } from './icons'
 import { Field, Notice } from './ui'
@@ -28,6 +29,7 @@ export function TaskForm({ people, onCreated }: { people: TaskPerson[] | null; o
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<Task | null>(null)
   const lock = useRef(false)
+  useUnsavedWork(title.trim() || description.trim() ? 'Formulario de tarea sin guardar' : null)
   const now = useNow(30_000)
 
   const dueAt = date && time ? dueAtIso(date, time) : null

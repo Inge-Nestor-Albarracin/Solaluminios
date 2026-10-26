@@ -42,7 +42,17 @@ export function BundleDetailView({ id, navigate }: { id: string; navigate: Navig
     reloadHistory()
   }, [reloadBundle, reloadHistory])
 
-  if (bundle.error) {
+  // Last bundle that did load, with the time it was read. If a later reload
+  // fails (no connection), the screen keeps it, clearly marked as not
+  // updated, instead of unmounting the operations panel: the typed data and
+  // the key of an operation with an uncertain result must survive.
+  const [lastGood, setLastGood] = useState<{ data: BundleDetail; at: number } | null>(null)
+  if (bundle.data && bundle.loadedAt !== null && bundle.data !== lastGood?.data) {
+    setLastGood({ data: bundle.data, at: bundle.loadedAt })
+  }
+  const stale = bundle.error !== null && lastGood !== null
+
+  if (bundle.error && !lastGood) {
     return (
       <>
         <PageHeader eyebrow="Inventario · Paquete" title="Paquete no disponible" />
@@ -53,8 +63,8 @@ export function BundleDetailView({ id, navigate }: { id: string; navigate: Navig
       </>
     )
   }
-  if (!bundle.data) return <Loading />
-  const data = bundle.data
+  const data = bundle.data ?? lastGood?.data
+  if (!data) return <Loading />
 
   return (
     <>
@@ -69,6 +79,15 @@ export function BundleDetailView({ id, navigate }: { id: string; navigate: Navig
         }
       />
       {message ? <Notice kind="success">{message}</Notice> : null}
+      {stale && lastGood ? (
+        <Notice kind="warning">
+          No se pudo actualizar el paquete: {bundle.error} Los datos mostrados son de la consulta de las{' '}
+          {formatDateTime(new Date(lastGood.at).toISOString())} y pueden no estar al día.{' '}
+          <button type="button" className="link" onClick={onRefresh}>
+            Reintentar
+          </button>
+        </Notice>
+      ) : null}
 
       <div className="card detail-grid" aria-busy={bundle.loading}>
         <div>

@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { ApiError, describeError } from '../api/client'
 import type { Bundle } from '../api/types'
+import { useUnsavedWork } from '../pwa/workGuard'
 import { ArrivalFields } from '../components/ArrivalFields'
 import { CatalogSelectors, type CatalogLabels } from '../components/CatalogSelectors'
 import { IconArrow, IconScan } from '../components/icons'
@@ -86,6 +87,9 @@ export function RegisterBundleView({
   const lock = useRef(false)
 
   const normalizedEpc = epc.trim().toUpperCase()
+  useUnsavedWork(
+    normalizedEpc !== '' || quantity !== '' || notes.trim() !== '' ? 'Formulario de registro con datos sin agregar a la lista' : null,
+  )
   const epcInvalid = normalizedEpc !== '' && !EPC_PATTERN.test(normalizedEpc)
   const amount = Number(quantity)
   const quantityValid = quantity !== '' && Number.isInteger(amount) && amount >= 1

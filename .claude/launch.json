@@ -50,6 +50,38 @@
       "port": 3101
     },
     {
+      "name": "api-test-pwa",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "exec",
+        "node",
+        "--env-file-if-exists=.env.push-test",
+        "scripts/start-test-api.mjs"
+      ],
+      "env": {
+        "PORT": "3101",
+        "CORS_ORIGIN": "http://localhost:4173"
+      },
+      "port": 3101
+    },
+    {
+      "name": "web-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "vite",
+        "preview",
+        "--port",
+        "4173",
+        "--strictPort"
+      ],
+      "port": 4173
+    },
+    {
       "name": "web-alt",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

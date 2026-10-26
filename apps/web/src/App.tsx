@@ -1,8 +1,12 @@
-import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
+import { useEffect, useEffectEvent, useState, type ComponentType, type SVGProps } from 'react'
 import './App.css'
 import { BrandLogo } from './components/brand/BrandLogo'
 import { IconBulk, IconChart, IconHome, IconList, IconLogout, IconRegister, IconScan, IconSettings, IconTasks } from './components/icons'
 import { LogoutDialog } from './components/LogoutDialog'
+import { onOpenView, takeLaunchView, type LaunchView } from './pwa/launchView'
+import { PwaBanners } from './pwa/PwaBanners'
+import { releasePushOnLogout, setPushLinked, syncPushOnLogin } from './pwa/push'
+import { localBlockers, useUnsavedWork } from './pwa/workGuard'
 import { useRegistrationQueue } from './lib/registrationQueue'
 import type { TaskSummary } from './lib/tasks'
 import { useLoad } from './lib/useLoad'
@@ -21,9 +25,14 @@ import { TasksView } from './views/TasksView'
 
 function App() {
   const { user } = useSession()
-  if (!user) return <LoginView />
-  // Remount on user change so no state survives a logout/login.
-  return <Workspace key={user.id} />
+  return (
+    <>
+      {/* Connection and new-version notices, also on the login screen. */}
+      <PwaBanners />
+      {/* Remount on user change so no state survives a logout/login. */}
+      {user ? <Workspace key={user.id} /> : <LoginView />}
+    </>
+  )
 }
 
 interface NavTab {
@@ -43,8 +52,19 @@ function initials(name: string) {
     .join('')
 }
 
+const VIEW_LABELS: Record<LaunchView, string> = {
+  home: 'Inicio',
+  register: 'Registrar paquete',
+  lookup: 'Consultar chip',
+  bulk: 'Lectura masiva',
+  bundles: 'Paquetes',
+  summary: 'Resumen',
+  tasks: 'Tareas',
+  admin: 'Administración',
+}
+
 function Workspace() {
-  const { user, logout } = useSession()
+  const { user, logout, request } = useSession()
   const operator = canOperate(user?.role)
   // Pending registration list (not saved yet), shared by the register view,
   // the menu badge and the logout prompt.
@@ -75,16 +95,59 @@ function Workspace() {
   }, [reloadTaskSummary])
   const openTasks = taskSummary.data?.pending ?? 0
 
-  const requestLogout = () => (pending > 0 ? setLogoutPrompt(true) : logout())
-  const [view, setView] = useState<View>({ name: 'home' })
+  // Views this user may open from a URL, a shortcut or a notification.
+  const allowed = (name: LaunchView) =>
+    (name !== 'register' || operator) && (name !== 'admin' || user?.role === 'ADMIN')
+  const [view, setView] = useState<View>(() => {
+    const launch = takeLaunchView()
+    return { name: launch && allowed(launch) ? launch : 'home' }
+  })
+  // A notification asked for a view while there is work in progress: offered
+  // instead of navigating (changing view could interrupt a reading or a form).
+  const [viewRequest, setViewRequest] = useState<LaunchView | null>(null)
+
+  // Work that a reload (app update) would lose; see pwa/workGuard.ts.
+  useUnsavedWork(pending > 0 ? `Lista de registro con ${pending} ${pending === 1 ? 'paquete' : 'paquetes'} sin guardar` : null)
+  useUnsavedWork(bulkChips.size > 0 ? `Lectura masiva con ${bulkChips.size} chips en pantalla` : null)
+
+  // This device's notifications: a subscription left by another account is
+  // dropped here, so this account never receives someone else's notices.
+  useEffect(() => {
+    let active = true
+    syncPushOnLogin(request)
+      .then((linked) => active && setPushLinked(linked))
+      .catch(() => active && setPushLinked(null))
+    return () => {
+      active = false
+      setPushLinked(null)
+    }
+  }, [request])
+
+  // Logging out unlinks this device's notifications from the account first.
+  const [loggingOut, setLoggingOut] = useState(false)
+  const endSession = () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    void releasePushOnLogout(request).finally(() => logout())
+  }
+  const requestLogout = () => (pending > 0 ? setLogoutPrompt(true) : endSession())
   // Remount register/bundles when they receive initial values (EPC, filters).
   const [remountKey, setRemountKey] = useState(0)
 
   const navigate = (next: View) => {
     if (next.name === 'register' || next.name === 'bundles') setRemountKey((k) => k + 1)
     setView(next)
+    setViewRequest(null)
     window.scrollTo({ top: 0 })
   }
+
+  // Notification clicked while the app is open.
+  const openRequested = useEffectEvent((name: LaunchView) => {
+    if (!allowed(name)) return
+    if (localBlockers().length > 0) setViewRequest(name)
+    else navigate({ name })
+  })
+  useEffect(() => onOpenView((name) => openRequested(name)), [])
 
   const tabs: NavTab[] = [
     { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
@@ -178,6 +241,17 @@ function Workspace() {
       </header>
 
       <main className="content">
+        {viewRequest ? (
+          <div className="notice notice-info view-request" role="status">
+            Te llegó un aviso para <strong>{VIEW_LABELS[viewRequest]}</strong>. Ábrelo cuando termines lo que estás haciendo.{' '}
+            <button type="button" className="link" onClick={() => navigate({ name: viewRequest })}>
+              Abrir ahora
+            </button>{' '}
+            <button type="button" className="link" onClick={() => setViewRequest(null)}>
+              Cerrar
+            </button>
+          </div>
+        ) : null}
         {view.name === 'home' ? (
           <HomeView
             name={user?.name ?? ''}
@@ -213,10 +287,10 @@ function Workspace() {
             setLogoutPrompt(false)
             navigate({ name: 'register' })
           }}
-          onKeep={() => logout()}
+          onKeep={endSession}
           onDiscard={() => {
             queue.clear()
-            logout()
+            endSession()
           }}
         />
       ) : null}

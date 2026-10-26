@@ -3,6 +3,7 @@ import type { UserRole } from '../../api/types'
 import { ROLES, ROLE_DESCRIPTIONS, generatePassword, matches, type AdminUser } from '../../lib/admin'
 import { useLoad } from '../../lib/useLoad'
 import { useMutation } from '../../lib/useMutation'
+import { useUnsavedWork } from '../../pwa/workGuard'
 import { ROLE_LABELS, useSession } from '../../session/session-context'
 import { IconArrow } from '../icons'
 import { Empty, Field, Loading, Notice } from '../ui'
@@ -175,6 +176,11 @@ function NewUserForm({ onCreated }: { onCreated: (user: AdminUser) => void }) {
   const [role, setRole] = useState<UserRole>('WAREHOUSE')
   const [created, setCreated] = useState<{ email: string; password: string } | null>(null)
   const create = useMutation()
+  // A created user's one-time password is still on screen: losing it on a
+  // reload would force a reset.
+  useUnsavedWork(
+    name.trim() || email.trim() || password ? 'Formulario de usuario sin guardar' : created ? 'Contraseña inicial de un usuario nuevo en pantalla' : null,
+  )
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()

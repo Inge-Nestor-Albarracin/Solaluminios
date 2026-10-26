@@ -168,6 +168,7 @@ model User {
   movements                InventoryMovement[]
   tasksAssigned            Task[]              @relation("TaskAssignee")
   tasksCreated             Task[]              @relation("TaskCreator")
+  pushSubscriptions        PushSubscription[]
 
   @@index([defaultInventoryLocationId])
   @@map("users")
@@ -261,4 +262,25 @@ model Task {
   @@index([createdById])
   @@index([dueAt])
   @@map("tasks")
+}
+
+// WEB PUSH: one row per browser/device subscription. The endpoint (a URL of
+// the browser's push service) identifies the device and belongs to a single
+// account at a time; a user may have several devices. Rows are removed on
+// logout from that device or when the push service reports them invalid.
+model PushSubscription {
+  id            String    @id @default(cuid())
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  lastSuccessAt DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
 }

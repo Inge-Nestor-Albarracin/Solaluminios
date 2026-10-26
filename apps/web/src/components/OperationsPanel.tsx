@@ -4,6 +4,7 @@ import type { BundleDetail, OperationResult } from '../api/types'
 import { canAdjust, canOperate, useSession } from '../session/session-context'
 import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
 import { uuid } from '../lib/uuid'
+import { useUnsavedWork } from '../pwa/workGuard'
 import { LocationSelectors } from './LocationSelectors'
 import { Field, Notice } from './ui'
 
@@ -119,6 +120,7 @@ function ExitForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onDone:
   const [quantity, setQuantity] = useState('')
   const [reason, setReason] = useState('')
   const [confirming, setConfirming] = useState(false)
+  useUnsavedWork(quantity || reason.trim() || confirming || op.error ? 'Salida de inventario sin confirmar' : null)
   const amount = Number(quantity)
   const valid = Number.isInteger(amount) && amount >= 1 && amount <= bundle.quantity
 
@@ -182,6 +184,7 @@ function TransferForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onD
   const [description, setDescription] = useState('')
   const [reason, setReason] = useState('')
   const [confirming, setConfirming] = useState(false)
+  useUnsavedWork(location.rackId || description.trim() || reason.trim() || confirming || op.error ? 'Traslado sin confirmar' : null)
   const sameRack = location.rackId === bundle.rackId && location.inventoryLocationId === bundle.inventoryLocationId
   const valid = !!location.rackId && !sameRack
 
@@ -246,6 +249,7 @@ function AdjustmentForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; o
   const [quantity, setQuantity] = useState('')
   const [reason, setReason] = useState('')
   const [confirming, setConfirming] = useState(false)
+  useUnsavedWork(quantity || reason.trim() || confirming || op.error ? 'Ajuste de inventario sin confirmar' : null)
   const amount = Number(quantity)
   const incoming = type === 'ADJUSTMENT_IN'
   const valid =

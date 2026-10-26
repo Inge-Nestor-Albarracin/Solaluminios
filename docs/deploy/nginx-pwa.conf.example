@@ -1,0 +1,77 @@
+# PROPUESTA (no aplicada): servidor del frontend PWA de Solaluminios con nginx.
+# Ajusta server_name, rutas de certificados y el origen del API antes de usarla
+# y pruébala primero en un entorno de pruebas. No contiene secretos.
+#
+# Requisitos de la PWA:
+# - HTTPS válido (sin él no hay service worker, instalación, push ni Web Bluetooth).
+# - sw.js, index.html y manifest.webmanifest sin caché larga (detección de versiones).
+# - /assets/* (nombres con hash) con caché inmutable.
+# - Rutas internas: cualquier URL de la app devuelve index.html (la app usa
+#   /?view=… para sus vistas; un 404 real se mantiene para archivos inexistentes).
+
+server {
+    listen 80;
+    server_name inventario.ejemplo.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name inventario.ejemplo.com;
+
+    ssl_certificate     /etc/letsencrypt/live/inventario.ejemplo.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/inventario.ejemplo.com/privkey.pem;
+
+    # Carpeta con el resultado de: pnpm --dir apps/web build  (apps/web/dist)
+    root /var/www/solaluminios/web;
+    index index.html;
+
+    # Cabeceras de seguridad: en nginx un add_header dentro de un location
+    # anula los del server, por eso cada location incluye el mismo archivo
+    # (ver security-headers.conf.example).
+    include /etc/nginx/snippets/solaluminios-security.conf;
+
+    # Service worker: siempre revalidado para detectar versiones nuevas.
+    location = /sw.js {
+        include /etc/nginx/snippets/solaluminios-security.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
+    }
+
+    location = /manifest.webmanifest {
+        include /etc/nginx/snippets/solaluminios-security.conf;
+        default_type application/manifest+json;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
+    }
+
+    # Archivos con hash en el nombre: inmutables.
+    location /assets/ {
+        include /etc/nginx/snippets/solaluminios-security.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    location /icons/ {
+        include /etc/nginx/snippets/solaluminios-security.conf;
+        add_header Cache-Control "public, max-age=86400" always;
+        try_files $uri =404;
+    }
+
+    # API NestJS en el mismo dominio (VITE_API_URL=https://inventario.ejemplo.com/api).
+    # El API ya responde Cache-Control: no-store; el service worker no la toca.
+    # Con un proxy delante configura TRUST_PROXY=1 en el API.
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Navegaciones de la app (incluida la recarga en una URL interna).
+    location / {
+        include /etc/nginx/snippets/solaluminios-security.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri /index.html;
+    }
+}

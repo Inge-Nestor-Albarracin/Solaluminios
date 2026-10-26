@@ -8,9 +8,10 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { InventoryModule } from './modules/inventory/inventory.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
+import { PushModule } from './modules/push/push.module.js';
 
 @Module({
-  imports: [DatabaseModule,AuthModule,CatalogModule,LocationsModule,UsersModule,InventoryModule,TasksModule,],
+  imports: [DatabaseModule,AuthModule,CatalogModule,LocationsModule,UsersModule,InventoryModule,TasksModule,PushModule,],
   controllers: [AppController],
   providers: [AppService],
   

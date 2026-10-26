@@ -1065,6 +1065,37 @@ mientras se lee («Detén la lectura para cambiar la distancia»).
   como el SDK, que la potencia cambia el alcance y que se conserva al
   apagarla.
 
+## PWA instalable y notificaciones Web Push (26/10/2026)
+
+Rama `feat/pwa-web-push`. Detalle completo, comandos y tabla de escenarios en
+`README-PWA.md`.
+
+- Web: `vite-plugin-pwa@2.0.0` (injectManifest) con un único service worker
+  propio (`src/sw/sw.ts`): precache solo de archivos estáticos, ninguna ruta
+  para el API, actualización solo tras «Actualizar» (comprueba trabajo sin
+  guardar en esta y otras ventanas), push y clic con vistas permitidas.
+  Manifest «Solaluminios · Inventario», íconos 192/512/maskable desde la marca.
+  Aviso «Sin conexión», tiempo de espera de 30 s en `apiRequest` (resultado
+  incierto conserva la clave). Panel «Este dispositivo» en Inicio.
+- API: módulo `push` (`/push/config`, `/push/subscriptions`, `…/check`,
+  `…/remove`, `/push/test`), `web-push@3.6.7`, VAPID por entorno
+  (`scripts/Configure-Vapid.mjs`), validación de destinos (sin SSRF),
+  reintentos limitados, borrado ante 404/410. Aviso al asignar una tarea
+  (ADMIN → otra persona) después de crearla; un fallo no afecta la tarea.
+- Migración nueva `20261026150000_push_subscriptions` (solo crea
+  `push_subscriptions`). Aplicada en la base de pruebas; **pendiente en
+  desarrollo** (`prisma migrate deploy`).
+- Correcciones: el detalle del paquete ya no se desmonta si una recarga falla
+  (se perdían datos y la clave de una operación incierta); registro del
+  service worker cuando la página ya cargó; listeners de la pistola tras
+  desconexión y «Reconectar».
+- Pruebas: API unit 18/18, e2e 113/113; web build/lint/test OK. Navegador:
+  dos builds (actualización sin perder trabajo), servidor caído en una salida
+  (aplicada una sola vez), push real FCM con página abierta y cerrada,
+  aislamiento entre cuentas. Pistola simulada.
+- Pendiente: Android real con HTTPS, pistola física, migración y VAPID en
+  desarrollo/producción, publicación (propuesta en `docs/deploy/`).
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

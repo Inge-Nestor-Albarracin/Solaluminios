@@ -8,6 +8,7 @@ import {
 import type { Prisma, Task } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import type { SafeUser } from '../auth/auth.types.js';
+import { PushService } from '../push/push.service.js';
 import {
   DEFAULT_PAGE_SIZE,
   type PaginationQueryDto,
@@ -55,7 +56,10 @@ const STATUS_ORDER: Record<TaskStatus, Prisma.TaskOrderByWithRelationInput[]> = 
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly push: PushService,
+  ) {}
 
   // Employees create tasks for themselves; ADMIN (the boss) can assign them
   // to any active user. The creator always comes from the session.
@@ -105,6 +109,9 @@ export class TasksService {
       },
       include: taskInclude,
     });
+    // After the commit and without waiting: a push failure never changes or
+    // repeats the task. Own tasks are not notified.
+    if (assigneeId !== user.id) this.push.notifyTaskAssigned(assigneeId);
     return withStatus(task, now);
   }
 

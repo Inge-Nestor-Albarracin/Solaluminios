@@ -15,6 +15,7 @@ import { Empty, Field, Kpi, Notice, PageHeader } from '../components/ui'
 import type { TagRead } from '../lib/chafon'
 import { bundlePlace, finishLabel, referenceLabel } from '../lib/format'
 import { useChafonReader, type ReaderPower } from '../lib/useChafonReader'
+import { useUnsavedWork } from '../pwa/workGuard'
 import { canOperate, useSession } from '../session/session-context'
 import type { Navigate } from './navigation'
 
@@ -209,6 +210,14 @@ export function BulkReadView({
 
   const onTag = useCallback((tag: TagRead) => addRead(tag.epc, tag.rssi), [addRead])
   const reader = useChafonReader(onTag)
+  // An app update (reload) would cut the Bluetooth link: ask first.
+  useUnsavedWork(
+    reader.reading || reader.trigger
+      ? 'Lectura RFID en curso'
+      : reader.status === 'connected'
+        ? 'Pistola RFID conectada por Bluetooth'
+        : null,
+  )
 
   useEffect(
     () => () => {
@@ -369,6 +378,25 @@ export function BulkReadView({
                   )}
                   <button type="button" className="button button-secondary" onClick={() => void reader.disconnect()}>
                     Desconectar
+                  </button>
+                </>
+              ) : reader.canReconnect ? (
+                <>
+                  <button
+                    type="button"
+                    className="button bulk-main"
+                    disabled={reader.status === 'connecting'}
+                    onClick={() => void reader.reconnect()}
+                  >
+                    {reader.status === 'connecting' ? 'Conectando…' : 'Reconectar'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    disabled={reader.status === 'connecting'}
+                    onClick={() => void reader.connect()}
+                  >
+                    Elegir otro lector
                   </button>
                 </>
               ) : (

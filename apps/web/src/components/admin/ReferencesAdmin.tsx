@@ -3,6 +3,7 @@ import type { Family, Reference } from '../../api/types'
 import { matches } from '../../lib/admin'
 import { useLoad } from '../../lib/useLoad'
 import { useMutation } from '../../lib/useMutation'
+import { useUnsavedWork } from '../../pwa/workGuard'
 import { useSession } from '../../session/session-context'
 import { IconArrow } from '../icons'
 import { Empty, Field, Loading, Notice } from '../ui'
@@ -283,6 +284,7 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
   const [description, setDescription] = useState('')
   const [familyId, setFamilyId] = useState('')
   const create = useMutation()
+  useUnsavedWork(code.trim() || description.trim() ? 'Formulario de referencia sin guardar' : null)
   const normalized = code.trim().toUpperCase()
   const codeInvalid = normalized !== '' && !CODE_PATTERN.test(normalized)
 
