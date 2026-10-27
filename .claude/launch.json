@@ -62,7 +62,8 @@
       ],
       "env": {
         "PORT": "3101",
-        "CORS_ORIGIN": "http://localhost:4173"
+        "CORS_ORIGIN": "http://localhost:4173",
+        "READER_CAPTURE_ENABLED": "true"
       },
       "port": 3101
     },

@@ -12,11 +12,13 @@ export function TaskCard({
   now,
   showAssignee,
   onCompleted,
+  onOpenDispatch,
 }: {
   task: Task
   now: number
   showAssignee: boolean
   onCompleted: () => void
+  onOpenDispatch?: (dispatchId: string) => void
 }) {
   const { request, user } = useSession()
   const [confirming, setConfirming] = useState(false)
@@ -26,9 +28,12 @@ export function TaskCard({
 
   // The list refreshes every minute; meanwhile a task past its deadline is
   // shown as expired and can no longer be completed.
-  const expiredLocally = task.status === 'pending' && new Date(task.dueAt).getTime() <= now
+  const isDispatch = task.kind === 'DISPATCH'
+  // Dispatch tasks never become "incomplete": they stay pending, overdue.
+  const expiredLocally = !isDispatch && task.status === 'pending' && new Date(task.dueAt).getTime() <= now
   const status = expiredLocally ? 'incomplete' : task.status
-  const canComplete = status === 'pending' && task.assigneeId === user?.id
+  const overdue = isDispatch && status === 'pending' && new Date(task.dueAt).getTime() <= now
+  const canComplete = !isDispatch && status === 'pending' && task.assigneeId === user?.id
   const dueSoon = status === 'pending' && new Date(task.dueAt).getTime() - now < 3 * 3_600_000
   const assignedByOther = task.createdById !== task.assigneeId
 
@@ -54,7 +59,7 @@ export function TaskCard({
       <div className="task-main">
         <div className="task-title-row">
           <h3>{task.title}</h3>
-          <span className={`task-status ${status}`}>{expiredLocally ? 'Vencida' : STATUS_LABEL[status]}</span>
+          <span className={`task-status ${status}${overdue ? ' overdue' : ''}`}>{expiredLocally ? 'Vencida' : overdue ? 'Atrasada' : STATUS_LABEL[status]}</span>
         </div>
         {task.description ? <p className="task-description">{task.description}</p> : null}
         <p className="task-meta">
@@ -76,6 +81,14 @@ export function TaskCard({
         </p>
         {error ? <p className="field-error">{error}</p> : null}
       </div>
+
+      {isDispatch && task.dispatchId && onOpenDispatch ? (
+        <div className="task-actions">
+          <button type="button" className="button" onClick={() => onOpenDispatch(task.dispatchId!)}>
+            {status === 'pending' ? 'Abrir despacho' : 'Ver despacho'}
+          </button>
+        </div>
+      ) : null}
 
       {canComplete ? (
         <div className="task-actions">

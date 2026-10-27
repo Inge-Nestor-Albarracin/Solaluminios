@@ -27,13 +27,20 @@ const personSelect = { select: { id: true, name: true, role: true } } as const;
 const taskInclude = {
   assignee: personSelect,
   createdBy: personSelect,
+  // Dispatch tasks: link only; requirements come from the dispatch itself.
+  dispatch: { select: { id: true, number: true, status: true } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed
 // before its deadline leaves the pending list and becomes "incomplete". It is
 // never deleted, so it stays in the incomplete history.
-export function taskStatus(task: Pick<Task, 'completedAt' | 'dueAt'>, now: Date): TaskStatus {
+//
+// DISPATCH tasks are different: they complete only when their dispatch is
+// confirmed, stay "pending" (flagged overdue) after the deadline instead of
+// becoming incomplete, and leave every list when cancelled with the dispatch.
+export function taskStatus(task: Pick<Task, 'completedAt' | 'dueAt'> & Partial<Pick<Task, 'kind' | 'cancelledAt'>>, now: Date): TaskStatus {
   if (task.completedAt) return 'completed';
+  if (task.kind === 'DISPATCH') return 'pending';
   return task.dueAt.getTime() <= now.getTime() ? 'incomplete' : 'pending';
 }
 
@@ -42,9 +49,13 @@ function statusWhere(status: TaskStatus, now: Date): Prisma.TaskWhereInput {
     case 'completed':
       return { completedAt: { not: null } };
     case 'incomplete':
-      return { completedAt: null, dueAt: { lte: now } };
+      return { kind: 'GENERAL', completedAt: null, dueAt: { lte: now } };
     default:
-      return { completedAt: null, dueAt: { gt: now } };
+      return {
+        completedAt: null,
+        cancelledAt: null,
+        OR: [{ kind: 'DISPATCH' }, { dueAt: { gt: now } }],
+      };
   }
 }
 
@@ -154,7 +165,7 @@ export class TasksService {
     const [pending, dueSoon, completed, incomplete] = await this.prisma.$transaction([
       this.prisma.task.count({ where: { ...scope, ...statusWhere('pending', now) } }),
       this.prisma.task.count({
-        where: { ...scope, completedAt: null, dueAt: { gt: now, lte: endOfDay } },
+        where: { ...scope, completedAt: null, cancelledAt: null, dueAt: { gt: now, lte: endOfDay } },
       }),
       this.prisma.task.count({ where: { ...scope, ...statusWhere('completed', now) } }),
       this.prisma.task.count({ where: { ...scope, ...statusWhere('incomplete', now) } }),
@@ -177,7 +188,7 @@ export class TasksService {
   async complete(id: string, user: SafeUser) {
     const now = new Date();
     const updated = await this.prisma.task.updateMany({
-      where: { id, assigneeId: user.id, completedAt: null, dueAt: { gt: now } },
+      where: { id, kind: 'GENERAL', assigneeId: user.id, completedAt: null, dueAt: { gt: now } },
       data: { completedAt: now },
     });
 
@@ -186,6 +197,11 @@ export class TasksService {
       throw new NotFoundException('La tarea no existe');
     }
     if (updated.count === 1) return withStatus(task, now);
+    if (task.kind === 'DISPATCH') {
+      throw new ConflictException(
+        'Las tareas de despacho se completan al confirmar la salida del despacho, no desde aquí',
+      );
+    }
     if (task.assigneeId !== user.id) {
       throw new ForbiddenException('Solo la persona asignada puede completar la tarea');
     }
@@ -210,8 +226,12 @@ export class TasksService {
   }
 }
 
-function withStatus<T extends Pick<Task, 'completedAt' | 'dueAt'>>(task: T, now: Date) {
-  return { ...task, status: taskStatus(task, now) };
+function withStatus<T extends Pick<Task, 'completedAt' | 'dueAt'> & Partial<Pick<Task, 'kind' | 'cancelledAt'>>>(task: T, now: Date) {
+  return {
+    ...task,
+    status: taskStatus(task, now),
+    overdue: task.kind === 'DISPATCH' && !task.completedAt && task.dueAt.getTime() <= now.getTime(),
+  };
 }
 
 function paginate(query: PaginationQueryDto) {

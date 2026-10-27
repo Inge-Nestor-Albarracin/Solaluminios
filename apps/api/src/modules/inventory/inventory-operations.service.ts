@@ -21,6 +21,7 @@ import {
   bundleDetailInclude,
   movementInclude,
   requireActiveRackInLocation,
+  reservedQuantity,
   type Tx,
 } from './inventory.shared.js';
 
@@ -84,6 +85,7 @@ export class InventoryOperationsService {
         m.type === 'EXIT' && m.quantity === dto.quantity && m.reason === reason,
       apply: async (tx, bundle) => {
         this.requireBalance(bundle, dto.quantity);
+        await this.requireUnreserved(tx, bundle, dto.quantity, 'La salida');
         const quantityAfter = bundle.quantity - dto.quantity;
         await tx.bundle.update({
           where: { id: bundle.id },
@@ -123,6 +125,13 @@ export class InventoryOperationsService {
           dto.rackId,
           dto.inventoryLocationId,
         );
+        // Reservations belong to the dispatch location: moving reserved
+        // material would invalidate them.
+        if ((await reservedQuantity(tx, bundle.id)) > 0) {
+          throw new ConflictException(
+            'El paquete tiene perfiles reservados para una orden de venta; no se traslada mientras la reserva esté activa',
+          );
+        }
         if (
           bundle.inventoryLocationId === dto.inventoryLocationId &&
           bundle.rackId === dto.rackId
@@ -162,7 +171,10 @@ export class InventoryOperationsService {
         m.reason === dto.reason,
       apply: async (tx, bundle) => {
         const incoming = dto.type === 'ADJUSTMENT_IN';
-        if (!incoming) this.requireBalance(bundle, dto.quantity);
+        if (!incoming) {
+          this.requireBalance(bundle, dto.quantity);
+          await this.requireUnreserved(tx, bundle, dto.quantity, 'El ajuste');
+        }
         if (incoming && bundle.quantity + dto.quantity > MAX_BUNDLE_QUANTITY) {
           throw new BadRequestException(
             `El saldo resultante superaría el máximo de ${MAX_BUNDLE_QUANTITY} perfiles por paquete`,
@@ -289,6 +301,18 @@ export class InventoryOperationsService {
       include: bundleDetailInclude,
     });
     return { replayed: true, movement, bundle };
+  }
+
+  // Manual exits and negative adjustments can only use unreserved profiles;
+  // reserved ones leave through their dispatch, or the reservation is
+  // released first (order/dispatch cancellation).
+  private async requireUnreserved(tx: Tx, bundle: Bundle, quantity: number, operation: string) {
+    const reserved = await reservedQuantity(tx, bundle.id);
+    if (reserved > 0 && quantity > bundle.quantity - reserved) {
+      throw new ConflictException(
+        `${operation} supera lo disponible: ${reserved} de ${bundle.quantity} perfiles están reservados para órdenes de venta. Libera o reasigna la reserva antes de continuar.`,
+      );
+    }
   }
 
   private requireBalance(bundle: Bundle, quantity: number) {

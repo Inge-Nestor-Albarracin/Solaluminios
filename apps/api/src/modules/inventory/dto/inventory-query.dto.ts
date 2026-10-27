@@ -71,6 +71,13 @@ export class ListBundlesQueryDto extends InventoryFiltersDto {
   @ValidateIf(optional)
   @IsBoolean({ message: 'available debe ser true o false' })
   available?: boolean;
+
+  // true: only bundles without provenance (origin unknown), for
+  // administrative classification.
+  @Transform(toBoolean)
+  @ValidateIf(optional)
+  @IsBoolean({ message: 'unclassified debe ser true o false' })
+  unclassified?: boolean;
 }
 
 export class InventorySummaryQueryDto extends InventoryFiltersDto {}

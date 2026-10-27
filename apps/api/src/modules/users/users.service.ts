@@ -64,6 +64,16 @@ export class UsersService {
 
   // Changes take effect on the user's next request: the guard re-reads the
   // role from the database every time.
+  async setLocation(id: string, inventoryLocationId: string | null) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) throw new NotFoundException('El usuario no existe');
+    if (inventoryLocationId) {
+      const location = await this.prisma.inventoryLocation.findUnique({ where: { id: inventoryLocationId } });
+      if (!location?.active) throw new BadRequestException('La ubicación no existe o está inactiva');
+    }
+    return this.prisma.user.update({ where: { id }, data: { defaultInventoryLocationId: inventoryLocationId }, select: SAFE_SELECT });
+  }
+
   async setRole(id: string, role: UserRole, actorId: string) {
     if (id === actorId) {
       throw new BadRequestException('No puedes cambiar tu propio rol');

@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY'
+export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OPERATOR'
 
 export interface SessionUser {
   id: string
@@ -90,6 +90,8 @@ export interface Bundle {
   finish: Finish
   inventoryLocation: InventoryLocation & { branch: Branch }
   rack: (Rack & { aisle: Aisle }) | null
+  // Provenance (no cost). null = origin unknown (historical stock).
+  lot?: { id: string; code: string; origin: 'CHINA' | 'NATIONAL'; supplier: { id: string; code: string; name: string } | null } | null
 }
 
 export interface MovementPlace {

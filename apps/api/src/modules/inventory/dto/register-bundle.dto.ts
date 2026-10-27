@@ -17,7 +17,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { ArrivalDatePrecision } from '../../../generated/prisma/client.js';
+import { ArrivalDatePrecision, MaterialOrigin } from '../../../generated/prisma/client.js';
 
 export const BUNDLE_REGISTRATION_TYPES = ['INITIAL_STOCK', 'ENTRY'] as const;
 export type BundleRegistrationType = (typeof BUNDLE_REGISTRATION_TYPES)[number];
@@ -109,6 +109,20 @@ export class RegisterBundleDto {
   @IsString()
   @MaxLength(500)
   notes?: string | null;
+
+  // Provenance. Optional for compatibility: without it the origin stays
+  // UNKNOWN (as before) and the bundle cannot fulfil sales until classified.
+  // NATIONAL requires the supplier; CHINA without supplier uses the
+  // configured Chinese supplier.
+  @IsOptional()
+  @IsEnum(MaterialOrigin, { message: 'origin debe ser CHINA o NATIONAL' })
+  origin?: MaterialOrigin;
+
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  supplierId?: string;
 }
 
 // Upper bound of bundles saved in one batch (one transaction).

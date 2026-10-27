@@ -35,6 +35,17 @@ enum UserRole {
   WAREHOUSE
   SALES
   READ_ONLY
+  // Supplier-side operator in China: only pre-registers bundles of the
+  // configured Chinese supplier (explicit routes only, see RolesGuard).
+  CHINA_OPERATOR
+}
+
+// Origin of the material (independent from the supplier's address). Bundles
+// without a lot have an UNKNOWN origin: they stay in stock but cannot fulfil
+// an order line until an administrator classifies them.
+enum MaterialOrigin {
+  CHINA
+  NATIONAL
 }
 
 // LOCATIONS: existing physical table/column names are preserved with mappings.
@@ -69,6 +80,9 @@ model InventoryLocation {
   defaultUsers      User[]
   outgoingMovements InventoryMovement[] @relation("MovementSourceLocation")
   incomingMovements InventoryMovement[] @relation("MovementDestinationLocation")
+  salesOrders       SalesOrder[]
+  dispatches        Dispatch[]
+  readerDevices     ReaderDevice[]
 
   @@unique([branchId, code], map: "warehouses_branchId_code_key")
   @@map("warehouses")
@@ -131,9 +145,14 @@ model Reference {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  family   ProductFamily? @relation(fields: [familyId], references: [id])
-  bundles  Bundle[]
-  
+  family           ProductFamily?           @relation(fields: [familyId], references: [id])
+  bundles          Bundle[]
+  lots             StockLot[]
+  preRegistrations InboundPreRegistration[]
+  purchaseLines    PurchaseLine[]
+  quoteLines       QuoteLine[]
+  orderLines       SalesOrderLine[]
+
   @@index([familyId])
   @@map("references")
 }
@@ -146,12 +165,15 @@ model Finish {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  bundles  Bundle[]
-  
+  bundles          Bundle[]
+  lots             StockLot[]
+  preRegistrations InboundPreRegistration[]
+  purchaseLines    PurchaseLine[]
+  quoteLines       QuoteLine[]
+  orderLines       SalesOrderLine[]
 
   @@map("finishes")
 }
-
 
 model User {
   id                         String   @id @default(cuid())
@@ -164,11 +186,31 @@ model User {
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
-  defaultInventoryLocation InventoryLocation?  @relation(fields: [defaultInventoryLocationId], references: [id], onDelete: Restrict)
+  defaultInventoryLocation InventoryLocation?       @relation(fields: [defaultInventoryLocationId], references: [id], onDelete: Restrict)
   movements                InventoryMovement[]
-  tasksAssigned            Task[]              @relation("TaskAssignee")
-  tasksCreated             Task[]              @relation("TaskCreator")
+  tasksAssigned            Task[]                   @relation("TaskAssignee")
+  tasksCreated             Task[]                   @relation("TaskCreator")
   pushSubscriptions        PushSubscription[]
+  shipmentsCreated         InboundShipment[]        @relation("ShipmentCreator")
+  preRegistrationsCreated  InboundPreRegistration[] @relation("PreRegistrationCreator")
+  preRegistrationsReceived InboundPreRegistration[] @relation("PreRegistrationReceiver")
+  lotsCreated              StockLot[]               @relation("LotCreator")
+  purchasesCreated         Purchase[]               @relation("PurchaseCreator")
+  purchasesConfirmed       Purchase[]               @relation("PurchaseConfirmer")
+  customersCreated         Customer[]               @relation("CustomerCreator")
+  quotesCreated            Quote[]                  @relation("QuoteCreator")
+  ordersCreated            SalesOrder[]             @relation("OrderCreator")
+  reservationsCreated      StockReservation[]       @relation("ReservationCreator")
+  dispatchesCreated        Dispatch[]               @relation("DispatchCreator")
+  dispatchesAssigned       Dispatch[]               @relation("DispatchAssignee")
+  dispatchesConfirmed      Dispatch[]               @relation("DispatchConfirmer")
+  picksCreated             DispatchPick[]           @relation("PickCreator")
+  incidentsResolved        DispatchIncident[]       @relation("IncidentResolver")
+  notifications            NotificationOutbox[]
+  readerDevicesCreated     ReaderDevice[]           @relation("ReaderDeviceCreator")
+  readerSessionsOpened     ReaderSession[]          @relation("ReaderSessionOpener")
+  readerObservations       ReaderObservation[]
+  auditEvents              AuditEvent[]
 
   @@index([defaultInventoryLocationId])
   @@map("users")
@@ -187,16 +229,24 @@ model Bundle {
   arrivalMonth         Int?
   arrivalDatePrecision ArrivalDatePrecision @default(UNKNOWN)
   notes                String?
+  // Canonical origin, supplier and acquisition cost come from the lot. null:
+  // historical stock with unknown origin (never assumed Chinese).
+  lotId                String?
   createdAt            DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime             @updatedAt @db.Timestamptz(3)
 
-  reference         Reference           @relation(fields: [referenceId], references: [id], onDelete: Restrict)
-  finish            Finish              @relation(fields: [finishId], references: [id], onDelete: Restrict)
-  inventoryLocation InventoryLocation   @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
-  rack              Rack?               @relation(fields: [rackId], references: [id], onDelete: Restrict)
+  reference         Reference               @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish            Finish                  @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  inventoryLocation InventoryLocation       @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  rack              Rack?                   @relation(fields: [rackId], references: [id], onDelete: Restrict)
+  lot               StockLot?               @relation(fields: [lotId], references: [id], onDelete: Restrict)
   movements         InventoryMovement[]
+  preRegistration   InboundPreRegistration?
+  reservations      StockReservation[]
+  picks             DispatchPick[]
 
   @@index([referenceId, finishId, inventoryLocationId])
+  @@index([lotId])
   @@index([finishId])
   @@index([inventoryLocationId])
   @@index([rackId])
@@ -218,10 +268,13 @@ model InventoryMovement {
   performedById         String
   reason                String?
   operationKey          String                @unique
+  // Set on exits confirmed by a dispatch (traceability to the sales order).
+  dispatchId            String?
   createdAt             DateTime              @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime              @updatedAt @db.Timestamptz(3)
 
   bundle              Bundle             @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  dispatch            Dispatch?          @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
   performedBy         User               @relation(fields: [performedById], references: [id], onDelete: Restrict)
   sourceLocation      InventoryLocation? @relation("MovementSourceLocation", fields: [sourceLocationId], references: [id], onDelete: Restrict)
   destinationLocation InventoryLocation? @relation("MovementDestinationLocation", fields: [destinationLocationId], references: [id], onDelete: Restrict)
@@ -235,6 +288,7 @@ model InventoryMovement {
   @@index([destinationLocationId])
   @@index([sourceRackId])
   @@index([destinationRackId])
+  @@index([dispatchId])
   @@map("inventory_movements")
 }
 
@@ -244,19 +298,31 @@ model InventoryMovement {
 //   incomplete -> not completed and dueAt has passed (leaves the active list,
 //                 kept as history in the incomplete list)
 //   pending    -> otherwise
-model Task {
-  id           String    @id @default(cuid())
-  title        String
-  description  String?
-  dueAt        DateTime  @db.Timestamptz(3)
-  assigneeId   String
-  createdById  String
-  completedAt  DateTime? @db.Timestamptz(3)
-  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+// DISPATCH tasks are linked to a dispatch: they are completed only by
+// confirming the dispatch (never by the generic "complete" route), stay
+// pending while overdue and are cancelled with their dispatch.
+enum TaskKind {
+  GENERAL
+  DISPATCH
+}
 
-  assignee  User @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-  createdBy User @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  dueAt       DateTime  @db.Timestamptz(3)
+  assigneeId  String
+  createdById String
+  completedAt DateTime? @db.Timestamptz(3)
+  kind        TaskKind  @default(GENERAL)
+  dispatchId  String?   @unique
+  cancelledAt DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+
+  assignee  User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy User      @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  dispatch  Dispatch? @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
 
   @@index([assigneeId, completedAt, dueAt])
   @@index([createdById])
@@ -283,4 +349,748 @@ model PushSubscription {
 
   @@index([userId])
   @@map("push_subscriptions")
+}
+
+// ==========================================================================
+// SUPPLY: suppliers, configuration, China pre-registration, lots, purchases
+// ==========================================================================
+
+// Administrative settings (e.g. the fixed Chinese supplier, the dispatch
+// supervisor). Values are ids or plain text, never secrets.
+model Setting {
+  key         String   @id
+  value       String
+  updatedById String?
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("settings")
+}
+
+model Supplier {
+  id        String           @id @default(cuid())
+  code      String           @unique
+  name      String
+  taxId     String?
+  // Origins this supplier may provide (a supplier is not an origin).
+  origins   MaterialOrigin[]
+  active    Boolean          @default(true)
+  notes     String?
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime         @updatedAt @db.Timestamptz(3)
+
+  lots       StockLot[]
+  shipments  InboundShipment[]
+  purchases  Purchase[]
+  quoteLines QuoteLine[]
+  orderLines SalesOrderLine[]
+
+  @@map("suppliers")
+}
+
+enum ShipmentStatus {
+  OPEN
+  CLOSED
+}
+
+// Grouping of China pre-registrations (set by administration, not per chip).
+model InboundShipment {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  supplierId  String
+  status      ShipmentStatus @default(OPEN)
+  notes       String?
+  createdById String
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  closedAt    DateTime?      @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(3)
+
+  supplier         Supplier                 @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy        User                     @relation("ShipmentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  lots             StockLot[]
+  preRegistrations InboundPreRegistration[]
+
+  @@index([supplierId, status])
+  @@map("inbound_shipments")
+}
+
+enum LotKind {
+  CHINA_SHIPMENT
+  MANUAL_ENTRY
+  OPENING
+}
+
+// Canonical provenance and acquisition cost of a group of bundles: one
+// reference, one finish, one origin, at most one supplier. unitCost is the
+// confirmed cost per profile in COP; null = cost pending (never zero).
+model StockLot {
+  id              String         @id @default(cuid())
+  code            String         @unique
+  kind            LotKind
+  referenceId     String
+  finishId        String
+  origin          MaterialOrigin
+  supplierId      String?
+  shipmentId      String?
+  entryKey        String?
+  purchaseLineId  String?
+  unitCost        Decimal?       @db.Decimal(18, 6)
+  costConfirmedAt DateTime?      @db.Timestamptz(3)
+  notes           String?
+  createdById     String
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+
+  reference        Reference                @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish           Finish                   @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier         Supplier?                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  shipment         InboundShipment?         @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  purchaseLine     PurchaseLine?            @relation(fields: [purchaseLineId], references: [id], onDelete: Restrict)
+  createdBy        User                     @relation("LotCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  bundles          Bundle[]
+  preRegistrations InboundPreRegistration[]
+
+  @@unique([shipmentId, referenceId, finishId])
+  @@unique([entryKey, referenceId, finishId])
+  @@index([referenceId, finishId, origin, supplierId])
+  @@index([purchaseLineId])
+  @@map("stock_lots")
+}
+
+enum PreRegistrationStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
+// A bundle announced from China (EPC + expected contents). It is NOT stock in
+// Colombia: the Bundle is created only when it is received.
+model InboundPreRegistration {
+  id                String                @id @default(cuid())
+  epc               String
+  lotId             String
+  shipmentId        String
+  referenceId       String
+  finishId          String
+  expectedQuantity  Int
+  status            PreRegistrationStatus @default(PENDING)
+  operationKey      String                @unique
+  createdById       String
+  createdAt         DateTime              @default(now()) @db.Timestamptz(3)
+  receivedBundleId  String?               @unique
+  receivedQuantity  Int?
+  receivedAt        DateTime?             @db.Timestamptz(3)
+  receivedById      String?
+  discrepancyReason String?
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(3)
+
+  lot            StockLot        @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  shipment       InboundShipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  reference      Reference       @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish         Finish          @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  createdBy      User            @relation("PreRegistrationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  receivedBy     User?           @relation("PreRegistrationReceiver", fields: [receivedById], references: [id], onDelete: Restrict)
+  receivedBundle Bundle?         @relation(fields: [receivedBundleId], references: [id], onDelete: Restrict)
+
+  @@index([epc])
+  @@index([createdById, createdAt])
+  @@index([shipmentId])
+  @@map("inbound_pre_registrations")
+}
+
+enum PurchaseStatus {
+  DRAFT
+  CONFIRMED
+}
+
+enum DiscountType {
+  NONE
+  PERCENT
+  AMOUNT
+}
+
+// Supplier document. Amounts in the document currency (2 decimals); COP
+// conversions keep the applied rate, its date and source. Computed fields
+// are recalculated on every draft save and frozen on confirmation.
+model Purchase {
+  id                      String         @id @default(cuid())
+  supplierId              String
+  documentNumber          String
+  documentDate            DateTime       @db.Date
+  currency                String         @default("COP") @db.Char(3)
+  exchangeRate            Decimal?       @db.Decimal(18, 6)
+  exchangeRateDate        DateTime?      @db.Date
+  exchangeRateSource      String?
+  globalDiscountType      DiscountType   @default(NONE)
+  globalDiscountValue     Decimal        @default(0) @db.Decimal(18, 4)
+  // Conditional discounts (e.g. prompt payment) are recorded, not deducted
+  // from cost: their treatment needs an accounting policy.
+  conditionalDiscountNote String?
+  status                  PurchaseStatus @default(DRAFT)
+  notes                   String?
+  grossTotal              Decimal        @default(0) @db.Decimal(18, 2)
+  lineDiscountTotal       Decimal        @default(0) @db.Decimal(18, 2)
+  globalDiscountTotal     Decimal        @default(0) @db.Decimal(18, 2)
+  netTotal                Decimal        @default(0) @db.Decimal(18, 2)
+  taxTotal                Decimal        @default(0) @db.Decimal(18, 2)
+  chargesTotal            Decimal        @default(0) @db.Decimal(18, 2)
+  documentTotal           Decimal        @default(0) @db.Decimal(18, 2)
+  createdById             String
+  confirmedById           String?
+  confirmedAt             DateTime?      @db.Timestamptz(3)
+  createdAt               DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime       @updatedAt @db.Timestamptz(3)
+
+  supplier    Supplier         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy   User             @relation("PurchaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  confirmedBy User?            @relation("PurchaseConfirmer", fields: [confirmedById], references: [id], onDelete: Restrict)
+  lines       PurchaseLine[]
+  charges     PurchaseCharge[]
+
+  @@unique([supplierId, documentNumber])
+  @@map("purchases")
+}
+
+model PurchaseLine {
+  id                   String         @id @default(cuid())
+  purchaseId           String
+  lineNo               Int
+  referenceId          String
+  finishId             String
+  origin               MaterialOrigin
+  // Purchase unit and its explicit equivalence in profiles (1 for "perfil").
+  unitName             String
+  profilesPerUnit      Decimal        @db.Decimal(18, 3)
+  quantity             Decimal        @db.Decimal(18, 3)
+  unitPrice            Decimal        @db.Decimal(18, 6)
+  lineDiscountType     DiscountType   @default(NONE)
+  lineDiscountValue    Decimal        @default(0) @db.Decimal(18, 4)
+  // Explicit per line (no universal rate); required to confirm.
+  taxRatePercent       Decimal?       @db.Decimal(9, 4)
+  taxRecoverable       Boolean?
+  grossAmount          Decimal        @default(0) @db.Decimal(18, 2)
+  lineDiscountAmount   Decimal        @default(0) @db.Decimal(18, 2)
+  globalDiscountAmount Decimal        @default(0) @db.Decimal(18, 2)
+  netAmount            Decimal        @default(0) @db.Decimal(18, 2)
+  taxAmount            Decimal        @default(0) @db.Decimal(18, 2)
+  chargesAmount        Decimal        @default(0) @db.Decimal(18, 2)
+  costAmount           Decimal        @default(0) @db.Decimal(18, 2)
+  costAmountCop        Decimal        @default(0) @db.Decimal(18, 2)
+  profiles             Int            @default(0)
+  unitCostCop          Decimal?       @db.Decimal(18, 6)
+
+  purchase  Purchase   @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  reference Reference  @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish    Finish     @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  lots      StockLot[]
+
+  @@unique([purchaseId, lineNo])
+  @@map("purchase_lines")
+}
+
+// Attributable acquisition costs (freight, handling…), distributed over the
+// lines in proportion to their net amount.
+model PurchaseCharge {
+  id          String   @id @default(cuid())
+  purchaseId  String
+  description String
+  amount      Decimal  @db.Decimal(18, 2)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_charges")
+}
+
+// ==========================================================================
+// SALES: customers, quotes, orders, reservations
+// ==========================================================================
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String
+  taxId       String?
+  phone       String?
+  email       String?
+  address     String?
+  active      Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  createdBy User         @relation("CustomerCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  quotes    Quote[]
+  orders    SalesOrder[]
+
+  @@index([name])
+  @@map("customers")
+}
+
+enum QuoteStatus {
+  DRAFT
+  CONVERTED
+  CANCELLED
+}
+
+enum PricingMethod {
+  // price = cost × (1 + p)
+  MARKUP_ON_COST
+  // price = cost ÷ (1 − p)
+  GROSS_MARGIN
+  // authorised commercial price with a reason
+  MANUAL
+}
+
+// Quotes never reserve or move stock. Lines keep a copy of the conditions
+// used (labels, cost basis, method, percent, taxes).
+model Quote {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  customerId    String
+  customerName  String
+  status        QuoteStatus @default(DRAFT)
+  validUntil    DateTime?   @db.Date
+  currency      String      @default("COP") @db.Char(3)
+  notes         String?
+  subtotal      Decimal     @default(0) @db.Decimal(18, 2)
+  discountTotal Decimal     @default(0) @db.Decimal(18, 2)
+  taxTotal      Decimal     @default(0) @db.Decimal(18, 2)
+  total         Decimal     @default(0) @db.Decimal(18, 2)
+  createdById   String
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+
+  customer  Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdBy User        @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  lines     QuoteLine[]
+  order     SalesOrder?
+
+  @@index([createdById, createdAt])
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id                   String         @id @default(cuid())
+  quoteId              String
+  lineNo               Int
+  referenceId          String
+  finishId             String
+  origin               MaterialOrigin
+  supplierId           String?
+  quantity             Int
+  pricingMethod        PricingMethod
+  pricingPercent       Decimal?       @db.Decimal(9, 4)
+  costBasis            Decimal?       @db.Decimal(18, 6)
+  costLotId            String?
+  priceReason          String?
+  unitPrice            Decimal        @db.Decimal(18, 2)
+  discountPercent      Decimal        @default(0) @db.Decimal(9, 4)
+  taxRatePercent       Decimal        @db.Decimal(9, 4)
+  lineSubtotal         Decimal        @db.Decimal(18, 2)
+  discountAmount       Decimal        @db.Decimal(18, 2)
+  taxAmount            Decimal        @db.Decimal(18, 2)
+  lineTotal            Decimal        @db.Decimal(18, 2)
+  referenceCode        String
+  referenceDescription String?
+  finishCode           String
+  finishDescription    String?
+  supplierName         String?
+
+  quote     Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  reference Reference @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish    Finish    @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier  Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@unique([quoteId, lineNo])
+  @@map("quote_lines")
+}
+
+// Lifecycle only; fulfilment (reserved/dispatched) is derived from the
+// reservations and confirmed dispatch lines.
+//   DRAFT          converted from a quote, not confirmed yet
+//   PENDING_SUPPLY confirmation found shortages: nothing reserved
+//   CONFIRMED      every line fully reserved
+//   COMPLETED      confirmed dispatches cover every line
+//   CANCELLED      remaining reservations released
+enum SalesOrderStatus {
+  DRAFT
+  PENDING_SUPPLY
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model SalesOrder {
+  id                  String           @id @default(cuid())
+  number              String           @unique
+  quoteId             String?          @unique
+  customerId          String
+  customerName        String
+  inventoryLocationId String?
+  status              SalesOrderStatus @default(DRAFT)
+  currency            String           @default("COP") @db.Char(3)
+  subtotal            Decimal          @db.Decimal(18, 2)
+  discountTotal       Decimal          @db.Decimal(18, 2)
+  taxTotal            Decimal          @db.Decimal(18, 2)
+  total               Decimal          @db.Decimal(18, 2)
+  notes               String?
+  convertOperationKey String           @unique
+  createdById         String
+  confirmedAt         DateTime?        @db.Timestamptz(3)
+  completedAt         DateTime?        @db.Timestamptz(3)
+  cancelledAt         DateTime?        @db.Timestamptz(3)
+  cancelReason        String?
+  createdAt           DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @db.Timestamptz(3)
+
+  quote             Quote?             @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  inventoryLocation InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  createdBy         User               @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  lines             SalesOrderLine[]
+  dispatches        Dispatch[]
+
+  @@index([createdById, createdAt])
+  @@index([status])
+  @@map("sales_orders")
+}
+
+model SalesOrderLine {
+  id                   String         @id @default(cuid())
+  salesOrderId         String
+  lineNo               Int
+  referenceId          String
+  finishId             String
+  origin               MaterialOrigin
+  supplierId           String?
+  quantity             Int
+  unitPrice            Decimal        @db.Decimal(18, 2)
+  discountPercent      Decimal        @db.Decimal(9, 4)
+  taxRatePercent       Decimal        @db.Decimal(9, 4)
+  lineSubtotal         Decimal        @db.Decimal(18, 2)
+  discountAmount       Decimal        @db.Decimal(18, 2)
+  taxAmount            Decimal        @db.Decimal(18, 2)
+  lineTotal            Decimal        @db.Decimal(18, 2)
+  referenceCode        String
+  referenceDescription String?
+  finishCode           String
+  finishDescription    String?
+  supplierName         String?
+
+  salesOrder    SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  reference     Reference          @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish        Finish             @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier      Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  reservations  StockReservation[]
+  dispatchLines DispatchLine[]
+
+  @@unique([salesOrderId, lineNo])
+  @@map("sales_order_lines")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+}
+
+// Profiles of one bundle committed to one order line (optionally already
+// assigned to a dispatch line). Available = bundle.quantity − ACTIVE
+// reservations; a trigger keeps ACTIVE reservations ≤ bundle.quantity.
+model StockReservation {
+  id               String            @id @default(cuid())
+  bundleId         String
+  salesOrderLineId String
+  dispatchLineId   String?
+  quantity         Int
+  status           ReservationStatus @default(ACTIVE)
+  createdById      String
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  closedAt         DateTime?         @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+
+  bundle         Bundle         @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  salesOrderLine SalesOrderLine @relation(fields: [salesOrderLineId], references: [id], onDelete: Restrict)
+  dispatchLine   DispatchLine?  @relation(fields: [dispatchLineId], references: [id], onDelete: Restrict)
+  createdBy      User           @relation("ReservationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([bundleId, status])
+  @@index([salesOrderLineId, status])
+  @@index([dispatchLineId, status])
+  @@map("stock_reservations")
+}
+
+// ==========================================================================
+// DISPATCH: authorised delivery from one location, its task and picking
+// ==========================================================================
+
+enum DispatchStatus {
+  OPEN
+  CONFIRMED
+  CANCELLED
+}
+
+model Dispatch {
+  id                  String         @id @default(cuid())
+  number              String         @unique
+  salesOrderId        String
+  inventoryLocationId String
+  assigneeId          String
+  dueAt               DateTime       @db.Timestamptz(3)
+  status              DispatchStatus @default(OPEN)
+  // Authorised partial delivery of an order that was not fully reserved.
+  partial             Boolean        @default(false)
+  createOperationKey  String         @unique
+  confirmOperationKey String?        @unique
+  createdById         String
+  createdAt           DateTime       @default(now()) @db.Timestamptz(3)
+  confirmedAt         DateTime?      @db.Timestamptz(3)
+  confirmedById       String?
+  cancelledAt         DateTime?      @db.Timestamptz(3)
+  cancelReason        String?
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(3)
+
+  salesOrder        SalesOrder           @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  inventoryLocation InventoryLocation    @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  assignee          User                 @relation("DispatchAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy         User                 @relation("DispatchCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  confirmedBy       User?                @relation("DispatchConfirmer", fields: [confirmedById], references: [id], onDelete: Restrict)
+  lines             DispatchLine[]
+  picks             DispatchPick[]
+  incidents         DispatchIncident[]
+  task              Task?
+  movements         InventoryMovement[]
+  readerSessions    ReaderSession[]
+  observations      ReaderObservation[]
+  notifications     NotificationOutbox[]
+
+  @@index([salesOrderId])
+  @@index([assigneeId, status])
+  @@index([inventoryLocationId, status])
+  @@map("dispatches")
+}
+
+model DispatchLine {
+  id                 String @id @default(cuid())
+  dispatchId         String
+  salesOrderLineId   String
+  quantity           Int
+  // Confirmed delivery; set only by the dispatch confirmation.
+  dispatchedQuantity Int    @default(0)
+
+  dispatch       Dispatch           @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  salesOrderLine SalesOrderLine     @relation(fields: [salesOrderLineId], references: [id], onDelete: Restrict)
+  reservations   StockReservation[]
+  picks          DispatchPick[]
+
+  @@unique([dispatchId, salesOrderLineId])
+  @@map("dispatch_lines")
+}
+
+// Bundle prepared for a dispatch line with an explicit quantity of profiles.
+// Re-reading the same EPC never adds the bundle again.
+model DispatchPick {
+  id             String   @id @default(cuid())
+  dispatchId     String
+  dispatchLineId String
+  bundleId       String
+  quantity       Int
+  createdById    String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  dispatch     Dispatch     @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  dispatchLine DispatchLine @relation(fields: [dispatchLineId], references: [id], onDelete: Restrict)
+  bundle       Bundle       @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  createdBy    User         @relation("PickCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([dispatchId, bundleId])
+  @@map("dispatch_picks")
+}
+
+enum IncidentKind {
+  UNKNOWN_EPC
+  WRONG_MATERIAL
+  WRONG_ORIGIN
+  WRONG_SUPPLIER
+  UNKNOWN_ORIGIN
+  WRONG_LOCATION
+  INSUFFICIENT
+  NOT_AVAILABLE
+  ALREADY_DISPATCHED
+  OTHER
+}
+
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+}
+
+// Discrepancy found while preparing a dispatch. Repeated reads of the same
+// chip update `occurrences` instead of opening new incidents.
+model DispatchIncident {
+  id           String         @id @default(cuid())
+  dispatchId   String
+  kind         IncidentKind
+  epc          String
+  bundleId     String?
+  message      String
+  status       IncidentStatus @default(OPEN)
+  occurrences  Int            @default(1)
+  source       String
+  firstSeenAt  DateTime       @default(now()) @db.Timestamptz(3)
+  lastSeenAt   DateTime       @default(now()) @db.Timestamptz(3)
+  resolution   String?
+  resolvedById String?
+  resolvedAt   DateTime?      @db.Timestamptz(3)
+
+  dispatch   Dispatch @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  resolvedBy User?    @relation("IncidentResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@index([dispatchId, status])
+  @@map("dispatch_incidents")
+}
+
+// ==========================================================================
+// NOTIFICATIONS: persistent outbox written in the same transaction as the
+// business change; a worker delivers it with Web Push (bounded retries).
+// ==========================================================================
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model NotificationOutbox {
+  id            String       @id @default(cuid())
+  userId        String
+  kind          String
+  dedupeKey     String       @unique
+  dispatchId    String?
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now()) @db.Timestamptz(3)
+  lastError     String?
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  sentAt        DateTime?    @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(3)
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dispatch Dispatch? @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@map("notification_outbox")
+}
+
+// ==========================================================================
+// RFID READERS (phase 2): fixed readers send observations to the same
+// dispatch validation; they never move stock by themselves.
+// ==========================================================================
+
+model ReaderDevice {
+  id                  String    @id @default(cuid())
+  code                String    @unique
+  name                String
+  inventoryLocationId String
+  // scrypt hash of the device secret (shown once on creation).
+  secretHash          String
+  active              Boolean   @default(true)
+  simulator           Boolean   @default(false)
+  createdById         String
+  lastSeenAt          DateTime? @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+
+  inventoryLocation InventoryLocation   @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  createdBy         User                @relation("ReaderDeviceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  sessions          ReaderSession[]
+  events            ReaderEvent[]
+  observations      ReaderObservation[]
+
+  @@map("reader_devices")
+}
+
+enum ReaderSessionStatus {
+  OPEN
+  CLOSED
+}
+
+// Explicit association between a reader and an authorised dispatch.
+model ReaderSession {
+  id         String              @id @default(cuid())
+  deviceId   String
+  dispatchId String
+  status     ReaderSessionStatus @default(OPEN)
+  openedById String
+  openedAt   DateTime            @default(now()) @db.Timestamptz(3)
+  closedAt   DateTime?           @db.Timestamptz(3)
+  updatedAt  DateTime            @updatedAt @db.Timestamptz(3)
+
+  device       ReaderDevice        @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  dispatch     Dispatch            @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  openedBy     User                @relation("ReaderSessionOpener", fields: [openedById], references: [id], onDelete: Restrict)
+  observations ReaderObservation[]
+
+  @@index([deviceId, status])
+  @@map("reader_sessions")
+}
+
+// Event ids already received from a device (replays are ignored).
+model ReaderEvent {
+  deviceId   String
+  eventId    String
+  receivedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  device ReaderDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@id([deviceId, eventId])
+  @@map("reader_events")
+}
+
+// One row per chip and capture context (handheld user or reader session),
+// with a counter: thousands of radio detections do not create thousands of
+// rows, movements or notifications.
+model ReaderObservation {
+  id          String   @id @default(cuid())
+  dispatchId  String
+  contextKey  String
+  source      String
+  deviceId    String?
+  sessionId   String?
+  userId      String?
+  epc         String
+  result      String
+  count       Int      @default(1)
+  firstSeenAt DateTime @db.Timestamptz(3)
+  lastSeenAt  DateTime @db.Timestamptz(3)
+  antenna     Int?
+  rssi        Int?
+
+  dispatch Dispatch       @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  device   ReaderDevice?  @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  session  ReaderSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  user     User?          @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([dispatchId, contextKey, epc])
+  @@map("reader_observations")
+}
+
+// Audit trail of administrative corrections and exceptions (lot
+// classification, cost links, quantity discrepancies, manual prices,
+// cancellations, incident resolutions).
+model AuditEvent {
+  id       String   @id @default(cuid())
+  entity   String
+  entityId String
+  action   String
+  data     Json?
+  reason   String?
+  userId   String?
+  at       DateTime @default(now()) @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([entity, entityId])
+  @@map("audit_events")
 }

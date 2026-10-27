@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Req, UnauthorizedException }
 import { Throttle } from '@nestjs/throttler';
 import { Roles } from '../auth/auth.metadata.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
-import { CreateUserDto, UpdateUserActiveDto, UpdateUserRoleDto } from './dto/user.dto.js';
+import { CreateUserDto, UpdateUserActiveDto, UpdateUserLocationDto, UpdateUserRoleDto } from './dto/user.dto.js';
 import { UsersService } from './users.service.js';
 
 @Roles('ADMIN')
@@ -29,6 +29,11 @@ export class UsersController {
   ) {
     if (!request.user) throw new UnauthorizedException();
     return this.usersService.setActive(id, dto.active, request.user.id);
+  }
+
+  @Patch(':id/location')
+  setLocation(@Param('id') id: string, @Body() dto: UpdateUserLocationDto) {
+    return this.usersService.setLocation(id, dto.inventoryLocationId);
   }
 
   @Patch(':id/role')

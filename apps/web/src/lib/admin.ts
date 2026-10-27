@@ -1,13 +1,14 @@
 import type { UserRole } from '../api/types'
 
-export const ROLES: UserRole[] = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY']
+export const ROLES: UserRole[] = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'CHINA_OPERATOR']
 
 // What each role can do today (same matrix as docs/roles-permissions-idor-audit.md).
 export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
-  ADMIN: 'Todo: catálogo, ubicaciones, usuarios, ajustes de inventario y asignar tareas al equipo.',
-  WAREHOUSE: 'Registrar paquetes, salidas y traslados. Consultas de inventario y tareas propias.',
-  SALES: 'Consultas de inventario y tareas propias (el cotizador aún no está disponible).',
-  READ_ONLY: 'Solo consulta de inventario, más sus propias tareas.',
+  ADMIN: 'Todo: catálogo, proveedores, compras y costos, ubicaciones, usuarios, ajustes y excepciones.',
+  WAREHOUSE: 'Registrar y recibir paquetes, salidas y traslados; ejecutar los despachos de su ubicación.',
+  SALES: 'Clientes, cotizaciones y órdenes propias; generar despachos de sus órdenes. Consulta de inventario.',
+  READ_ONLY: 'Solo consulta de inventario, más sus propias tareas. Sin precios ni órdenes.',
+  CHINA_OPERATOR: 'Solo prerregistra paquetes del proveedor chino configurado (interfaz en inglés). Sin inventario ni costos.',
 }
 
 export interface AdminUser {
@@ -16,6 +17,7 @@ export interface AdminUser {
   email: string
   role: UserRole
   active: boolean
+  defaultInventoryLocationId: string | null
   createdAt: string
 }
 

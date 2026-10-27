@@ -41,6 +41,14 @@ export class LocationsService {
     });
   }
 
+  listAllInventoryLocations() {
+    return this.prisma.inventoryLocation.findMany({
+      where: { active: true, branch: { active: true } },
+      select: { id: true, code: true, name: true, type: true, branch: { select: { id: true, code: true, name: true } } },
+      orderBy: [{ branch: { name: 'asc' } }, { name: 'asc' }],
+    });
+  }
+
   async createInventoryLocation(dto: CreateInventoryLocationDto) {
     await this.requireBranch(dto.branchId);
     return this.createUnique(

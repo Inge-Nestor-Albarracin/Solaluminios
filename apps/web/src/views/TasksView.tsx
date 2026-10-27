@@ -22,7 +22,7 @@ interface AdminUser extends TaskPerson {
   active: boolean
 }
 
-export function TasksView({ onChanged }: { onChanged: () => void }) {
+export function TasksView({ onChanged, onOpenDispatch }: { onChanged: () => void; onOpenDispatch?: (dispatchId: string) => void }) {
   const { user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
   const [status, setStatus] = useState<TaskStatus>('pending')
@@ -82,8 +82,8 @@ export function TasksView({ onChanged }: { onChanged: () => void }) {
         title="Tareas"
         description={
           isAdmin
-            ? 'Asigna tareas al equipo y sigue su avance. Las que no se completan antes de su vencimiento salen de pendientes y quedan en incompletas.'
-            : 'Programa tus tareas y revisa las que te asignaron. Si una vence sin completarse, sale de pendientes y queda en incompletas.'
+            ? 'Asigna tareas al equipo y sigue su avance. Las que no se completan antes de su vencimiento salen de pendientes y quedan en incompletas; un despacho atrasado sigue pendiente hasta confirmarse o cancelarse.'
+            : 'Programa tus tareas y revisa las que te asignaron. Si una vence sin completarse, sale de pendientes y queda en incompletas; un despacho atrasado sigue pendiente hasta confirmar su salida.'
         }
       />
 
@@ -157,12 +157,12 @@ export function TasksView({ onChanged }: { onChanged: () => void }) {
                     <span>{group.tasks.length}</span>
                   </h2>
                   {group.tasks.map((task) => (
-                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} />
+                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} />
                   ))}
                 </div>
               ))
             : items.map((task) => (
-                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} />
+                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} />
               ))}
 
           {tasks.data && tasks.data.totalPages > 1 ? (

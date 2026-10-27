@@ -17,6 +17,9 @@ export interface RegisterBundleBody {
   arrivalYear?: number
   arrivalMonth?: number
   notes?: string
+  // Provenance of the entry group (lists saved before this field have none).
+  origin?: 'CHINA' | 'NATIONAL'
+  supplierId?: string
 }
 
 export interface QueueItem {
@@ -28,6 +31,7 @@ export interface QueueItem {
     finish: string
     arrival: string
     location: string
+    origin?: string
   }
 }
 

@@ -38,6 +38,7 @@ export class InventoryQueriesService {
       ...this.commonWhere(query),
       rackId: query.rackId,
       rack: query.aisleId ? { aisleId: query.aisleId } : undefined,
+      lotId: query.unclassified === true ? null : undefined,
       quantity:
         query.available === true
           ? { gt: 0 }

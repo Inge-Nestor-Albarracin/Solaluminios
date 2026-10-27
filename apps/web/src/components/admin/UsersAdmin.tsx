@@ -16,6 +16,8 @@ type Pending = { id: string; kind: 'role'; role: UserRole } | { id: string; kind
 export function UsersAdmin() {
   const { request, user: me } = useSession()
   const users = useLoad<AdminUser[]>('/users')
+  // Dispatches are assigned to warehouse staff of the dispatch location.
+  const locations = useLoad<{ id: string; name: string; branch: { name: string } }[]>('/locations/inventory-locations')
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState<Pending | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -70,6 +72,7 @@ export function UsersAdmin() {
                 <tr>
                   <th>Usuario</th>
                   <th>Rol</th>
+                  <th>Ubicación</th>
                   <th>Estado</th>
                   <th>
                     <span className="sr-only">Acciones</span>
@@ -112,6 +115,31 @@ export function UsersAdmin() {
                             </select>
                           </span>
                         )}
+                      </td>
+                      <td data-label="Ubicación">
+                        <select
+                          aria-label={`Ubicación de ${user.name}`}
+                          disabled={rowAction.pending}
+                          value={user.defaultInventoryLocationId ?? ''}
+                          onChange={async (e) => {
+                            const inventoryLocationId = e.target.value || null
+                            setMessage(null)
+                            const ok = await rowAction.run(() =>
+                              request(`/users/${encodeURIComponent(user.id)}/location`, { method: 'PATCH', body: { inventoryLocationId } }),
+                            )
+                            if (ok) {
+                              setMessage(`${user.name}: ubicación actualizada.`)
+                              users.reload()
+                            }
+                          }}
+                        >
+                          <option value="">Sin ubicación</option>
+                          {(locations.data ?? []).map((location) => (
+                            <option key={location.id} value={location.id}>
+                              {location.branch.name} · {location.name}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td data-label="Estado">
                         <span className={user.active ? 'badge' : 'badge badge-muted'}>{user.active ? 'Activo' : 'Inactivo'}</span>

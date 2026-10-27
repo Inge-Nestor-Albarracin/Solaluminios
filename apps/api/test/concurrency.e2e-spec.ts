@@ -108,10 +108,14 @@ describe('Concurrency and idempotency (e2e)', () => {
   });
 
   it('B. same EPC, two requests past the existence check: one bundle, one movement', async () => {
-    // Single endpoint: both pass "does the EPC exist?" before inserting.
+    // Single endpoint, both requests start their transaction at the same
+    // time. Since the sales/dispatch change every flow that creates a record
+    // for an EPC takes the same identity lock (lockEpc) BEFORE checking the
+    // EPC, so the second request waits and then sees the first bundle (409);
+    // the unique index stays as last line of defence.
     const shared = item({ quantity: 8 });
     const barrier = createBarrier(2);
-    barrierBeforeBundleCreate(fx.prisma, 2, barrier);
+    barrierAtTransactionStart(fx.prisma, 2, barrier);
     const results = await Promise.all([
       http().post('/inventory/bundles').set(as('WAREHOUSE')).send(shared),
       http().post('/inventory/bundles').set(as('WAREHOUSE2')).send({ ...shared, epc: ` ${shared.epc.toLowerCase()} ` }),
@@ -130,7 +134,7 @@ describe('Concurrency and idempotency (e2e)', () => {
     const onlyA = item();
     const onlyB = item();
     const barrier2 = createBarrier(2);
-    barrierBeforeBundleCreate(fx.prisma, 2, barrier2);
+    barrierAtTransactionStart(fx.prisma, 2, barrier2);
     const batch = await Promise.all([
       http().post('/inventory/bundles/batch').set(as('WAREHOUSE')).send({ operationKey: randomUUID(), bundles: [common, onlyA] }),
       http().post('/inventory/bundles/batch').set(as('WAREHOUSE2')).send({ operationKey: randomUUID(), bundles: [common, onlyB] }),

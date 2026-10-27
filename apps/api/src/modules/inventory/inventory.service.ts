@@ -8,7 +8,9 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import { lockEpc } from '../../shared/db.js';
 import type { SafeUser } from '../auth/auth.types.js';
+import { LotsService } from '../supply/lots.service.js';
 import {
   EPC_PATTERN,
   MAX_BATCH_SIZE,
@@ -34,7 +36,10 @@ interface ArrivalData {
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly lots: LotsService,
+  ) {}
 
   // Creates the bundle and its first movement atomically. The bundle keeps
   // the physical arrival (exact, month or unknown); the movement's
@@ -44,7 +49,8 @@ export class InventoryService {
 
     return this.withUniqueEpc(() =>
       this.prisma.$transaction(async (tx) => {
-        const id = await this.createBundle(tx, dto, arrival, user, new Date());
+        const operationKey = 'bundle-registration:' + randomUUID();
+        const id = await this.createBundle(tx, dto, arrival, user, new Date(), operationKey, 'single:' + operationKey);
         return tx.bundle.findUniqueOrThrow({
           where: { id },
           include: bundleDetailInclude,
@@ -114,11 +120,18 @@ export class InventoryService {
       return await this.prisma.$transaction(
         async (tx) => {
           const registeredAt = new Date();
+          // Identity locks of every chip, in a fixed order (no deadlocks
+          // between two lists sharing chips).
+          for (const epc of [...seen.keys()].sort()) await lockEpc(tx, epc);
+          // A concurrent retry with this key may have committed while we
+          // waited for the locks: answer with its result.
+          const committed = await this.replayBatch(operationKey, dtos, user);
+          if (committed) return committed;
           const ids: string[] = [];
           for (const [index, dto] of dtos.entries()) {
             try {
               ids.push(
-                await this.createBundle(tx, dto, arrivals[index], user, registeredAt, keys[index]),
+                await this.createBundle(tx, dto, arrivals[index], user, registeredAt, keys[index], 'batch:' + operationKey),
               );
             } catch (error) {
               throw itemError(error, index, dto.epc);
@@ -157,7 +170,7 @@ export class InventoryService {
           ),
         },
       },
-      include: { bundle: true },
+      include: { bundle: { include: { lot: true } } },
     });
     if (movements.length === 0) return null;
 
@@ -187,7 +200,9 @@ export class InventoryService {
           bundle.arrivalDate?.getTime() === arrival.arrivalDate?.getTime() &&
           bundle.arrivalYear === arrival.arrivalYear &&
           bundle.arrivalMonth === arrival.arrivalMonth &&
-          (bundle.notes ?? null) === (dto.notes || null)
+          (bundle.notes ?? null) === (dto.notes || null) &&
+          (bundle.lot?.origin ?? null) === (dto.origin ?? null) &&
+          (!dto.supplierId || bundle.lot?.supplierId === dto.supplierId)
         );
       });
     if (!equivalent) {
@@ -218,12 +233,28 @@ export class InventoryService {
     arrival: ArrivalData,
     user: SafeUser,
     registeredAt: Date,
-    operationKey = 'bundle-registration:' + randomUUID(),
+    operationKey: string,
+    entryKey: string,
   ): Promise<string> {
+    await lockEpc(tx, dto.epc);
     await this.requireNewEpc(tx, dto.epc);
     await this.requireActiveReference(tx, dto.referenceId);
     await this.requireActiveFinish(tx, dto.finishId);
     await requireActiveRackInLocation(tx, dto.rackId, dto.inventoryLocationId);
+
+    let lotId: string | null = null;
+    if (dto.supplierId && !dto.origin) {
+      throw new BadRequestException('Indica el origen del material junto con el proveedor');
+    }
+    if (dto.origin) {
+      const provenance = await this.lots.resolveEntryProvenance(tx, dto.origin, dto.supplierId);
+      const lot = await this.lots.findOrCreateEntryLot(
+        tx,
+        { entryKey, ...provenance, referenceId: dto.referenceId, finishId: dto.finishId },
+        user.id,
+      );
+      lotId = lot.id;
+    }
 
     const bundle = await tx.bundle.create({
       data: {
@@ -235,6 +266,7 @@ export class InventoryService {
         rackId: dto.rackId,
         ...arrival,
         notes: dto.notes || null,
+        lotId,
       },
       select: { id: true },
     });
@@ -385,6 +417,17 @@ export class InventoryService {
     });
     if (existing) {
       throw new ConflictException('Ya existe un paquete con ese EPC');
+    }
+    // A chip announced from China goes through its reception (which keeps
+    // its provenance and expected quantity), never through manual entry.
+    const announced = await tx.inboundPreRegistration.findFirst({
+      where: { epc, status: 'PENDING' },
+      select: { shipment: { select: { code: true } } },
+    });
+    if (announced) {
+      throw new ConflictException(
+        `Este chip tiene un prerregistro de China (envío ${announced.shipment.code}): regístralo desde Recepción`,
+      );
     }
   }
 

@@ -19,6 +19,8 @@ import {
   type LocationValue,
 } from '../lib/forms'
 import { MAX_QUEUE_SIZE, type QueueItem, type RegistrationQueue } from '../lib/registrationQueue'
+import type { MaterialOrigin, Supplier } from '../lib/commerce'
+import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
 import { useSession } from '../session/session-context'
 import type { Navigate } from './navigation'
@@ -70,6 +72,16 @@ export function RegisterBundleView({
   const [quantity, setQuantity] = useState('')
   const [epc, setEpc] = useState(initialEpc ?? '')
   const [notes, setNotes] = useState('')
+  // Provenance of the entry group: China preselected (agreed default),
+  // National requires the supplier. Kept between bundles of the list.
+  // A recovered list keeps its own provenance.
+  const [origin, setOrigin] = useState<MaterialOrigin>(() => queue.items[0]?.body.origin ?? 'CHINA')
+  const [supplierId, setSupplierId] = useState(() => queue.items[0]?.body.supplierId ?? '')
+  const suppliers = useLoad<Supplier[]>('/suppliers?active=true')
+  const nationalSuppliers = (suppliers.data ?? []).filter((s) => s.origins.includes('NATIONAL'))
+  const provenanceLocked = queue.items.length > 0
+  const provenanceLabel =
+    origin === 'CHINA' ? 'China' : `Nacional · ${nationalSuppliers.find((s) => s.id === supplierId)?.name ?? 'sin proveedor'}`
   const [checking, setChecking] = useState(false)
   const [added, setAdded] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -122,6 +134,10 @@ export function RegisterBundleView({
       setError('La cantidad debe ser un número entero de perfiles mayor que cero.')
       return
     }
+    if (origin === 'NATIONAL' && !supplierId) {
+      setError('Para material nacional elige el proveedor.')
+      return
+    }
     if (!normalizedEpc || epcInvalid) {
       setError('El código del chip solo puede contener letras y números, sin espacios.')
       return
@@ -163,6 +179,8 @@ export function RegisterBundleView({
         registrationType,
         ...arrivalPayload(arrival),
         notes: notes.trim() || undefined,
+        origin,
+        ...(origin === 'NATIONAL' ? { supplierId } : {}),
       },
       labels: {
         type: TYPES.find((t) => t.value === registrationType)?.label ?? '',
@@ -170,6 +188,7 @@ export function RegisterBundleView({
         finish: catalogLabels.finish,
         arrival: arrivalLabel ?? '',
         location: locationLabel,
+        origin: provenanceLabel,
       },
     }
     queue.add(item)
@@ -244,6 +263,7 @@ export function RegisterBundleView({
     ['Tipo', TYPES.find((t) => t.value === registrationType)?.label ?? null],
     ['Referencia', catalogLabels.reference || null],
     ['Acabado', catalogLabels.finish || null],
+    ['Origen', origin === 'NATIONAL' && !supplierId ? null : provenanceLabel],
     ['Llegada', arrivalLabel],
     ['Ubicación', location.rackId ? locationLabel : null],
     ['Chip', normalizedEpc && !epcInvalid ? normalizedEpc : null, true],
@@ -352,6 +372,35 @@ export function RegisterBundleView({
               onDescribe={setCatalogLabels}
               disabled={busy}
             />
+            <Field
+              label="Origen del material"
+              hint={provenanceLocked ? 'La lista pendiente tiene otro origen o proveedor: guárdala antes de cambiarlo.' : 'Se elige una vez para todo el grupo de ingreso.'}
+            >
+              <select
+                value={origin}
+                disabled={busy || provenanceLocked}
+                onChange={(e) => {
+                  setOrigin(e.target.value as MaterialOrigin)
+                  setSupplierId('')
+                }}
+              >
+                <option value="CHINA">China</option>
+                <option value="NATIONAL">Nacional</option>
+              </select>
+            </Field>
+            {origin === 'NATIONAL' ? (
+              <Field label="Proveedor nacional" hint="Obligatorio para material nacional.">
+                <select value={supplierId} disabled={busy || provenanceLocked} onChange={(e) => setSupplierId(e.target.value)}>
+                  <option value="">Elige el proveedor…</option>
+                  {nationalSuppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {suppliers.data && nationalSuppliers.length === 0 ? <span className="field-error">No hay proveedores nacionales activos (Administración → Proveedores).</span> : null}
+              </Field>
+            ) : (
+              <p className="field-hint">Proveedor: el proveedor de China configurado por administración.</p>
+            )}
           </Section>
 
           <Section number="03" title="Llegada física" description="No se inventa un día si solo se conoce el mes o no hay registro.">

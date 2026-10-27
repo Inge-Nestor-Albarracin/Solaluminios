@@ -4,7 +4,6 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import {
   barrierAtTransactionStart,
-  barrierBeforeBundleCreate,
   createBarrier,
   ledgerProblems,
 } from './support/concurrency.js';
@@ -67,7 +66,8 @@ describe(`Critical races repeated ${ROUNDS} times (e2e)`, () => {
     const outcomes: string[] = [];
     for (let round = 0; round < ROUNDS; round += 1) {
       const shared = body(5);
-      barrierBeforeBundleCreate(fx.prisma, 2, createBarrier(2));
+      // Both start at once; the EPC identity lock serialises them.
+      barrierAtTransactionStart(fx.prisma, 2, createBarrier(2));
       const results = await Promise.all([
         request(app.getHttpServer()).post('/inventory/bundles').set(as(fx.headers.WAREHOUSE)).send(shared),
         request(app.getHttpServer()).post('/inventory/bundles').set(as(warehouse2.headers)).send(shared),

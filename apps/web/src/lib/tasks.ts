@@ -21,6 +21,12 @@ export interface Task {
   status: TaskStatus
   assignee: TaskPerson
   createdBy: TaskPerson
+  // DISPATCH tasks are completed by confirming their dispatch and stay
+  // pending (overdue) after the deadline.
+  kind?: 'GENERAL' | 'DISPATCH'
+  dispatchId?: string | null
+  dispatch?: { id: string; number: string; status: 'OPEN' | 'CONFIRMED' | 'CANCELLED' } | null
+  overdue?: boolean
 }
 
 export interface TaskSummary {

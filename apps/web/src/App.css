@@ -3352,3 +3352,316 @@ tr.subrow td:first-child {
     width: calc(100vw - 24px);
   }
 }
+
+/* ==========================================================================
+   Supply, sales and dispatch
+   ========================================================================== */
+
+.admin-section {
+  display: grid;
+  gap: 18px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.check-list {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Document lists (quotes, orders, dispatches, suppliers, lots…) */
+.doc-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.doc-row {
+  cursor: pointer;
+}
+
+button.doc-row:hover,
+button.doc-row:focus-visible {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-lift);
+}
+
+.doc-main {
+  display: grid;
+  flex: 1 1 260px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.doc-main small,
+.doc-side small {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.doc-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-pending_supply,
+.status-draft {
+  background: var(--warning-bg);
+}
+
+.status-cancelled {
+  opacity: 0.7;
+}
+
+/* Quote / purchase lines */
+.quote-line {
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+}
+
+.quote-line-title {
+  padding: 0 6px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.quote-line-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 8px;
+  font-size: 13.5px;
+}
+
+.quote-totals {
+  margin: 12px 0 0;
+  font-size: 14px;
+  text-align: right;
+}
+
+.dispatch-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Dispatch work screen */
+.dispatch-line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.dispatch-line-head small {
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.badge-china {
+  background: #fff1e6;
+  color: #8a3b00;
+}
+
+.badge-national {
+  background: var(--mint-soft);
+  color: var(--blue-ink);
+}
+
+.pick-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pick-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.pick-list small {
+  flex: 1 1 220px;
+  color: var(--muted);
+}
+
+.pick-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pick-qty input {
+  width: 90px;
+}
+
+.scan-feed {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.scan-feed li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  font-size: 13.5px;
+}
+
+.scan-feed li.scan-prepared,
+.scan-feed li.scan-match {
+  border-left-color: var(--success-border);
+  background: var(--success-bg);
+}
+
+.scan-feed li.scan-incident {
+  border-left-color: var(--danger);
+  background: var(--error-bg);
+}
+
+.incident-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.incident-list li {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--error-bg);
+}
+
+.incident-list li.incident-resolved {
+  border-left-color: var(--line-strong);
+  background: var(--surface-alt);
+}
+
+.incident-list small {
+  display: block;
+  color: var(--muted);
+}
+
+.incident-resolve {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.incident-resolve input {
+  flex: 1 1 220px;
+}
+
+.task-status.overdue {
+  background: var(--warning-bg);
+  color: #7a4a00;
+}
+
+/* China operator (English) */
+.china-shell .content {
+  max-width: 760px;
+}
+
+.china-topbar {
+  position: sticky;
+  top: 0;
+}
+
+.china-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+}
+
+.china-context span {
+  display: grid;
+}
+
+.china-context small {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.china-form {
+  display: grid;
+  gap: 4px;
+}
+
+.china-form input,
+.china-form select {
+  min-height: 52px;
+  font-size: 17px;
+}
+
+.china-save {
+  min-height: 56px;
+  margin-top: 8px;
+  font-size: 17px;
+}
+
+.china-recent {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.china-recent li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}

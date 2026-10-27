@@ -1096,6 +1096,105 @@ Rama `feat/pwa-web-push`. Detalle completo, comandos y tabla de escenarios en
 - Pendiente: Android real con HTTPS, pistola física, migración y VAPID en
   desarrollo/producción, publicación (propuesta en `docs/deploy/`).
 
+## Origen, compras, ventas y despachos con RFID (26/10/2026)
+
+Rama `feat/sales-dispatch-origin`, sin commit. El detalle está en
+`README-VENTAS-DESPACHOS.md`: guías, matriz de roles, contrato del lector y
+tabla de 32 escenarios.
+
+- **Modelo**:
+  - `Supplier`, `Setting` (proveedor fijo China, supervisor);
+  - `InboundShipment`, `InboundPreRegistration`;
+  - `StockLot` como fuente de procedencia y costo (`Bundle.lotId`);
+  - `Purchase*`, `Customer`, `Quote*`, `SalesOrder*`, `StockReservation`;
+  - `Dispatch*` (líneas, picks, incidencias), `NotificationOutbox`;
+  - `Reader*`, `AuditEvent`;
+  - `Task.kind/dispatchId/cancelledAt`;
+  - rol `CHINA_OPERATOR`.
+
+  Integridad en PostgreSQL:
+  - CHECKs e índices únicos parciales;
+  - triggers de identidad de lote y de reservas/entregas (diferidos);
+  - bloqueo por EPC compartido por prerregistro, recepción y alta manual.
+- **Migración nueva** `20261027120000_sales_dispatch_origin`: aplicada solo en
+  la base de pruebas. **Pendiente en desarrollo** (`prisma migrate deploy`) y
+  en el VPS. No modifica migraciones existentes; los paquetes actuales quedan
+  «sin procedencia».
+- **API**: módulos `supply`, `sales`, `dispatch`, `notifications`, `readers`
+  y `shared/`. Cambios en `inventory`:
+  - origen y proveedor en el alta;
+  - reservas respetadas en salida, traslado y ajuste;
+  - filtro «sin procedencia».
+
+  Otros cambios:
+  - `tasks`: tareas DISPATCH que no vencen a incompletas ni se completan por
+    la ruta genérica;
+  - `users`: `PATCH /users/:id/location`;
+  - `RolesGuard`: CHINA_OPERATOR denegado salvo rutas explícitas.
+- **Web**:
+  - vistas China (inglés), Recepción, Ventas/Cotización/Orden y
+    Despachos/Despacho (pistola BLE o teclado, incidencias, confirmación con
+    clave idempotente);
+  - panel de lector fijo;
+  - administración de proveedores, lotes, compras y lectores;
+  - bodega por usuario;
+  - origen y proveedor en «Registrar paquete».
+- **Pruebas**:
+  - API: unitarias 26/26, e2e 139/139 (incluye `sales-dispatch` con 23
+    escenarios y `sales-dispatch-concurrency` con 3 carreras × 20 rondas);
+  - web: build, lint y Chafon 7/7.
+
+  En la base de pruebas, dos suites antiguas de concurrencia cambiaron la
+  barrera a `barrierAtTransactionStart`, porque el bloqueo por EPC ahora
+  serializa; las aserciones no cambiaron.
+- **Navegador** (base de pruebas, API 3101 + `vite preview`). Circuito
+  completo:
+  1. Proveedores, ajustes y envío China.
+  2. Prerregistro China y recepción con diferencia.
+  3. Alta nacional.
+  4. Compra con descuentos, IVA y flete (cuadrada a mano).
+  5. Cotización (recargo y precio manual) → orden → reserva → despacho →
+     tarea.
+  6. Lectura incorrecta (incidencia), lecturas correctas y repetidas.
+  7. Resolución y salida confirmada (paquetes 30→10 y 24→14, orden
+     entregada, tarea completada).
+  8. Outbox procesada (`SKIPPED` sin dispositivos).
+  9. Simulador de portal: 20 detecciones ⇒ 1 incidencia, reenvío = 25
+     duplicados, nada preparado.
+  10. Cancelación por ventas.
+  11. workGuard entre ventanas.
+
+  Correcciones que salieron de esta revisión:
+  - costo unitario mostrado con 6 decimales;
+  - etiquetas del descuento de renglón;
+  - centavos COP con 2 decimales;
+  - la cantidad vuelta al valor guardado ya no deja «Aplicar» ni bloquea la
+    actualización;
+  - el contador de tareas se refresca al confirmar o cancelar;
+  - un despacho cancelado cierra sus incidencias abiertas;
+  - panel y endpoint `GET /dispatches/:id/readers` para abrir la sesión del
+    lector desde la pantalla;
+  - `sessionId` opcional en el contrato del lector.
+- **Datos de prueba**: los de las suites se limpian por sus relaciones. Los
+  de la verificación en navegador (sufijo C4154C: 4 usuarios, 3 proveedores,
+  sucursal/bodega/pasillo/burro, 2 referencias, 2 acabados y todo lo creado
+  sobre ellos) se borraron por IDs exactos en una transacción; se comprobó
+  que no quedan.
+- **Discrepancias**:
+  - en el catálogo NP es «Negro pintura» y el requerimiento dice «negro
+    perla»;
+  - el catálogo de desarrollo solo tiene referencias de prueba;
+  - desarrollo tiene 18 paquetes sin procedencia;
+  - desarrollo aún no tiene la migración.
+- **Pendiente**:
+  - migración en desarrollo y VPS;
+  - proveedores reales, proveedor China, supervisor y bodegas de usuarios;
+  - clasificación del stock histórico y compras reales;
+  - pistola física en un despacho, Android con HTTPS y portal físico (no
+    ejecutados);
+  - adaptador del lector real;
+  - política contable para descuentos condicionados.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean
@@ -1109,8 +1208,9 @@ Rama `feat/pwa-web-push`. Detalle completo, comandos y tabla de escenarios en
 6. ~~Salidas, traslados y ajustes con concurrencia~~ (hecho). Pendiente de
    definir: división de paquetes, traslado parcial, reservas, excedentes a
    almacén, motivo obligatorio en salidas.
-7. Empresas/contactos, cotizador, orden y relación con despacho (siguiente
-   bloque).
+7. ~~Clientes, cotizador, orden y relación con despacho~~ (hecho 26/10/2026,
+   ver «Origen, compras, ventas y despachos»). Pendiente: migración en
+   desarrollo/VPS, datos reales y pruebas físicas.
 8. ~~Tareas: propias, asignación por ADMIN, completar, vencimiento →
    incompletas~~ (hecho 16/10/2026). Pendiente de negocio: recurrencia,
    editar/cancelar tareas, reabrir o prorrogar una incompleta, notificaciones.

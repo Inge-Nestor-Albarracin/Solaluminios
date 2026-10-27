@@ -36,7 +36,15 @@ export class UpdateUserActiveDto {
   active!: boolean;
 }
 
+// Location where a warehouse user works (dispatch assignment). null clears it.
+export class UpdateUserLocationDto {
+  @ValidateIf((_object, value: unknown) => value !== null)
+  @IsString()
+  @MaxLength(50)
+  inventoryLocationId!: string | null;
+}
+
 export class UpdateUserRoleDto {
-  @IsEnum(UserRole, { message: 'role debe ser ADMIN, WAREHOUSE, SALES o READ_ONLY' })
+  @IsEnum(UserRole, { message: 'role debe ser ADMIN, WAREHOUSE, SALES, READ_ONLY o CHINA_OPERATOR' })
   role!: UserRole;
 }

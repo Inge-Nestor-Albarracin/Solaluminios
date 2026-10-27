@@ -26,6 +26,12 @@ export class LocationsController {
     return this.locationsService.listInventoryLocations(branchId);
   }
 
+  // Every active location with its branch (selectors that span branches).
+  @Get('inventory-locations')
+  listAllInventoryLocations() {
+    return this.locationsService.listAllInventoryLocations();
+  }
+
   @Post('inventory-locations')
   createInventoryLocation(@Body() dto: CreateInventoryLocationDto) {
     return this.locationsService.createInventoryLocation(dto);

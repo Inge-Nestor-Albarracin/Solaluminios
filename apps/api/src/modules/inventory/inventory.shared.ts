@@ -42,7 +42,25 @@ export const bundleListInclude = {
       },
     },
   },
+  // Provenance only (never the cost): null lot = origin unknown.
+  lot: {
+    select: {
+      id: true,
+      code: true,
+      origin: true,
+      supplier: { select: { id: true, code: true, name: true } },
+    },
+  },
 } satisfies Prisma.BundleInclude;
+
+// Profiles of a bundle committed to sales orders (ACTIVE reservations).
+export async function reservedQuantity(tx: Tx, bundleId: string): Promise<number> {
+  const result = await tx.stockReservation.aggregate({
+    where: { bundleId, status: 'ACTIVE' },
+    _sum: { quantity: true },
+  });
+  return result._sum.quantity ?? 0;
+}
 
 export const bundleDetailInclude = {
   ...bundleListInclude,

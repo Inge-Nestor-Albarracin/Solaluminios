@@ -2,6 +2,13 @@ import { useEffect, useEffectEvent, useState, type ComponentType, type SVGProps 
 import './App.css'
 import { BrandLogo } from './components/brand/BrandLogo'
 import { IconBulk, IconChart, IconHome, IconList, IconLogout, IconRegister, IconScan, IconSettings, IconTasks } from './components/icons'
+import { ChinaView } from './views/ChinaView'
+import { DispatchesView } from './views/DispatchesView'
+import { DispatchView } from './views/DispatchView'
+import { OrderView } from './views/OrderView'
+import { QuoteView } from './views/QuoteView'
+import { ReceiveView } from './views/ReceiveView'
+import { SalesView } from './views/SalesView'
 import { LogoutDialog } from './components/LogoutDialog'
 import { onOpenView, takeLaunchView, type LaunchView } from './pwa/launchView'
 import { PwaBanners } from './pwa/PwaBanners'
@@ -10,7 +17,7 @@ import { localBlockers, useUnsavedWork } from './pwa/workGuard'
 import { useRegistrationQueue } from './lib/registrationQueue'
 import type { TaskSummary } from './lib/tasks'
 import { useLoad } from './lib/useLoad'
-import { ROLE_LABELS, canOperate, useSession } from './session/session-context'
+import { ROLE_LABELS, canDispatch, canOperate, canSell, useSession } from './session/session-context'
 import { AdminView } from './views/AdminView'
 import { BulkReadView, type BulkChips } from './views/BulkReadView'
 import { BundleDetailView } from './views/BundleDetailView'
@@ -30,13 +37,13 @@ function App() {
       {/* Connection and new-version notices, also on the login screen. */}
       <PwaBanners />
       {/* Remount on user change so no state survives a logout/login. */}
-      {user ? <Workspace key={user.id} /> : <LoginView />}
+      {!user ? <LoginView /> : user.role === 'CHINA_OPERATOR' ? <ChinaWorkspace key={user.id} /> : <Workspace key={user.id} />}
     </>
   )
 }
 
 interface NavTab {
-  name: Exclude<View['name'], 'bundle'>
+  name: Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch'>
   label: string
   short: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -52,8 +59,41 @@ function initials(name: string) {
     .join('')
 }
 
+// Supplier operator in China: one screen (English), no internal menus.
+function ChinaWorkspace() {
+  const { user, logout } = useSession()
+  return (
+    <div className="china-shell">
+      <header className="topbar china-topbar">
+        <span className="topbar-brand">
+          <BrandLogo className="topbar-logo" variant="minimal" tone="negative" title="WeTracking" />
+          <span className="topbar-client">
+            <small>Solaluminios</small>
+            <strong>China</strong>
+          </span>
+        </span>
+        <div className="topbar-user">
+          <span className="topbar-user-text">
+            <strong>{user?.name}</strong>
+            <small>Supplier operator</small>
+          </span>
+          <button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={() => logout()}>
+            <IconLogout />
+          </button>
+        </div>
+      </header>
+      <main className="content">
+        <ChinaView />
+      </main>
+    </div>
+  )
+}
+
 const VIEW_LABELS: Record<LaunchView, string> = {
   home: 'Inicio',
+  receive: 'Recepción China',
+  sales: 'Ventas',
+  dispatches: 'Despachos',
   register: 'Registrar paquete',
   lookup: 'Consultar chip',
   bulk: 'Lectura masiva',
@@ -97,7 +137,11 @@ function Workspace() {
 
   // Views this user may open from a URL, a shortcut or a notification.
   const allowed = (name: LaunchView) =>
-    (name !== 'register' || operator) && (name !== 'admin' || user?.role === 'ADMIN')
+    (name !== 'register' || operator) &&
+    (name !== 'receive' || operator) &&
+    (name !== 'sales' || canSell(user?.role)) &&
+    (name !== 'dispatches' || canDispatch(user?.role)) &&
+    (name !== 'admin' || user?.role === 'ADMIN')
   const [view, setView] = useState<View>(() => {
     const launch = takeLaunchView()
     return { name: launch && allowed(launch) ? launch : 'home' }
@@ -159,11 +203,15 @@ function Workspace() {
     { name: 'bundles', label: 'Paquetes', short: 'Paquetes', icon: IconList },
     { name: 'summary', label: 'Resumen', short: 'Resumen', icon: IconChart },
     { name: 'tasks', label: 'Tareas', short: 'Tareas', icon: IconTasks },
+    ...(canSell(user?.role) ? [{ name: 'sales' as const, label: 'Ventas', short: 'Ventas', icon: IconChart, bottom: false as const }] : []),
+    ...(canDispatch(user?.role) ? [{ name: 'dispatches' as const, label: 'Despachos', short: 'Despachos', icon: IconList, bottom: false as const }] : []),
+    ...(operator ? [{ name: 'receive' as const, label: 'Recepción China', short: 'Recepción', icon: IconScan, bottom: false as const }] : []),
     // UI hint only: the API enforces ADMIN on every admin endpoint.
     ...(user?.role === 'ADMIN' ? [{ name: 'admin' as const, label: 'Administración', short: 'Admin', icon: IconSettings }] : []),
   ]
   // The bundle detail belongs to the section the user came from; highlight lookup.
-  const current = view.name === 'bundle' ? 'lookup' : view.name
+  const current =
+    view.name === 'bundle' ? 'lookup' : view.name === 'quote' || view.name === 'order' ? 'sales' : view.name === 'dispatch' ? 'dispatches' : view.name
 
   const navButtons = (variant: 'side' | 'bottom' | 'top') =>
     tabs.filter((tab) => variant !== 'bottom' || tab.bottom !== false).map((tab) => {
@@ -257,6 +305,8 @@ function Workspace() {
             name={user?.name ?? ''}
             operator={operator}
             admin={user?.role === 'ADMIN'}
+            seller={canSell(user?.role)}
+            dispatcher={canDispatch(user?.role)}
             pendingQueue={pending}
             openTasks={openTasks}
             navigate={navigate}
@@ -271,7 +321,13 @@ function Workspace() {
           <BundlesView key={remountKey} navigate={navigate} initialCatalog={view.catalog} />
         ) : null}
         {view.name === 'summary' ? <SummaryView navigate={navigate} /> : null}
-        {view.name === 'tasks' ? <TasksView onChanged={reloadTaskSummary} /> : null}
+        {view.name === 'tasks' ? <TasksView onChanged={reloadTaskSummary} onOpenDispatch={(id) => navigate({ name: 'dispatch', id })} /> : null}
+        {view.name === 'receive' && operator ? <ReceiveView navigate={navigate} /> : null}
+        {view.name === 'sales' && canSell(user?.role) ? <SalesView key={view.tab ?? 'quotes'} navigate={navigate} initialTab={view.tab} /> : null}
+        {view.name === 'quote' ? <QuoteView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
+        {view.name === 'order' ? <OrderView key={view.id} id={view.id} navigate={navigate} /> : null}
+        {view.name === 'dispatches' ? <DispatchesView navigate={navigate} /> : null}
+        {view.name === 'dispatch' ? <DispatchView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'admin' && user?.role === 'ADMIN' ? <AdminView /> : null}
         {view.name === 'bundle' ? <BundleDetailView key={view.id} id={view.id} navigate={navigate} /> : null}
       </main>

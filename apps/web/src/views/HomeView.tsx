@@ -3,7 +3,7 @@ import { IconChevron } from '../components/icons'
 import { DevicePanel } from '../pwa/DevicePanel'
 import type { Navigate, View } from './navigation'
 
-type Section = Exclude<View['name'], 'bundle' | 'home'>
+type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch'>
 
 interface Tile {
   name: Section
@@ -59,6 +59,28 @@ const TILE_ICONS: Record<Section, (stroke: string) => ReactNode> = {
       <path d="M18 7V4h12v3M15 18l3 3 5-5M15 30l3 3 5-5M27 19h6M27 31h6" />
     </g>
   ),
+  receive: (s) => (
+    <g stroke={s}>
+      <path d="M6 30h10l3 5h10l3-5h10" />
+      <path d="M6 30 11 14h26l5 16v10H6V30Z" />
+      <path d="M24 6v14M19 15l5 5 5-5" />
+    </g>
+  ),
+  sales: (s) => (
+    <g stroke={s}>
+      <rect x="10" y="6" width="28" height="36" rx="4" />
+      <path d="M16 15h16M16 21h16M16 27h9" />
+      <path d="M29 32h5M31.5 29.5v5" />
+    </g>
+  ),
+  dispatches: (s) => (
+    <g stroke={s}>
+      <path d="M5 13h22v20H5z" />
+      <path d="M27 19h8l6 7v7H27" />
+      <circle cx="13" cy="35" r="3.5" />
+      <circle cx="34" cy="35" r="3.5" />
+    </g>
+  ),
   admin: (s) => (
     <g stroke={s}>
       <circle cx="24" cy="24" r="6" />
@@ -72,6 +94,8 @@ export function HomeView({
   name,
   operator,
   admin,
+  seller,
+  dispatcher,
   pendingQueue,
   openTasks,
   navigate,
@@ -79,6 +103,8 @@ export function HomeView({
   name: string
   operator: boolean
   admin: boolean
+  seller: boolean
+  dispatcher: boolean
   pendingQueue: number
   openTasks: number
   navigate: Navigate
@@ -93,6 +119,9 @@ export function HomeView({
     { name: 'bundles', title: 'Paquetes', subtitle: 'Listado y filtros', icon: TILE_ICONS.bundles },
     { name: 'summary', title: 'Resumen', subtitle: 'Existencias', icon: TILE_ICONS.summary },
     { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks },
+    ...(dispatcher ? [{ name: 'dispatches' as const, title: 'Despachos', subtitle: 'Preparar y confirmar salidas', icon: TILE_ICONS.dispatches }] : []),
+    ...(operator ? [{ name: 'receive' as const, title: 'Recepción China', subtitle: 'Paquetes prerregistrados', icon: TILE_ICONS.receive }] : []),
+    ...(seller ? [{ name: 'sales' as const, title: 'Ventas', subtitle: 'Cotizaciones y órdenes', icon: TILE_ICONS.sales }] : []),
     ...(admin ? [{ name: 'admin' as const, title: 'Administración', subtitle: 'Catálogo y usuarios', icon: TILE_ICONS.admin }] : []),
   ]
   const firstName = name.trim().split(/\s+/)[0] ?? ''

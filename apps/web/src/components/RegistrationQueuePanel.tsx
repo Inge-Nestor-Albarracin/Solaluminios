@@ -139,7 +139,7 @@ export function RegistrationQueuePanel({
                 <div className="queue-info">
                   <strong className="mono">{item.body.epc}</strong>
                   <span>
-                    {item.labels.reference} · {item.labels.finish}
+                    {item.labels.reference} · {item.labels.finish}{item.labels.origin ? ` · ${item.labels.origin}` : ''}
                   </span>
                   <span className="queue-meta">
                     {item.body.quantity} {item.body.quantity === 1 ? 'perfil' : 'perfiles'} · {item.labels.location} ·{' '}

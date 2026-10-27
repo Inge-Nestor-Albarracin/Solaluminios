@@ -10,5 +10,11 @@ export type View =
   | { name: 'tasks' }
   | { name: 'admin' }
   | { name: 'bundle'; id: string }
+  | { name: 'receive' }
+  | { name: 'sales'; tab?: 'quotes' | 'orders' }
+  | { name: 'quote'; id?: string }
+  | { name: 'order'; id: string }
+  | { name: 'dispatches' }
+  | { name: 'dispatch'; id: string }
 
 export type Navigate = (view: View) => void

@@ -21,10 +21,13 @@ export function useSession(): SessionValue {
 // UI hints only: the API remains the authority on permissions.
 export const canOperate = (role: UserRole | undefined) => role === 'ADMIN' || role === 'WAREHOUSE'
 export const canAdjust = (role: UserRole | undefined) => role === 'ADMIN'
+export const canSell = (role: UserRole | undefined) => role === 'ADMIN' || role === 'SALES'
+export const canDispatch = (role: UserRole | undefined) => role === 'ADMIN' || role === 'SALES' || role === 'WAREHOUSE'
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   ADMIN: 'Administrador',
   WAREHOUSE: 'Bodega',
   SALES: 'Ventas',
   READ_ONLY: 'Solo consulta',
+  CHINA_OPERATOR: 'Operador China',
 }

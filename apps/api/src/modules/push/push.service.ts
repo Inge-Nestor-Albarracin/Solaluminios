@@ -19,6 +19,7 @@ import {
   type VapidConfig,
 } from './push.sender.js';
 import { PUSH_RETRY_DELAYS_MS, VAPID_CONFIG } from './push.tokens.js';
+import type { NotificationKind } from '../notifications/outbox.js';
 
 // Devices kept per user; the oldest are dropped beyond this.
 export const MAX_DEVICES_PER_USER = 10;
@@ -32,11 +33,17 @@ const MAX_RETRY_AFTER_MS = 10_000;
 
 // What the device shows is decided by the service worker from the type: the
 // payload never carries titles, names or other business data.
-export type PushKind = 'test' | 'task-assigned';
+export type PushKind = 'test' | 'task-assigned' | NotificationKind;
 
 const MESSAGES: Record<PushKind, PushMessageOptions> = {
   test: { ttlSeconds: 300, urgency: 'normal' },
   'task-assigned': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'task-assigned' },
+  'dispatch-assigned': { ttlSeconds: 24 * 3600, urgency: 'high', topic: 'dispatch-assigned' },
+  'dispatch-reassigned': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'dispatch-reassigned' },
+  'dispatch-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'dispatch-cancelled' },
+  'dispatch-incident': { ttlSeconds: 4 * 3600, urgency: 'high', topic: 'dispatch-incident' },
+  'dispatch-confirmed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'dispatch-confirmed' },
+  'dispatch-overdue': { ttlSeconds: 12 * 3600, urgency: 'normal', topic: 'dispatch-overdue' },
 };
 
 export interface DeliveryReport {
