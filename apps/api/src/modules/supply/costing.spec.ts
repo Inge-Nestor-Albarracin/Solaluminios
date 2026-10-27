@@ -1,6 +1,6 @@
 import { allocate, dec } from '../../shared/money.js';
-import { lineAmounts, priceFromCost } from '../sales/pricing.js';
-import { computePurchase, type CostingLineInput } from './costing.js';
+import { lineAmounts, markupOnCost } from '../sales/pricing.js';
+import { computePurchase, computeTaxIncludedLine, type CostingLineInput } from './costing.js';
 
 const line = (lineNo: number, quantity: string, unitPrice: string, extra: Partial<CostingLineInput> = {}): CostingLineInput => ({
   lineNo,
@@ -95,16 +95,45 @@ describe('purchase costing', () => {
   });
 });
 
-describe('sale pricing', () => {
-  it('distinguishes markup on cost from gross margin on sale (cost 9.700, 30 %)', () => {
-    expect(priceFromCost(dec(9700), 'MARKUP_ON_COST', dec(30)).toFixed(2)).toBe('12610.00');
-    expect(priceFromCost(dec(9700), 'GROSS_MARGIN', dec(30)).toFixed(2)).toBe('13857.14');
+describe('purchase with VAT included (current rule)', () => {
+  it('1.190.000 with VAT, 3 % discount, 100 profiles → 35.700, 1.154.300, 11.543 per profile', () => {
+    const line = computeTaxIncludedLine(dec('1190000'), dec(3), 100);
+    expect(line.discountAmount.toFixed(2)).toBe('35700.00');
+    expect(line.costAmount.toFixed(2)).toBe('1154300.00');
+    expect(line.unitCost?.toFixed(6)).toBe('11543.000000');
   });
 
-  it('validates the margin denominator and the cost', () => {
-    expect(() => priceFromCost(dec(9700), 'GROSS_MARGIN', dec(100))).toThrow(/menor que 100/);
-    expect(() => priceFromCost(dec(0), 'MARKUP_ON_COST', dec(30))).toThrow(/mayor que cero/);
-    expect(() => priceFromCost(dec(10), 'MARKUP_ON_COST', dec(-1))).toThrow(/negativo/);
+  it('never adds, extracts or splits purchase VAT; 0 % discount keeps the gross value', () => {
+    const line = computeTaxIncludedLine(dec('1000000'), dec(0), 100);
+    expect(line.costAmount.toFixed(2)).toBe('1000000.00');
+    expect(line.unitCost?.toFixed(2)).toBe('10000.00');
+  });
+
+  it('no unit cost without profiles or with a 100 % discount', () => {
+    expect(computeTaxIncludedLine(dec('1000'), dec(0), 0).unitCost).toBeNull();
+    expect(computeTaxIncludedLine(dec('1000'), dec(100), 10).unitCost).toBeNull();
+  });
+});
+
+describe('sale pricing', () => {
+  it('profit on cost: 11.543 + 30 % = 15.005,90; sales VAT 19 % = 2.851,12; 17.857,02 with VAT', () => {
+    const { gain, price } = markupOnCost(dec(11543), dec(30));
+    expect(gain.toFixed(2)).toBe('3462.90');
+    expect(price.toFixed(2)).toBe('15005.90');
+    const amounts = lineAmounts(1, price, dec(0), dec(19));
+    expect(amounts.taxAmount.toFixed(2)).toBe('2851.12');
+    expect(amounts.lineTotal.toFixed(2)).toBe('17857.02');
+  });
+
+  it('30 % on cost is cost × 1,30 (10.000 → 13.000; 12.000 → 15.600; 9.000 → 11.700)', () => {
+    expect(markupOnCost(dec(10000), dec(30)).price.toFixed(2)).toBe('13000.00');
+    expect(markupOnCost(dec(12000), dec(30)).price.toFixed(2)).toBe('15600.00');
+    expect(markupOnCost(dec(9000), dec(30)).price.toFixed(2)).toBe('11700.00');
+  });
+
+  it('validates cost and percentage', () => {
+    expect(() => markupOnCost(dec(0), dec(30))).toThrow(/mayor que cero/);
+    expect(() => markupOnCost(dec(10), dec(-1))).toThrow(/negativo/);
   });
 
   it('computes line amounts with discount before tax', () => {

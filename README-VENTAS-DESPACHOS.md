@@ -131,6 +131,9 @@ El backend aplica todo. La interfaz solo oculta lo que el rol no puede usar.
 | --- | --- | --- | --- | --- |
 | Proveedores: ver | ✔ | ✔ | ✔ (alta nacional) | ✘ |
 | Proveedores, ajustes, envíos China, lotes, compras/costos, lectores: gestionar | ✔ | ✘ | ✘ | ✘ |
+| Precios de venta por compra (`/sale-prices`: costo, ganancia, habilitar) | ✔ | ✘ | ✘ | ✘ |
+| Precio de venta habilitado (`/sales/price`, solo el precio) | ✔ | ✔ | ✘ | ✘ |
+| Proveedor fijo de China (`/suppliers/china`, solo el nombre) | ✔ | ✔ | ✔ | ✘ |
 | Prerregistro China | ver | ✘ | ✘ | ✔ crear y ver **solo los propios** |
 | Contexto/catálogo China | ✔ | ✘ | ✘ | ✔ (sin costos ni stock) |
 | Recepción en Colombia | ✔ | ✘ | ✔ | ✘ |
@@ -159,11 +162,13 @@ No se crearon proveedores reales. Los de prueba solo existieron en la base
    Desactivar no borra el historial.
 2. Crea el proveedor de China y luego, en la misma pantalla, elige:
    - **Proveedor fijo de China**: solo activo y con origen China;
-   - **Supervisor de despachos**: recibe las alertas de incidencias.
-3. **Abrir envío** (contenedor/embarque) para ese proveedor:
-   - es lo que el operador China ve como envío actual;
-   - solo un envío abierto por proveedor;
-   - mientras haya uno abierto, no se puede cambiar el proveedor fijo.
+   - **Supervisor de despachos** (opcional): recibe las alertas de
+     incidencias. No hace falta para registrar ni despachar.
+3. **Envíos de China**: se abren solos con el primer prerregistro
+   (código `AUTO-AAAAMMDD`); el operador nunca crea ni escribe uno.
+   Opcionalmente, administración puede cerrar el abierto o abrir uno con un
+   código propio. Cambiar el proveedor fijo cierra el envío abierto del
+   anterior (sus paquetes prerregistrados se pueden seguir recibiendo).
 4. **Usuarios**:
    - crea al operador con rol «Operador China»; su interfaz es en inglés y
      solo prerregistra;
@@ -173,19 +178,27 @@ No se crearon proveedores reales. Los de prueba solo existieron en la base
    (inventario físico, documento, declaración):
    - con origen Nacional o China;
    - con el proveedor solo si está documentado.
-6. **Compras y costos**: registra el documento real y asócialo a los lotes con
-   costo pendiente. Las tasas de IVA y los descuentos se escriben
-   explícitamente; no hay valores por defecto inventados.
+6. **Compras y costos**: por renglón, referencia, acabado, origen, cantidad
+   de perfiles, **valor bruto de compra con IVA incluido** y descuento (%).
+   Costo por perfil = (valor bruto − descuento) ÷ perfiles; el IVA de compra
+   no se suma ni se separa. Asociar lotes es opcional. Confirma la compra.
+7. **Precios de venta**: elige la compra confirmada y su renglón, escribe la
+   ganancia sobre el costo y habilítalo. Cada precio queda ligado a su línea
+   de compra; ventas recibe solo el precio habilitado de cada referencia,
+   acabado y origen. Detalle: `docs/refinamiento-registro-precios.md`.
 
 ## 7. Guía: cotización → orden → despacho → tarea → salida
 
 1. **Ventas → Nueva cotización**:
    - cliente;
-   - por renglón: referencia, acabado, **origen requerido**, proveedor
-     exigido (opcional), perfiles y método de precio.
+   - por renglón: referencia, acabado, **origen requerido** y perfiles;
+   - el precio de venta habilitado aparece solo; el IVA de venta viene en
+     19 % y es editable; subtotal sin IVA, IVA y total se recalculan al
+     escribir.
 
-   El precio sugerido usa el último costo confirmado del lote. Guardar no
-   reserva.
+   Ventas no elige compras, costos, lotes ni porcentajes: la API rechaza
+   esos campos y quita costos y ganancias de las respuestas. La línea guarda
+   el precio usado (`salePriceId`) con sus importes. Guardar no reserva.
 2. **Convertir en orden de venta** (una sola vez aunque se repita).
 3. **Confirmar orden** eligiendo sucursal y bodega:
    - reserva todo o nada;

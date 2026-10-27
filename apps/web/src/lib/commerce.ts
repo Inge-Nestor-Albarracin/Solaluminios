@@ -60,9 +60,10 @@ export interface QuoteLine {
   supplierId: string | null
   supplierName: string | null
   quantity: number
-  pricingMethod: PricingMethod
-  pricingPercent: string | null
-  costBasis: string | null
+  // ADMIN only: the API removes them for sales.
+  pricingMethod?: PricingMethod
+  pricingPercent?: string | null
+  costBasis?: string | null
   priceReason: string | null
   unitPrice: string
   discountPercent: string

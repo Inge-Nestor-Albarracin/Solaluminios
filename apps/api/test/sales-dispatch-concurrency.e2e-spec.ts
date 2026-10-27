@@ -37,7 +37,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
     const quote = await http()
       .post('/quotes')
       .set(H.SALES)
-      .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, pricingMethod: 'MANUAL', unitPrice: '1000', priceReason: 'carrera', discountPercent: '0', taxRatePercent: '0' }] })
+      .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '0', taxRatePercent: '0' }] })
       .expect(201);
     const converted = await http().post(`/quotes/${quote.body.id}/convert`).set(H.SALES).send({ operationKey: randomUUID() }).expect(200);
     return converted.body as { id: string; lines: { id: string }[] };
@@ -61,6 +61,14 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
     ids.finish = (await prisma.finish.create({ data: { code: `RACE-FIN-${S}` } })).id;
     ids.supplier = (await prisma.supplier.create({ data: { code: `RACE-N-${S}`, name: 'Nacional carreras', origins: ['NATIONAL'] } })).id;
     ids.customer = (await prisma.customer.create({ data: { name: `Cliente carreras ${S}`, createdById: U.SALES } })).id;
+    // Enabled sale price of this run's material, built on its own purchase.
+    const purchase = await http()
+      .post('/purchases')
+      .set(H.ADMIN)
+      .send({ supplierId: ids.supplier, documentNumber: `RACE-${S}`, documentDate: '2026-10-20', lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 10, grossAmount: '10000', discountPercent: '0' }] })
+      .expect(201);
+    const confirmed = await http().post(`/purchases/${purchase.body.id}/confirm`).set(H.ADMIN).expect(200);
+    await http().post('/sale-prices').set(H.ADMIN).send({ purchaseId: purchase.body.id, purchaseLineId: confirmed.body.lines[0].id, markupPercent: '30', enabled: true }).expect(201);
   });
 
   afterAll(async () => {
@@ -85,6 +93,8 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
       await prisma.customer.deleteMany({ where: { id: ids.customer } });
       await prisma.bundle.deleteMany({ where: { id: { in: bIds } } });
       await prisma.stockLot.deleteMany({ where: { referenceId: ids.ref } });
+      await prisma.salePrice.deleteMany({ where: { referenceId: ids.ref } });
+      await prisma.purchase.deleteMany({ where: { createdById: { in: users } } });
       await prisma.supplier.deleteMany({ where: { id: ids.supplier } });
       await prisma.auditEvent.deleteMany({ where: { userId: { in: users } } });
       await prisma.user.deleteMany({ where: { id: { in: users } } });
@@ -142,7 +152,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
       const quote = await http()
         .post('/quotes')
         .set(H.SALES)
-        .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 1, pricingMethod: 'MANUAL', unitPrice: '1', priceReason: 'carrera', discountPercent: '0', taxRatePercent: '0' }] })
+        .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 1, discountPercent: '0', taxRatePercent: '0' }] })
         .expect(201);
       const results = await Promise.all([1, 2].map(() => http().post(`/quotes/${quote.body.id}/convert`).set(H.SALES).send({ operationKey: randomUUID() })));
       outcomes.push(`${sorted(results)}:${await prisma.salesOrder.count({ where: { quoteId: quote.body.id } })}`);

@@ -9,12 +9,11 @@ import { useSession } from '../session/session-context'
 
 // China operator (English UI). One bundle at a time: read the EPC, choose
 // Reference and Finish / Color, type the quantity of profiles, save, next.
-// Supplier and origin are assigned by the server from the configuration;
-// nothing here becomes stock in Colombia until it is received there.
+// Supplier, origin and shipment are assigned by the server from the
+// configuration; nothing here becomes stock in Colombia until it is received.
 
 interface ChinaContext {
   supplier: { code: string; name: string } | null
-  shipment: { id: string; code: string } | null
   problem: string | null
 }
 
@@ -29,7 +28,6 @@ interface PreRegistration {
   epc: string
   reference: CatalogItem
   finish: CatalogItem
-  shipment: { code: string }
   quantity: number
   status: 'PENDING' | 'RECEIVED' | 'CANCELLED'
   createdAt: string
@@ -62,12 +60,12 @@ export function ChinaView() {
 
   const normalized = epc.trim().toUpperCase()
   const amount = Number(quantity)
-  const shipment = context.data?.shipment ?? null
-  const valid = EPC.test(normalized) && !!referenceId && !!finishId && Number.isInteger(amount) && amount >= 1 && !!shipment
+  const supplier = context.data?.supplier ?? null
+  const valid = EPC.test(normalized) && !!referenceId && !!finishId && Number.isInteger(amount) && amount >= 1 && !!supplier
 
   const save = async (event: FormEvent) => {
     event.preventDefault()
-    if (!valid || lock.current || !shipment) return
+    if (!valid || lock.current) return
     lock.current = true
     setSaving(true)
     setMessage(null)
@@ -75,7 +73,7 @@ export function ChinaView() {
     try {
       const { data } = await request<{ replayed: boolean; preRegistration: PreRegistration }>('/china/pre-registrations', {
         method: 'POST',
-        body: { epc: normalized, referenceId, finishId, quantity: amount, shipmentId: shipment.id, operationKey: key.current },
+        body: { epc: normalized, referenceId, finishId, quantity: amount, operationKey: key.current },
       })
       key.current = null
       setMessage({ kind: 'success', text: `Saved: ${data.preRegistration.epc} · ${amount} profiles${data.replayed ? ' (already saved before)' : ''}. Read the next bundle.` })
@@ -112,11 +110,11 @@ export function ChinaView() {
         <div className="china-context card">
           <span>
             <small>Supplier</small>
-            <strong>{context.data.supplier?.name ?? '—'}</strong>
+            <strong>{supplier?.name ?? '—'}</strong>
           </span>
           <span>
-            <small>Shipment</small>
-            <strong>{shipment?.code ?? '—'}</strong>
+            <small>Origin</small>
+            <strong>China</strong>
           </span>
         </div>
       ) : null}
@@ -172,7 +170,7 @@ export function ChinaView() {
               <span className="mono">{item.epc}</span>
               <span>{item.reference.code} · {item.finish.description ?? item.finish.code}</span>
               <span>{item.quantity} profiles</span>
-              <span className="badge badge-muted">{item.status === 'RECEIVED' ? 'Received in Colombia' : item.shipment.code}</span>
+              <span className="badge badge-muted">{item.status === 'RECEIVED' ? 'Received in Colombia' : 'Waiting for reception'}</span>
             </li>
           ))}
         </ul>

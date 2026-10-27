@@ -1,18 +1,15 @@
-import type { PricingMethod } from '../../generated/prisma/client.js';
-import { Decimal, HUNDRED, dec, money } from '../../shared/money.js';
+import { Decimal, HUNDRED, money } from '../../shared/money.js';
 
-// Sale price before tax from a cost per profile (pure, unit-tested):
-//   MARKUP_ON_COST  price = cost × (1 + p)      (recargo sobre costo)
-//   GROSS_MARGIN    price = cost ÷ (1 − p)      (margen bruto sobre venta)
-// p is a percentage (30 = 30 %). The gross margin is not a promise of net
-// profit for the company.
-export function priceFromCost(cost: Decimal, method: Exclude<PricingMethod, 'MANUAL'>, percent: Decimal): Decimal {
+// Sale price before SALES VAT from the unit cost of a purchase line (purchase
+// VAT included), with a profit percentage ON COST (pure, unit-tested):
+//   gain  = cost × p / 100
+//   price = cost + gain            (30 % → cost × 1.30), rounded to cents
+// Sales VAT is added afterwards, on the quote/order line.
+export function markupOnCost(cost: Decimal, percent: Decimal): { gain: Decimal; price: Decimal } {
   if (!cost.greaterThan(0)) throw new RangeError('El costo debe ser mayor que cero');
-  if (percent.lessThan(0)) throw new RangeError('El porcentaje no puede ser negativo');
-  const p = percent.dividedBy(HUNDRED);
-  if (method === 'MARKUP_ON_COST') return money(cost.times(dec(1).plus(p)));
-  if (!p.lessThan(1)) throw new RangeError('El margen bruto debe ser menor que 100 %');
-  return money(cost.dividedBy(dec(1).minus(p)));
+  if (percent.lessThan(0)) throw new RangeError('El porcentaje de ganancia no puede ser negativo');
+  const gain = cost.times(percent).dividedBy(HUNDRED);
+  return { gain: money(gain), price: money(cost.plus(gain)) };
 }
 
 export interface LineAmounts {

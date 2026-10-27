@@ -97,7 +97,7 @@ export function SuppliersAdmin() {
               ))}
             </select>
           </Field>
-          <Field label="Supervisor de despachos" hint="Recibe las incidencias y los atrasos además del responsable.">
+          <Field label="Supervisor de despachos (opcional)" hint="No es necesario para registrar ni despachar. Si se elige, recibe las incidencias y los atrasos además del responsable.">
             <select value={settings.data?.dispatchSupervisor?.id ?? ''} disabled={mutation.pending} onChange={(e) => void saveSetting({ dispatchSupervisorId: e.target.value || null })}>
               <option value="">Sin supervisor</option>
               {supervisors.map((u) => (
@@ -151,7 +151,7 @@ export function SuppliersAdmin() {
 
       <section className="card">
         <h2 className="subtitle">Envíos de China</h2>
-        <p className="field-hint">Los operadores de China registran en el envío abierto. Solo hay uno abierto a la vez; ciérralo cuando salga el contenedor.</p>
+        <p className="field-hint">Se abren solos con el primer prerregistro de China: no hace falta crearlos ni escribir un código. Opcionalmente puedes cerrar el abierto cuando salga el contenedor o abrir uno con un código propio.</p>
         <ul className="doc-list">
           {(shipments.data ?? []).map((shipment) => (
             <li key={shipment.id} className="doc-row static">
@@ -169,7 +169,7 @@ export function SuppliersAdmin() {
           ))}
         </ul>
         <form className="form-grid" onSubmit={(e) => void openShipment(e)}>
-          <Field label="Código del nuevo envío"><input value={shipmentCode} onChange={(e) => setShipmentCode(e.target.value)} maxLength={40} /></Field>
+          <Field label="Código del nuevo envío (opcional)"><input value={shipmentCode} onChange={(e) => setShipmentCode(e.target.value)} maxLength={40} /></Field>
           <div className="actions">
             <button type="submit" className="button button-secondary" disabled={mutation.pending || !shipmentCode.trim()}>Abrir envío</button>
           </div>

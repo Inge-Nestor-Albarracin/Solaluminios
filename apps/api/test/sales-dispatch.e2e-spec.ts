@@ -38,6 +38,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     branch: '', locA: '', locB: '', aisleA: '', aisleB: '', rackA: '', rackB: '',
     r1730: '', r1739: '', bm: '', np: '',
     cn: '', n1: '', n2: '', n3: '', shipment: '', customer: '',
+    purchaseF: '', lineF1730: '', lineF1739: '',
   };
   let epcCounter = 0;
   const epc = () => `E2E${S}${String(++epcCounter).padStart(4, '0')}`;
@@ -63,6 +64,15 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
 
   const inHours = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
   const quoteLine = (line: Record<string, unknown>) => ({ discountPercent: '0', taxRatePercent: '19', ...line });
+  // Purchase with the supplier's gross values (purchase VAT included).
+  const purchaseLine = (referenceId: string, finishId: string, origin: 'CHINA' | 'NATIONAL', quantity: number, grossAmount: string, discountPercent = '0', lotIds: string[] = []) =>
+    ({ referenceId, finishId, origin, quantity, grossAmount, discountPercent, lotIds });
+  const confirmedPurchase = async (supplierId: string, number: string, lines: ReturnType<typeof purchaseLine>[]) => {
+    const created = await http().post('/purchases').set(as('ADMIN')).send({ supplierId, documentNumber: `${number}-${S}`, documentDate: '2026-10-20', lines }).expect(201);
+    return (await http().post(`/purchases/${created.body.id}/confirm`).set(as('ADMIN')).expect(200)).body as { id: string; lines: { id: string; unitCostCop: string }[] };
+  };
+  const salePrice = (purchaseId: string, purchaseLineId: string, markupPercent: string, enabled = false) =>
+    http().post('/sale-prices').set(as('ADMIN')).send({ purchaseId, purchaseLineId, markupPercent, enabled });
 
   // Bundles of this run (by EPC prefix of the suffix: exact list kept).
   const bundles = {} as Record<string, { id: string; epc: string }>;
@@ -135,6 +145,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
         ['preRegistrations', () => prisma.inboundPreRegistration.deleteMany({ where: { referenceId: { in: refIds } } })],
         ['bundles', () => prisma.bundle.deleteMany({ where: { id: { in: bIds } } })],
         ['lots', () => prisma.stockLot.deleteMany({ where: { referenceId: { in: refIds } } })],
+        ['salePrices', () => prisma.salePrice.deleteMany({ where: { referenceId: { in: refIds } } })],
         ['purchases', () => prisma.purchase.deleteMany({ where: { createdById: { in: userIds } } })],
         ['shipments', () => prisma.inboundShipment.deleteMany({ where: { createdById: { in: userIds } } })],
         ['suppliers', () => prisma.supplier.deleteMany({ where: { code: { endsWith: `-${S}` } } })],
@@ -227,23 +238,39 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     expect(manual.body.message).toMatch(/Recepción/);
   });
 
-  it('#5 #6 reception: single, keeps expected vs received, needs a reason for differences', async () => {
+  it('#5 #6 reception: single, keeps expected vs received; a difference needs no explanation', async () => {
     const found = await http().get(`/inbound/pre-registrations/epc/${bundles.china.epc}`).set(as('WAREHOUSE')).expect(200);
     expect(found.body).toMatchObject({ expectedQuantity: 25, lot: { origin: 'CHINA', supplier: { id: ids.cn } } });
     await http().get(`/inbound/pre-registrations/epc/${bundles.china.epc}`).set(as('CHINA')).expect(403);
     const body = { epc: bundles.china.epc, quantity: 24, inventoryLocationId: ids.locA, rackId: ids.rackA, operationKey: randomUUID() };
-    await http().post('/inbound/receive').set(as('WAREHOUSE')).send(body).expect(400);
-    const received = await http().post('/inbound/receive').set(as('WAREHOUSE')).send({ ...body, discrepancyReason: 'Un perfil dañado en tránsito' }).expect(201);
+    const received = await http().post('/inbound/receive').set(as('WAREHOUSE')).send(body).expect(201);
     expect(received.body.bundle).toMatchObject({ quantity: 24, lot: { origin: 'CHINA' } });
     bundles.china.id = received.body.bundle.id;
-    const replay = await http().post('/inbound/receive').set(as('WAREHOUSE')).send({ ...body, discrepancyReason: 'Un perfil dañado en tránsito' }).expect(201);
+    const replay = await http().post('/inbound/receive').set(as('WAREHOUSE')).send(body).expect(201);
     expect(replay.body.replayed).toBe(true);
     const again = await http().post('/inbound/receive').set(as('WAREHOUSE')).send({ ...body, operationKey: randomUUID(), discrepancyReason: 'x' }).expect(409);
     expect(again.body.message).toMatch(/ya fue recibido/);
     const pre = await prisma.inboundPreRegistration.findFirstOrThrow({ where: { epc: bundles.china.epc } });
-    expect(pre).toMatchObject({ status: 'RECEIVED', expectedQuantity: 25, receivedQuantity: 24, receivedBundleId: bundles.china.id });
+    expect(pre).toMatchObject({ status: 'RECEIVED', expectedQuantity: 25, receivedQuantity: 24, receivedBundleId: bundles.china.id, discrepancyReason: 'Diferencia en recepción: 25 previstos, 24 recibidos' });
     expect(await prisma.inventoryMovement.count({ where: { bundleId: bundles.china.id, type: 'ENTRY' } })).toBe(1);
     expect(await prisma.auditEvent.count({ where: { entityId: pre.id, action: 'RECEIVED_WITH_DIFFERENCE' } })).toBe(1);
+  });
+
+  it('China pre-registration needs no shipment: one is opened automatically and shared', async () => {
+    await http().post(`/china/shipments/${ids.shipment}/close`).set(as('ADMIN')).expect(200);
+    const context = await http().get('/china/context').set(as('CHINA')).expect(200);
+    expect(context.body).toMatchObject({ shipment: null, problem: null });
+    const codes = [epc(), epc()];
+    const created = await Promise.all(
+      codes.map((code) => http().post('/china/pre-registrations').set(as('CHINA')).send({ epc: code, referenceId: ids.r1730, finishId: ids.bm, quantity: 3, operationKey: randomUUID() })),
+    );
+    expect(created.map((r) => r.status)).toEqual([201, 201]);
+    const rows = await prisma.inboundPreRegistration.findMany({ where: { epc: { in: codes } }, include: { shipment: true, lot: true } });
+    expect(new Set(rows.map((r) => r.shipmentId)).size).toBe(1);
+    expect(rows[0].shipment).toMatchObject({ status: 'OPEN', supplierId: ids.cn });
+    expect(rows[0].shipment.code).toMatch(/^AUTO-\d{8}/);
+    expect(rows[0].lot).toMatchObject({ origin: 'CHINA', supplierId: ids.cn });
+    ids.shipment = rows[0].shipmentId;
   });
 
   // Races that need the (global) China configuration run here, in sequence
@@ -258,7 +285,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
       await http()
         .post('/china/pre-registrations')
         .set(as('CHINA'))
-        .send({ epc: code, referenceId: ids.r1739, finishId: ids.bm, quantity: 6, shipmentId: ids.shipment, operationKey: randomUUID() })
+        .send({ epc: code, referenceId: ids.r1739, finishId: ids.bm, quantity: 6, operationKey: randomUUID() })
         .expect(201);
       const results = await Promise.all(
         (['WAREHOUSE', 'WAREHOUSE_B'] as const).map((who) =>
@@ -277,7 +304,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     for (let round = 0; round < 20; round += 1) {
       const code = epc();
       const results = await Promise.all([
-        http().post('/china/pre-registrations').set(as('CHINA')).send({ epc: code, referenceId: ids.r1739, finishId: ids.bm, quantity: 4, shipmentId: ids.shipment, operationKey: randomUUID() }),
+        http().post('/china/pre-registrations').set(as('CHINA')).send({ epc: code, referenceId: ids.r1739, finishId: ids.bm, quantity: 4, operationKey: randomUUID() }),
         register('WAREHOUSE', { epc: code, referenceId: ids.r1739, finishId: ids.bm, quantity: 4, origin: 'NATIONAL', supplierId: ids.n1 }),
       ]);
       const total =
@@ -312,56 +339,101 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
 
   // --- 2. Purchases and costs ---------------------------------------------------
 
-  it('#7 purchase of 1.000.000 COP with a 3 % general discount: 30.000 allocated exactly; cost per profile on the lots', async () => {
+  it('#7 purchase with VAT included: 1.190.000 − 3 % = 1.154.300 → 11.543 per profile; cost on the lots', async () => {
     const lotN1 = (await prisma.bundle.findUniqueOrThrow({ where: { id: bundles.n1a.id } })).lotId!;
     const lotN1c = (await prisma.bundle.findUniqueOrThrow({ where: { id: bundles.n1c.id } })).lotId!;
-    const line = (referenceId: string, finishId: string, lotIds: string[], extra: Record<string, unknown> = {}) => ({
-      referenceId, finishId, origin: 'NATIONAL', unitName: 'perfil', profilesPerUnit: '1', quantity: '0', unitPrice: '10000',
-      lineDiscountType: 'NONE', lineDiscountValue: '0', taxRatePercent: '19', taxRecoverable: true, lotIds, ...extra,
-    });
     const purchase = await http()
       .post('/purchases')
       .set(as('ADMIN'))
       .send({
-        supplierId: ids.n1, documentNumber: `F-${S}`, documentDate: '2026-10-20', currency: 'COP',
-        globalDiscountType: 'PERCENT', globalDiscountValue: '3',
-        lines: [line(ids.r1730, ids.bm, [lotN1], { quantity: '60' }), line(ids.r1739, ids.np, [lotN1c], { quantity: '40' })],
-        charges: [],
+        supplierId: ids.n1, documentNumber: `F-${S}`, documentDate: '2026-10-20',
+        lines: [purchaseLine(ids.r1730, ids.bm, 'NATIONAL', 100, '1190000', '3', [lotN1]), purchaseLine(ids.r1739, ids.np, 'NATIONAL', 40, '400000', '3', [lotN1c])],
       })
       .expect(201);
     expect(purchase.body.issues).toEqual([]);
-    expect(Number(purchase.body.globalDiscountTotal)).toBe(30000);
-    expect(purchase.body.lines.map((l: { globalDiscountAmount: string }) => Number(l.globalDiscountAmount))).toEqual([18000, 12000]);
-    expect(purchase.body.lines.map((l: { netAmount: string }) => Number(l.netAmount))).toEqual([582000, 388000]);
-    expect(Number(purchase.body.netTotal)).toBe(970000);
+    expect(purchase.body.lines[0]).toMatchObject({ grossIncludesTax: true, profiles: 100, grossAmount: '1190000', lineDiscountAmount: '35700', costAmount: '1154300', taxAmount: '0', unitCostCop: '11543' });
+    expect(purchase.body.lines[1]).toMatchObject({ costAmount: '388000', unitCostCop: '9700' });
+    expect(purchase.body).toMatchObject({ grossTotal: '1590000', lineDiscountTotal: '47700', netTotal: '1542300', taxTotal: '0', documentTotal: '1542300' });
     expect((await prisma.stockLot.findUniqueOrThrow({ where: { id: lotN1 } })).unitCost).toBeNull(); // draft: cost still pending
-    await http().post(`/purchases/${purchase.body.id}/confirm`).set(as('ADMIN')).expect(200);
-    expect(Number((await prisma.stockLot.findUniqueOrThrow({ where: { id: lotN1 } })).unitCost)).toBe(9700);
+    const confirmed = await http().post(`/purchases/${purchase.body.id}/confirm`).set(as('ADMIN')).expect(200);
+    ids.purchaseF = confirmed.body.id;
+    ids.lineF1730 = confirmed.body.lines[0].id;
+    ids.lineF1739 = confirmed.body.lines[1].id;
+    expect(Number((await prisma.stockLot.findUniqueOrThrow({ where: { id: lotN1 } })).unitCost)).toBe(11543);
     expect(Number((await prisma.stockLot.findUniqueOrThrow({ where: { id: lotN1c } })).unitCost)).toBe(9700);
     await http().post(`/purchases/${purchase.body.id}/confirm`).set(as('ADMIN')).expect(409);
 
-    // Draft without explicit tax data cannot be confirmed; nothing is invented.
-    const draft = await http()
-      .post('/purchases')
-      .set(as('ADMIN'))
-      .send({ supplierId: ids.n2, documentNumber: `F2-${S}`, documentDate: '2026-10-20', currency: 'USD', globalDiscountType: 'NONE', globalDiscountValue: '0', lines: [line(ids.r1730, ids.bm, [], { quantity: '5', taxRatePercent: null, taxRecoverable: null })], charges: [] })
-      .expect(201);
-    expect(draft.body.issues.join(' ')).toMatch(/tasa de cambio/);
-    const refused = await http().post(`/purchases/${draft.body.id}/confirm`).set(as('ADMIN')).expect(400);
-    expect(refused.body.issues.length).toBeGreaterThan(0);
-    for (const role of ['SALES', 'WAREHOUSE', 'READ_ONLY'] as const) await http().get('/purchases').set(as(role)).expect(403);
+    // No recoverable-VAT choice, tax rate, currency or charges are accepted; discount ≤ 100 %.
+    const base = { supplierId: ids.n2, documentNumber: `F2-${S}`, documentDate: '2026-10-20' };
+    await http().post('/purchases').set(as('ADMIN')).send({ ...base, lines: [{ ...purchaseLine(ids.r1730, ids.bm, 'NATIONAL', 5, '50000'), taxRecoverable: true }] }).expect(400);
+    await http().post('/purchases').set(as('ADMIN')).send({ ...base, currency: 'USD', lines: [purchaseLine(ids.r1730, ids.bm, 'NATIONAL', 5, '50000')] }).expect(400);
+    await http().post('/purchases').set(as('ADMIN')).send({ ...base, lines: [purchaseLine(ids.r1730, ids.bm, 'NATIONAL', 5, '50000', '101')] }).expect(400);
+    for (const role of ['SALES', 'WAREHOUSE', 'READ_ONLY'] as const) {
+      await http().get('/purchases').set(as(role)).expect(403);
+      await http().post('/purchases').set(as(role)).send({ ...base, lines: [purchaseLine(ids.r1730, ids.bm, 'NATIONAL', 5, '50000')] }).expect(403);
+    }
     await http().get('/lots').set(as('SALES')).expect(403);
   });
 
-  it('#8 markup on cost vs gross margin on sale with cost 9.700', async () => {
-    const q = (method: string, percent: string) =>
-      http().get(`/sales/price-suggestion?referenceId=${ids.r1739}&finishId=${ids.np}&origin=NATIONAL&method=${method}&percent=${percent}`).set(as('SALES'));
-    expect((await q('MARKUP_ON_COST', '30').expect(200)).body).toMatchObject({ suggestedUnitPrice: '12610.00', costBasis: '9700.000000' });
-    expect((await q('GROSS_MARGIN', '30').expect(200)).body.suggestedUnitPrice).toBe('13857.14');
-    await q('GROSS_MARGIN', '100').expect(400);
-    const noCost = await http().get(`/sales/price-suggestion?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=CHINA&method=MARKUP_ON_COST&percent=30`).set(as('SALES')).expect(200);
-    expect(noCost.body.available).toBe(false);
-    await http().get(`/sales/price-suggestion?referenceId=${ids.r1739}&finishId=${ids.np}&origin=NATIONAL&method=MARKUP_ON_COST&percent=30`).set(as('WAREHOUSE')).expect(403);
+  it('#8 sale price = cost of the chosen purchase line + profit on cost (11.543 + 30 % = 15.005,90)', async () => {
+    const example = await salePrice(ids.purchaseF, ids.lineF1730, '30', true).expect(201);
+    expect(example.body).toMatchObject({ purchaseLineId: ids.lineF1730, unitCost: '11543', markupPercent: '30', unitPrice: '15005.9', enabled: true, origin: 'NATIONAL' });
+    // Sales: price only, no cost, profit, purchase or line.
+    const price = await http().get(`/sales/price?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=NATIONAL`).set(as('SALES')).expect(200);
+    expect(price.body).toEqual({ available: true, unitPrice: '15005.90' });
+    // The line must belong to the selected purchase and the purchase must be confirmed.
+    const draft = await http().post('/purchases').set(as('ADMIN')).send({ supplierId: ids.n1, documentNumber: `D-${S}`, documentDate: '2026-10-21', lines: [purchaseLine(ids.r1739, ids.np, 'NATIONAL', 10, '100000')] }).expect(201);
+    await salePrice(draft.body.id, draft.body.lines[0].id, '30').expect(400);
+    await salePrice(draft.body.id, ids.lineF1739, '30').expect(404);
+    // The database refuses a price whose material differs from its purchase line.
+    await expect(
+      prisma.salePrice.create({ data: { purchaseLineId: ids.lineF1739, referenceId: ids.r1730, finishId: ids.bm, origin: 'NATIONAL', unitCost: '9700', markupPercent: '30', unitPrice: '12610', createdById: U.ADMIN } }),
+    ).rejects.toThrow();
+    // Costs and profits are ADMIN only.
+    for (const role of ['SALES', 'WAREHOUSE', 'READ_ONLY'] as const) {
+      await http().get('/sale-prices').set(as(role)).expect(403);
+      await http().post('/sale-prices').set(as(role)).send({ purchaseId: ids.purchaseF, purchaseLineId: ids.lineF1739, markupPercent: '1', enabled: true }).expect(403);
+      await http().post(`/sale-prices/${example.body.id}/disable`).set(as(role)).expect(403);
+      await http().get(`/purchases/${ids.purchaseF}`).set(as(role)).expect(403);
+    }
+    await http().get(`/sales/price?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=NATIONAL`).set(as('WAREHOUSE')).expect(403);
+    await http().get(`/sales/price-suggestion?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=NATIONAL&method=MARKUP_ON_COST&percent=30`).set(as('ADMIN')).expect(404);
+  });
+
+  it('three purchases of the same profile keep independent prices; ADMIN decides the one sales receive', async () => {
+    const pardo1 = await confirmedPurchase(ids.n1, 'C001', [purchaseLine(ids.r1739, ids.np, 'NATIONAL', 10, '100000')]);
+    const pardo2 = await confirmedPurchase(ids.n1, 'C002', [purchaseLine(ids.r1739, ids.np, 'NATIONAL', 10, '120000')]);
+    const other = await confirmedPurchase(ids.n2, 'C003', [purchaseLine(ids.r1739, ids.np, 'NATIONAL', 10, '90000')]);
+    const prices = [];
+    for (const purchase of [pardo1, pardo2, other]) prices.push((await salePrice(purchase.id, purchase.lines[0].id, '30').expect(201)).body);
+    expect(prices.map((p) => [p.purchaseLineId, p.unitCost, p.unitPrice, p.purchaseLine.purchase.supplier.id])).toEqual([
+      [pardo1.lines[0].id, '10000', '13000', ids.n1],
+      [pardo2.lines[0].id, '12000', '15600', ids.n1],
+      [other.lines[0].id, '9000', '11700', ids.n2],
+    ]);
+    const offered = () => http().get(`/sales/price?referenceId=${ids.r1739}&finishId=${ids.np}&origin=NATIONAL`).set(as('SALES')).expect(200);
+    // Nothing enabled: no price is chosen automatically (neither the latest nor the lowest).
+    expect((await offered()).body.available).toBe(false);
+    await http().post(`/sale-prices/${prices[1].id}/enable`).set(as('ADMIN')).expect(200);
+    expect((await offered()).body.unitPrice).toBe('15600.00');
+    await http().post(`/sale-prices/${prices[2].id}/enable`).set(as('ADMIN')).expect(200);
+    expect((await offered()).body.unitPrice).toBe('11700.00');
+    // Enabling replaced the previous one; every price keeps its purchase and values.
+    const listed = await http().get(`/sale-prices?referenceId=${ids.r1739}&finishId=${ids.np}&origin=NATIONAL`).set(as('ADMIN')).expect(200);
+    expect(listed.body.filter((p: { enabled: boolean }) => p.enabled).map((p: { id: string }) => p.id)).toEqual([prices[2].id]);
+    expect(listed.body.length).toBe(3);
+    // A new purchase overwrites nothing.
+    const after = await prisma.salePrice.findMany({ where: { id: { in: prices.map((p) => p.id) } }, orderBy: { createdAt: 'asc' } });
+    expect(after.map((p) => p.unitPrice.toString())).toEqual(['13000', '15600', '11700']);
+    // Two enables at once: exactly one enabled price remains.
+    await Promise.all([prices[0].id, prices[1].id].map((id) => http().post(`/sale-prices/${id}/enable`).set(as('ADMIN'))));
+    expect(await prisma.salePrice.count({ where: { referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', enabled: true } })).toBe(1);
+    // Back to the price of purchase F (9.700 + 30 % = 12.610) for the rest of the file.
+    const f1739 = await salePrice(ids.purchaseF, ids.lineF1739, '30', true).expect(201);
+    expect(f1739.body).toMatchObject({ unitCost: '9700', unitPrice: '12610', enabled: true });
+    // China material, Chinese supplier: 10.000 + 50 % = 15.000.
+    const china = await confirmedPurchase(ids.cn, 'CN1', [purchaseLine(ids.r1730, ids.bm, 'CHINA', 100, '1000000')]);
+    await salePrice(china.id, china.lines[0].id, '50', true).expect(201);
   });
 
   // --- 3. Quotes and orders ---------------------------------------------------------
@@ -371,32 +443,46 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
 
   it('#9 #10 quote keeps its conditions; conversion is idempotent and single', async () => {
     ids.customer = (await http().post('/customers').set(as('SALES')).send({ name: `Cliente ${S}` }).expect(201)).body.id;
+    // Sales cannot choose a cost rule, a percentage or a manual price.
+    for (const pricing of [{ pricingMethod: 'MANUAL', unitPrice: '1', priceReason: 'x' }, { pricingMethod: 'MARKUP_ON_COST', pricingPercent: '1' }, { pricingPercent: '1' }]) {
+      await http()
+        .post('/quotes')
+        .set(as('SALES'))
+        .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 1, ...pricing })] })
+        .expect((res) => expect([400, 403]).toContain(res.status));
+    }
+    expect(await prisma.quote.count({ where: { customerId: ids.customer } })).toBe(0);
     const quote = await http()
       .post('/quotes')
       .set(as('SALES'))
       .send({
         customerId: ids.customer,
         lines: [
-          quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'CHINA', quantity: 20, pricingMethod: 'MANUAL', unitPrice: '15000', priceReason: 'Precio de lista China' }),
-          quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 10, pricingMethod: 'MARKUP_ON_COST', pricingPercent: '30' }),
+          quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'CHINA', quantity: 20 }),
+          quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 10 }),
         ],
       })
       .expect(201);
-    expect(quote.body.lines[1]).toMatchObject({ unitPrice: '12610', costBasis: '9700', referenceCode: `17.39-E2E${S}`, origin: 'NATIONAL' });
+    // 10.000 + 50 % and 9.700 + 30 %; IVA 19 % on the subtotal.
+    expect(quote.body.lines[0]).toMatchObject({ unitPrice: '15000', lineSubtotal: '300000', taxAmount: '57000', lineTotal: '357000' });
+    expect(quote.body.lines[1]).toMatchObject({ unitPrice: '12610', referenceCode: `17.39-E2E${S}`, origin: 'NATIONAL' });
+    expect(JSON.stringify(quote.body)).not.toMatch(/costBasis|costLotId|pricingPercent|pricingMethod/);
+    const asAdmin = await http().get(`/quotes/${quote.body.id}`).set(as('ADMIN')).expect(200);
+    expect(asAdmin.body.lines[1]).toMatchObject({ pricingMethod: 'MARKUP_ON_COST', pricingPercent: '30', costBasis: '9700' });
+    const usedPrice = asAdmin.body.lines[1].salePriceId as string;
+    expect((await prisma.salePrice.findUniqueOrThrow({ where: { id: usedPrice } })).purchaseLineId).toBe(ids.lineF1739);
     expect(await prisma.stockReservation.count({ where: { bundle: { referenceId: { in: [ids.r1730, ids.r1739] } } } })).toBe(0);
 
     // A later, more expensive purchase does not recalculate the quote.
     const newer = epc();
     const later = await register('WAREHOUSE', { epc: newer, referenceId: ids.r1739, finishId: ids.np, quantity: 30, origin: 'NATIONAL', supplierId: ids.n1 }).expect(201);
     bundles.n1d = { id: later.body.id, epc: newer };
-    const p2 = await http()
-      .post('/purchases')
-      .set(as('ADMIN'))
-      .send({ supplierId: ids.n1, documentNumber: `F3-${S}`, documentDate: '2026-10-25', currency: 'COP', globalDiscountType: 'NONE', globalDiscountValue: '0', lines: [{ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', unitName: 'perfil', profilesPerUnit: '1', quantity: '30', unitPrice: '20000', lineDiscountType: 'NONE', lineDiscountValue: '0', taxRatePercent: '19', taxRecoverable: true, lotIds: [later.body.lot.id] }], charges: [] })
-      .expect(201);
-    await http().post(`/purchases/${p2.body.id}/confirm`).set(as('ADMIN')).expect(200);
+    const p2 = await confirmedPurchase(ids.n1, 'F3', [purchaseLine(ids.r1739, ids.np, 'NATIONAL', 30, '600000', '0', [later.body.lot.id])]);
+    const newer2 = await salePrice(p2.id, p2.lines[0].id, '30', true).expect(201);
+    expect(newer2.body.unitPrice).toBe('26000');
     const kept = await http().get(`/quotes/${quote.body.id}`).set(as('SALES')).expect(200);
-    expect(kept.body.lines[1]).toMatchObject({ unitPrice: '12610', costBasis: '9700' });
+    expect(kept.body.lines[1]).toMatchObject({ unitPrice: '12610', salePriceId: usedPrice });
+    expect(kept.body.lines[1]).not.toHaveProperty('costBasis');
     await http().get(`/quotes/${quote.body.id}`).set(as('SALES2')).expect(404);
 
     const key = randomUUID();
@@ -404,6 +490,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     expect([a.status, b.status]).toEqual([200, 200]);
     expect(a.body.id).toBe(b.body.id);
     order1 = a.body.id;
+    expect(a.body.lines[1]).toMatchObject({ unitPrice: '12610', salePriceId: usedPrice });
     const other = await http().post(`/quotes/${quote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(409);
     expect(other.body.message).toMatch(/ya se convirtió/);
     expect(await prisma.salesOrder.count({ where: { quoteId: quote.body.id } })).toBe(1);
@@ -413,7 +500,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const quote = await http()
       .post('/quotes')
       .set(as('SALES'))
-      .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'NATIONAL', quantity: 100, pricingMethod: 'MARKUP_ON_COST', pricingPercent: '25' })] })
+      .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'NATIONAL', quantity: 100 })] })
       .expect(201);
     order2 = (await http().post(`/quotes/${quote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(200)).body.id;
     const confirm = await http().post(`/sales-orders/${order2}/confirm`).set(as('SALES')).send({ inventoryLocationId: ids.locA }).expect(200);
@@ -548,7 +635,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const quote = await http()
       .post('/quotes')
       .set(as('SALES'))
-      .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'NATIONAL', supplierId: ids.n2, quantity: 5, pricingMethod: 'MANUAL', unitPrice: '14000', priceReason: 'Cliente exige proveedor' })] })
+      .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1730, finishId: ids.bm, origin: 'NATIONAL', supplierId: ids.n2, quantity: 5 })] })
       .expect(201);
     const order = (await http().post(`/quotes/${quote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(200)).body;
     await http().post(`/sales-orders/${order.id}/confirm`).set(as('SALES')).send({ inventoryLocationId: ids.locA }).expect(200);
@@ -667,7 +754,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     await http().post('/reader/observations').set(reader()).send({ sessionId: 'nope', events: [{ eventId: 'e', epc: 'AA', observedAt: new Date().toISOString() }] }).expect(409);
 
     // Open dispatch for one national 17.39 profile.
-    const quote = await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 2, pricingMethod: 'MANUAL', unitPrice: '13000', priceReason: 'Prueba' })] }).expect(201);
+    const quote = await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 2 })] }).expect(201);
     const order = (await http().post(`/quotes/${quote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(200)).body;
     await http().post(`/sales-orders/${order.id}/confirm`).set(as('SALES')).send({ inventoryLocationId: ids.locA }).expect(200);
     const dispatch = (await http().post(`/sales-orders/${order.id}/dispatches`).set(as('SALES')).send({ operationKey: randomUUID(), assigneeId: U.WAREHOUSE, dueAt: inHours(2), lines: [{ salesOrderLineId: order.lines[0].id, quantity: 2 }] }).expect(201)).body;

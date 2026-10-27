@@ -1195,6 +1195,47 @@ tabla de 32 escenarios.
   - adaptador del lector real;
   - política contable para descuentos condicionados.
 
+## Registro y precios simplificados (27/10/2026)
+
+Objetivo: registrar paquetes sin pasos extra y que solo ADMIN maneje costos
+y ganancias. Sin migración nueva: usa las tablas existentes (`settings`,
+`inbound_shipments`, `stock_lots`) y no borra datos.
+
+- **Registro**:
+  - «Registrar paquetes» ya abría con China; ahora muestra el proveedor de
+    China asignado (`GET /suppliers/china`, solo nombre) o avisa si falta
+    configurarlo. Nacional sigue pidiendo el proveedor.
+  - Prerregistro China sin envío: `shipmentId` es opcional y el servidor usa
+    el envío abierto o abre uno `AUTO-AAAAMMDD[-n]` (candado consultivo por
+    proveedor). La pantalla China ya no exige envío.
+  - Recepción: la nota de diferencia es opcional; la diferencia se sigue
+    guardando y auditando. La pantalla no muestra lotes.
+  - Supervisor de despachos marcado como opcional (ya lo era en el backend).
+  - Cambiar el proveedor de China cierra el envío abierto del anterior en vez
+    de exigir cerrarlo a mano.
+  - Los paquetes históricos no se reclasifican.
+- **Pruebas del registro** (e2e `sales-dispatch`): envío automático
+  compartido por dos prerregistros simultáneos y recepción con diferencia
+  sin nota.
+- **Precios**: la regla por origen de este bloque se sustituyó el mismo día
+  por precios ligados a una línea de compra. Ver la sección siguiente.
+
+## Compras con IVA incluido y precios por línea de compra (27/10/2026)
+
+Detalle completo en `docs/refinamiento-registro-precios.md`.
+
+- Compra: valor bruto con IVA incluido, descuento %, perfiles → costo por
+  perfil; sin IVA descontable, moneda ni gastos en compras nuevas.
+- `SalePrice` (nuevo) ligado a una línea de compra por clave foránea
+  compuesta (línea + referencia + acabado + origen); un solo precio
+  habilitado por referencia, acabado y origen (índice único parcial).
+- Cotizaciones y órdenes guardan `salePriceId` e importes propios.
+- Migración nueva `20261027160000_sale_prices_from_purchases`: aplicada en
+  la base de pruebas y en `solaluminios_dev` (27/10/2026, autorizada);
+  **pendiente en el VPS**.
+- Pruebas: unitarias 30/30, e2e 141/141, builds y lint OK, navegador con el
+  ejemplo 1.190.000 / 3 % / 100 / 30 % / IVA 19 %.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

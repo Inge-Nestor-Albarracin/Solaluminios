@@ -5,7 +5,6 @@ import {
   IsArray,
   IsEmail,
   IsEnum,
-  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -18,7 +17,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { MaterialOrigin, PricingMethod } from '../../../generated/prisma/client.js';
+import { MaterialOrigin } from '../../../generated/prisma/client.js';
 import { DECIMAL_PATTERN } from '../../../shared/money.js';
 import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 
@@ -83,7 +82,8 @@ export class AvailabilityQueryDto {
   inventoryLocationId?: string;
 }
 
-export class PriceSuggestionQueryDto {
+// Sale price for a material and origin, from the rule set by ADMIN.
+export class SalePriceQueryDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
@@ -101,12 +101,6 @@ export class PriceSuggestionQueryDto {
   @IsString()
   @MaxLength(50)
   supplierId?: string;
-
-  @IsIn(['MARKUP_ON_COST', 'GROSS_MARGIN'])
-  method!: 'MARKUP_ON_COST' | 'GROSS_MARGIN';
-
-  @Matches(DECIMAL_PATTERN, { message: `percent ${DECIMAL_MESSAGE}` })
-  percent!: string;
 }
 
 export class QuoteLineDto {
@@ -135,30 +129,13 @@ export class QuoteLineDto {
   @Max(1000000)
   quantity!: number;
 
-  @IsEnum(PricingMethod)
-  pricingMethod!: PricingMethod;
-
-  // MARKUP_ON_COST / GROSS_MARGIN.
-  @ValidateIf((line: QuoteLineDto) => line.pricingMethod !== 'MANUAL')
-  @Matches(DECIMAL_PATTERN, { message: `pricingPercent ${DECIMAL_MESSAGE}` })
-  pricingPercent?: string;
-
-  // MANUAL: authorised commercial price before tax, with a reason.
-  @ValidateIf((line: QuoteLineDto) => line.pricingMethod === 'MANUAL')
-  @Matches(DECIMAL_PATTERN, { message: `unitPrice ${DECIMAL_MESSAGE}` })
-  unitPrice?: string;
-
-  @Transform(trim)
-  @ValidateIf((line: QuoteLineDto) => line.pricingMethod === 'MANUAL')
-  @IsString()
-  @IsNotEmpty({ message: 'El precio manual requiere un motivo' })
-  @MaxLength(300)
-  priceReason?: string;
+  // No price, cost or profit fields: the line takes the sale price enabled by
+  // ADMIN for its reference, finish and origin (any extra field is rejected).
 
   @Matches(DECIMAL_PATTERN, { message: `discountPercent ${DECIMAL_MESSAGE}` })
   discountPercent!: string;
 
-  // Explicit sales tax rate for the line (no universal default).
+  // Sales VAT of the line (the screen preloads 19 %; editable, may be 0).
   @Matches(DECIMAL_PATTERN, { message: `taxRatePercent ${DECIMAL_MESSAGE}` })
   taxRatePercent!: string;
 }

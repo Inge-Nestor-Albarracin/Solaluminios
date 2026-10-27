@@ -79,9 +79,13 @@ export function RegisterBundleView({
   const [supplierId, setSupplierId] = useState(() => queue.items[0]?.body.supplierId ?? '')
   const suppliers = useLoad<Supplier[]>('/suppliers?active=true')
   const nationalSuppliers = (suppliers.data ?? []).filter((s) => s.origins.includes('NATIONAL'))
+  // Assigned by the server; shown so the operator sees who China entries go to.
+  const chinaSupplier = useLoad<{ id: string; name: string } | null>('/suppliers/china')
   const provenanceLocked = queue.items.length > 0
   const provenanceLabel =
-    origin === 'CHINA' ? 'China' : `Nacional · ${nationalSuppliers.find((s) => s.id === supplierId)?.name ?? 'sin proveedor'}`
+    origin === 'CHINA'
+      ? `China${chinaSupplier.data ? ` · ${chinaSupplier.data.name}` : ''}`
+      : `Nacional · ${nationalSuppliers.find((s) => s.id === supplierId)?.name ?? 'sin proveedor'}`
   const [checking, setChecking] = useState(false)
   const [added, setAdded] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -398,8 +402,12 @@ export function RegisterBundleView({
                 </select>
                 {suppliers.data && nationalSuppliers.length === 0 ? <span className="field-error">No hay proveedores nacionales activos (Administración → Proveedores).</span> : null}
               </Field>
-            ) : (
-              <p className="field-hint">Proveedor: el proveedor de China configurado por administración.</p>
+            ) : chinaSupplier.data ? (
+              <p className="field-hint">
+                Proveedor: <strong>{chinaSupplier.data.name}</strong> (asignado automáticamente).
+              </p>
+            ) : chinaSupplier.loading ? null : (
+              <span className="field-error">El proveedor de China no está configurado (Administración → Proveedores).</span>
             )}
           </Section>
 

@@ -3,6 +3,14 @@ import { Decimal, HUNDRED, ZERO, allocate, dec, money, sum, unitCost } from '../
 
 // Purchase costing (pure functions, unit-tested).
 //
+// CURRENT RULE (computeTaxIncludedLine): the administrator enters the
+// supplier's gross value WITH purchase VAT; that VAT is never added,
+// extracted or split again:
+//   discount  = gross × discount % / 100
+//   cost      = gross − discount               (purchase VAT stays inside)
+//   unit cost = cost ÷ profiles                (6 decimals)
+//
+// EARLIER DEFINITION (computePurchase, kept for documents recorded with it):
 // Per line:   gross     = quantity × unit price
 //             base      = gross − line discount
 // Document:   the general (commercial) discount is computed on the sum of the
@@ -144,4 +152,19 @@ export function computePurchase(input: CostingInput): CostingResult {
     documentTotal: netTotal.plus(taxTotal).plus(chargesTotal),
     issues,
   };
+}
+
+export interface TaxIncludedLine {
+  discountAmount: Decimal;
+  costAmount: Decimal;
+  unitCost: Decimal | null;
+}
+
+// Current rule: gross value with purchase VAT, percentage discount, profiles.
+export function computeTaxIncludedLine(grossAmount: Decimal, discountPercent: Decimal, profiles: number): TaxIncludedLine {
+  const gross = money(grossAmount);
+  const discountAmount = money(gross.times(discountPercent).dividedBy(HUNDRED));
+  const costAmount = gross.minus(discountAmount);
+  const valid = profiles > 0 && Number.isInteger(profiles) && costAmount.greaterThan(0);
+  return { discountAmount, costAmount, unitCost: valid ? unitCost(costAmount.dividedBy(profiles)) : null };
 }

@@ -19,7 +19,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { DiscountType, MaterialOrigin } from '../../../generated/prisma/client.js';
+import { MaterialOrigin } from '../../../generated/prisma/client.js';
 import { DECIMAL_PATTERN } from '../../../shared/money.js';
 import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 import { EPC_PATTERN, normalizeEpc } from '../../inventory/dto/register-bundle.dto.js';
@@ -117,6 +117,49 @@ export class UpdateSettingsDto {
   dispatchSupervisorId?: string | null;
 }
 
+// Sale price of one line of one purchase: profit on that line's cost.
+export class CreateSalePriceDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  purchaseId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  purchaseLineId!: string;
+
+  @Matches(DECIMAL_PATTERN, { message: `markupPercent ${DECIMAL_MESSAGE}` })
+  markupPercent!: string;
+
+  // true: becomes THE price sales receive for its reference, finish and
+  // origin (the previously enabled one is disabled, never deleted).
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+}
+
+export class SalePriceQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  referenceId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  finishId?: string;
+
+  @IsOptional()
+  @IsEnum(MaterialOrigin)
+  origin?: MaterialOrigin;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  purchaseId?: string;
+}
+
 // --- China shipments and pre-registration (English messages) ---------------
 
 export class CreateShipmentDto {
@@ -155,12 +198,14 @@ export class PreRegisterDto {
   @Max(1000000)
   quantity!: number;
 
-  // The shipment the operator is working on (shown on screen): if it was
-  // closed or replaced meanwhile the request is refused, never re-routed.
+  // Optional: the server uses the open shipment of the Chinese supplier and
+  // opens one automatically when there is none. When sent (older clients) it
+  // must still be the open shipment, never re-routed.
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  shipmentId!: string;
+  shipmentId?: string;
 
   @IsUUID('4', { message: 'operationKey must be a UUID' })
   operationKey!: string;
@@ -270,6 +315,8 @@ export class AssignBundlesDto {
 
 // --- Purchases --------------------------------------------------------------
 
+// One purchased profile (reference + finish + origin) of the supplier's
+// document. grossAmount is the value BEFORE the discount and WITH purchase VAT.
 export class PurchaseLineDto {
   @IsString()
   @IsNotEmpty()
@@ -284,39 +331,19 @@ export class PurchaseLineDto {
   @IsEnum(MaterialOrigin)
   origin!: MaterialOrigin;
 
-  @Transform(trim)
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(30)
-  unitName!: string;
+  // Profiles bought.
+  @IsInt({ message: 'La cantidad debe ser un número entero de perfiles' })
+  @Min(1, { message: 'La cantidad debe ser mayor que cero' })
+  @Max(1000000)
+  quantity!: number;
 
-  @Matches(DECIMAL_PATTERN, { message: `profilesPerUnit ${DECIMAL_MESSAGE}` })
-  profilesPerUnit!: string;
+  @Matches(DECIMAL_PATTERN, { message: `grossAmount ${DECIMAL_MESSAGE}` })
+  grossAmount!: string;
 
-  @Matches(DECIMAL_PATTERN, { message: `quantity ${DECIMAL_MESSAGE}` })
-  quantity!: string;
+  @Matches(DECIMAL_PATTERN, { message: `discountPercent ${DECIMAL_MESSAGE}` })
+  discountPercent!: string;
 
-  @Matches(DECIMAL_PATTERN, { message: `unitPrice ${DECIMAL_MESSAGE}` })
-  unitPrice!: string;
-
-  @IsEnum(DiscountType)
-  lineDiscountType!: DiscountType;
-
-  @Matches(DECIMAL_PATTERN, { message: `lineDiscountValue ${DECIMAL_MESSAGE}` })
-  lineDiscountValue!: string;
-
-  // Explicit rate (no default); null keeps the draft incomplete.
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @Matches(DECIMAL_PATTERN, { message: `taxRatePercent ${DECIMAL_MESSAGE}` })
-  taxRatePercent?: string | null;
-
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @IsBoolean()
-  taxRecoverable?: boolean | null;
-
-  // Lots whose acquisition cost this line documents.
+  // Lots whose acquisition cost this line documents (optional).
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(50)
@@ -325,17 +352,8 @@ export class PurchaseLineDto {
   lotIds?: string[];
 }
 
-export class PurchaseChargeDto {
-  @Transform(trim)
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(150)
-  description!: string;
-
-  @Matches(DECIMAL_PATTERN, { message: `amount ${DECIMAL_MESSAGE}` })
-  amount!: string;
-}
-
+// Purchases are recorded in COP with the supplier's values VAT included; no
+// currency conversion, recoverable-VAT choice or charges are asked for.
 export class SavePurchaseDto {
   @IsString()
   @IsNotEmpty()
@@ -351,39 +369,6 @@ export class SavePurchaseDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'documentDate debe tener el formato AAAA-MM-DD' })
   documentDate!: string;
 
-  @Transform(upper)
-  @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO de 3 letras' })
-  currency!: string;
-
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @Matches(DECIMAL_PATTERN, { message: `exchangeRate ${DECIMAL_MESSAGE}` })
-  exchangeRate?: string | null;
-
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  exchangeRateDate?: string | null;
-
-  @Transform(trim)
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @IsString()
-  @MaxLength(150)
-  exchangeRateSource?: string | null;
-
-  @IsEnum(DiscountType)
-  globalDiscountType!: DiscountType;
-
-  @Matches(DECIMAL_PATTERN, { message: `globalDiscountValue ${DECIMAL_MESSAGE}` })
-  globalDiscountValue!: string;
-
-  @Transform(trim)
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  conditionalDiscountNote?: string;
-
   @Transform(trim)
   @IsOptional()
   @IsString()
@@ -395,12 +380,6 @@ export class SavePurchaseDto {
   @ValidateNested({ each: true })
   @Type(() => PurchaseLineDto)
   lines!: PurchaseLineDto[];
-
-  @IsArray()
-  @ArrayMaxSize(20)
-  @ValidateNested({ each: true })
-  @Type(() => PurchaseChargeDto)
-  charges!: PurchaseChargeDto[];
 }
 
 export class LinkLotsDto {

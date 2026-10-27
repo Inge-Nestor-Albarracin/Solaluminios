@@ -19,8 +19,8 @@ import {
   ConvertQuoteDto,
   CustomerQueryDto,
   ListQueryDto,
-  PriceSuggestionQueryDto,
   ReasonDto,
+  SalePriceQueryDto,
   SaveCustomerDto,
   SaveQuoteDto,
   UpdateOrderLineDto,
@@ -63,11 +63,13 @@ export class SalesController {
     return this.sales.availability(query.referenceId, query.finishId, query.inventoryLocationId);
   }
 
+  // Enabled sale price only (no cost, purchase or profit).
   @Roles('ADMIN', 'SALES')
-  @Get('sales/price-suggestion')
-  suggestPrice(@Query() query: PriceSuggestionQueryDto) {
-    return this.sales.suggestPrice(query);
+  @Get('sales/price')
+  salePrice(@Query() query: SalePriceQueryDto) {
+    return this.sales.salePrice(query);
   }
+
 
   @Roles('ADMIN', 'SALES')
   @Get('quotes')

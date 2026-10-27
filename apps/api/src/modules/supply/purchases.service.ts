@@ -7,9 +7,9 @@ import {
 import type { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { audit, isUniqueViolation, setLockTimeout, type Tx } from '../../shared/db.js';
-import { dec } from '../../shared/money.js';
+import { ZERO, dec, sum, unitCost } from '../../shared/money.js';
 import type { SafeUser } from '../auth/auth.types.js';
-import { computePurchase } from './costing.js';
+import { computePurchase, computeTaxIncludedLine } from './costing.js';
 import type { LinkLotsDto, SavePurchaseDto } from './dto/supply.dto.js';
 
 const purchaseInclude = {
@@ -28,8 +28,13 @@ const purchaseInclude = {
 } satisfies Prisma.PurchaseInclude;
 
 // Purchase documents and acquisition cost (ADMIN only). Separate from sales
-// quotes; connected to lots, whose cost they confirm. A confirmed document is
-// frozen: later corrections are new documents or audited lot links.
+// quotes; connected to lots, whose cost they confirm, and to the sale prices
+// built on each line. A confirmed document is frozen: later corrections are
+// new documents or audited lot links.
+//
+// Lines are saved with the current rule (grossIncludesTax): gross value WITH
+// purchase VAT, percentage discount, profiles → cost per profile. Documents
+// recorded with the earlier definition keep their stored amounts.
 @Injectable()
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -73,42 +78,33 @@ export class PurchasesService {
             throw new BadRequestException(`El proveedor ${supplier.name} no está habilitado para material de origen ${line.origin}`);
           }
         }
-        const costing = computePurchase({
-          currency: dto.currency,
-          exchangeRate: dto.exchangeRate ? dec(dto.exchangeRate) : null,
-          globalDiscountType: dto.globalDiscountType,
-          globalDiscountValue: dec(dto.globalDiscountValue),
-          charges: dto.charges.map((charge) => dec(charge.amount)),
-          lines: dto.lines.map((line, index) => ({
-            lineNo: index + 1,
-            quantity: dec(line.quantity),
-            profilesPerUnit: dec(line.profilesPerUnit),
-            unitPrice: dec(line.unitPrice),
-            lineDiscountType: line.lineDiscountType,
-            lineDiscountValue: dec(line.lineDiscountValue),
-            taxRatePercent: line.taxRatePercent === null || line.taxRatePercent === undefined ? null : dec(line.taxRatePercent),
-            taxRecoverable: line.taxRecoverable ?? null,
-          })),
+        const costing = dto.lines.map((line) => computeTaxIncludedLine(dec(line.grossAmount), dec(line.discountPercent), line.quantity));
+        dto.lines.forEach((line, index) => {
+          if (dec(line.discountPercent).greaterThan(100)) throw new BadRequestException(`Renglón ${index + 1}: el descuento no puede superar 100 %`);
         });
+        const grossTotal = sum(dto.lines.map((line) => dec(line.grossAmount)));
+        const discountTotal = sum(costing.map((line) => line.discountAmount));
+        const netTotal = sum(costing.map((line) => line.costAmount));
         const header = {
           supplierId: dto.supplierId,
           documentNumber: dto.documentNumber,
           documentDate: new Date(`${dto.documentDate}T00:00:00.000Z`),
-          currency: dto.currency,
-          exchangeRate: dto.currency === 'COP' ? null : dto.exchangeRate ? dec(dto.exchangeRate) : null,
-          exchangeRateDate: dto.currency === 'COP' || !dto.exchangeRateDate ? null : new Date(`${dto.exchangeRateDate}T00:00:00.000Z`),
-          exchangeRateSource: dto.currency === 'COP' ? null : dto.exchangeRateSource || null,
-          globalDiscountType: dto.globalDiscountType,
-          globalDiscountValue: dto.globalDiscountType === 'NONE' ? dec(0) : dec(dto.globalDiscountValue),
-          conditionalDiscountNote: dto.conditionalDiscountNote || null,
+          currency: 'COP',
+          exchangeRate: null,
+          exchangeRateDate: null,
+          exchangeRateSource: null,
+          globalDiscountType: 'NONE' as const,
+          globalDiscountValue: ZERO,
+          conditionalDiscountNote: null,
           notes: dto.notes || null,
-          grossTotal: costing.grossTotal,
-          lineDiscountTotal: costing.lineDiscountTotal,
-          globalDiscountTotal: costing.globalDiscountTotal,
-          netTotal: costing.netTotal,
-          taxTotal: costing.taxTotal,
-          chargesTotal: costing.chargesTotal,
-          documentTotal: costing.documentTotal,
+          grossTotal,
+          lineDiscountTotal: discountTotal,
+          globalDiscountTotal: ZERO,
+          netTotal,
+          // Purchase VAT is inside the gross values; it is not separated.
+          taxTotal: ZERO,
+          chargesTotal: ZERO,
+          documentTotal: netTotal,
         };
         let purchaseId = id;
         if (purchaseId) {
@@ -120,7 +116,8 @@ export class PurchasesService {
           purchaseId = (await tx.purchase.create({ data: { ...header, createdById: user.id }, select: { id: true } })).id;
         }
         for (const [index, line] of dto.lines.entries()) {
-          const computed = costing.lines[index];
+          const computed = costing[index];
+          const discountPercent = dec(line.discountPercent);
           const created = await tx.purchaseLine.create({
             data: {
               purchaseId,
@@ -128,30 +125,29 @@ export class PurchasesService {
               referenceId: line.referenceId,
               finishId: line.finishId,
               origin: line.origin,
-              unitName: line.unitName,
-              profilesPerUnit: dec(line.profilesPerUnit),
+              unitName: 'perfil',
+              profilesPerUnit: dec(1),
               quantity: dec(line.quantity),
-              unitPrice: dec(line.unitPrice),
-              lineDiscountType: line.lineDiscountType,
-              lineDiscountValue: line.lineDiscountType === 'NONE' ? dec(0) : dec(line.lineDiscountValue),
-              taxRatePercent: line.taxRatePercent === null || line.taxRatePercent === undefined ? null : dec(line.taxRatePercent),
-              taxRecoverable: line.taxRecoverable ?? null,
-              grossAmount: computed.grossAmount,
-              lineDiscountAmount: computed.lineDiscountAmount,
-              globalDiscountAmount: computed.globalDiscountAmount,
-              netAmount: computed.netAmount,
-              taxAmount: computed.taxAmount,
-              chargesAmount: computed.chargesAmount,
+              // Gross value per profile, VAT included (informative).
+              unitPrice: unitCost(dec(line.grossAmount).dividedBy(line.quantity)),
+              lineDiscountType: discountPercent.isZero() ? 'NONE' : 'PERCENT',
+              lineDiscountValue: discountPercent,
+              taxRatePercent: null,
+              taxRecoverable: null,
+              grossIncludesTax: true,
+              grossAmount: dec(line.grossAmount),
+              lineDiscountAmount: computed.discountAmount,
+              globalDiscountAmount: ZERO,
+              netAmount: computed.costAmount,
+              taxAmount: ZERO,
+              chargesAmount: ZERO,
               costAmount: computed.costAmount,
-              costAmountCop: computed.costAmountCop,
-              profiles: computed.profiles,
-              unitCostCop: computed.unitCostCop,
+              costAmountCop: computed.costAmount,
+              profiles: line.quantity,
+              unitCostCop: computed.unitCost,
             },
           });
           if (line.lotIds?.length) await this.linkLots(tx, created.id, line.lotIds, dto.supplierId);
-        }
-        for (const charge of dto.charges) {
-          await tx.purchaseCharge.create({ data: { purchaseId, description: charge.description, amount: dec(charge.amount) } });
         }
         return purchaseId;
       });
@@ -184,6 +180,14 @@ export class PurchasesService {
 
   private issuesOf(purchase: Prisma.PurchaseGetPayload<{ include: typeof purchaseInclude }>): string[] {
     if (purchase.status !== 'DRAFT') return [];
+    if (purchase.lines.every((line) => line.grossIncludesTax)) {
+      const issues = purchase.lines.length === 0 ? ['La compra no tiene renglones'] : [];
+      for (const line of purchase.lines) {
+        if (!line.unitCostCop) issues.push(`Renglón ${line.lineNo}: el costo resultante es cero`);
+      }
+      return issues;
+    }
+    // Draft recorded with the earlier definition: its own checks.
     return computePurchase({
       currency: purchase.currency,
       exchangeRate: purchase.exchangeRate,

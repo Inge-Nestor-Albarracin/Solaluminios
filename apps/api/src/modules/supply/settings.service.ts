@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import type { Tx } from '../../shared/db.js';
 
@@ -18,6 +18,16 @@ export class SettingsService {
   async get(key: SettingKey, client: Tx | PrismaService = this.prisma): Promise<string | null> {
     const row = await client.setting.findUnique({ where: { key } });
     return row?.value ?? null;
+  }
+
+  // Name only: forms show which supplier China entries are assigned to.
+  async chinaSupplier() {
+    const id = await this.get(SETTING_KEYS.chinaSupplierId);
+    const supplier = id
+      ? await this.prisma.supplier.findUnique({ where: { id }, select: { id: true, code: true, name: true, active: true, origins: true } })
+      : null;
+    if (!supplier || !supplier.active || !supplier.origins.includes('CHINA')) return null;
+    return { id: supplier.id, code: supplier.code, name: supplier.name };
   }
 
   async view() {
@@ -43,12 +53,13 @@ export class SettingsService {
           if (!supplier.active || !supplier.origins.includes('CHINA')) {
             throw new BadRequestException('El proveedor de China debe estar activo y suministrar material de origen China');
           }
-          // Changing the fixed supplier while a shipment is open would mix
-          // provenances inside one shipment.
-          const open = await tx.inboundShipment.findFirst({ where: { status: 'OPEN' }, select: { code: true, supplierId: true } });
-          if (open && open.supplierId !== supplier.id) {
-            throw new ConflictException(`Cierra el envío abierto ${open.code} antes de cambiar el proveedor de China`);
-          }
+          // Shipments are opened automatically per supplier: the previous
+          // supplier's open shipment is closed so provenances never mix. Its
+          // pre-registered bundles can still be received.
+          await tx.inboundShipment.updateMany({
+            where: { status: 'OPEN', supplierId: { not: supplier.id } },
+            data: { status: 'CLOSED', closedAt: new Date() },
+          });
         }
         await this.write(tx, SETTING_KEYS.chinaSupplierId, input.chinaSupplierId, userId);
       }

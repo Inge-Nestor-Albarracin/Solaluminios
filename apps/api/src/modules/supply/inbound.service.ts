@@ -89,14 +89,11 @@ export class InboundService {
       const shipment = supplier
         ? await tx.inboundShipment.findFirst({ where: { supplierId: supplier.id, status: 'OPEN' }, select: { id: true, code: true } })
         : null;
+      // No open shipment is not a problem: the first pre-registration opens one.
       return {
         supplier: supplier ? { code: supplier.code, name: supplier.name } : null,
         shipment,
-        problem: !supplier
-          ? 'The Chinese supplier is not configured yet. Ask the administrator.'
-          : !shipment
-            ? 'There is no open shipment. Ask the administrator to open one.'
-            : null,
+        problem: !supplier ? 'The Chinese supplier is not configured yet. Ask the administrator.' : null,
       };
     });
   }
@@ -119,9 +116,8 @@ export class InboundService {
           if (replay) return this.replayPreRegistration(tx, replay, dto, user);
 
           const supplier = await this.lots.requireChinaSupplier(tx, 'en');
-          const shipment = await tx.inboundShipment.findFirst({ where: { supplierId: supplier.id, status: 'OPEN' } });
-          if (!shipment) throw new ConflictException('There is no open shipment. Nothing was saved.');
-          if (shipment.id !== dto.shipmentId) {
+          const shipment = await this.openShipmentFor(tx, supplier.id, user.id);
+          if (dto.shipmentId && shipment.id !== dto.shipmentId) {
             throw new ConflictException(`The open shipment changed (now ${shipment.code}). Reload the page; nothing was saved.`);
           }
           const reference = await tx.reference.findUnique({ where: { id: dto.referenceId } });
@@ -173,11 +169,30 @@ export class InboundService {
       existing.referenceId === dto.referenceId &&
       existing.finishId === dto.finishId &&
       existing.expectedQuantity === dto.quantity &&
-      existing.shipmentId === dto.shipmentId &&
+      (!dto.shipmentId || existing.shipmentId === dto.shipmentId) &&
       existing.createdById === user.id;
     if (!same) throw new ConflictException('This operation key was already used with different data');
     const row = await client.inboundPreRegistration.findUniqueOrThrow({ where: { id: existing.id }, include: preRegistrationInclude });
     return { replayed: true, preRegistration: this.forOperator(row) };
+  }
+
+  // The open shipment of the Chinese supplier, opened automatically (code
+  // AUTO-<date>[-n]) when there is none: the operator never creates or types
+  // one. Serialised so concurrent first pre-registrations share it.
+  private async openShipmentFor(tx: Tx, supplierId: string, userId: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'china-shipment:' + supplierId}, 0))`;
+    const open = await tx.inboundShipment.findFirst({ where: { supplierId, status: 'OPEN' } });
+    if (open) return open;
+    const base = `AUTO-${businessToday().replace(/-/g, '')}`;
+    const taken = await tx.inboundShipment.count({ where: { code: { startsWith: base } } });
+    return tx.inboundShipment.create({
+      data: {
+        code: taken === 0 ? base : `${base}-${taken + 1}`,
+        supplierId,
+        notes: 'Abierto automáticamente al prerregistrar',
+        createdById: userId,
+      },
+    });
   }
 
   // Operators see only their own records (ADMIN sees all). No costs, stock or
@@ -254,12 +269,12 @@ export class InboundService {
           if (await tx.bundle.findUnique({ where: { epc: dto.epc }, select: { id: true } })) {
             throw new ConflictException('Ya existe un paquete con ese EPC');
           }
+          // A difference is recorded and audited; an explanation is optional.
+          // The stored reason is never empty (database CHECK): without a note
+          // it states the difference itself.
           const discrepancy = dto.quantity !== pre.expectedQuantity;
-          if (discrepancy && !dto.discrepancyReason) {
-            throw new BadRequestException(
-              `Se esperaban ${pre.expectedQuantity} perfiles y se reciben ${dto.quantity}: indica el motivo de la diferencia`,
-            );
-          }
+          const note = dto.discrepancyReason || null;
+          const reason = discrepancy ? note ?? `Diferencia en recepción: ${pre.expectedQuantity} previstos, ${dto.quantity} recibidos` : null;
           await requireActiveRackInLocation(tx, dto.rackId, dto.inventoryLocationId);
 
           const now = new Date();
@@ -287,7 +302,9 @@ export class InboundService {
               destinationRackId: dto.rackId,
               occurredAt: now,
               performedById: user.id,
-              reason: discrepancy ? `Recepción China con diferencia: ${dto.discrepancyReason}` : 'Recepción de prerregistro de China',
+              reason: discrepancy
+                ? `Recepción China con diferencia (${pre.expectedQuantity} → ${dto.quantity})${note ? `: ${note}` : ''}`
+                : 'Recepción de prerregistro de China',
               operationKey: movementKey,
             },
           });
@@ -299,7 +316,7 @@ export class InboundService {
               receivedQuantity: dto.quantity,
               receivedAt: now,
               receivedById: user.id,
-              discrepancyReason: discrepancy ? dto.discrepancyReason : null,
+              discrepancyReason: discrepancy ? reason : null,
             },
           });
           if (discrepancy) {
@@ -308,7 +325,7 @@ export class InboundService {
               entityId: pre.id,
               action: 'RECEIVED_WITH_DIFFERENCE',
               userId: user.id,
-              reason: dto.discrepancyReason,
+              reason,
               data: { expected: pre.expectedQuantity, received: dto.quantity },
             });
           }

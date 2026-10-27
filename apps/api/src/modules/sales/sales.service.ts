@@ -18,13 +18,13 @@ import type {
   ConvertQuoteDto,
   CustomerQueryDto,
   ListQueryDto,
-  PriceSuggestionQueryDto,
   QuoteLineDto,
+  SalePriceQueryDto,
   SaveCustomerDto,
   SaveQuoteDto,
   UpdateOrderLineDto,
 } from './dto/sales.dto.js';
-import { lineAmounts, priceFromCost } from './pricing.js';
+import { lineAmounts } from './pricing.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
 
 const orderInclude = {
@@ -61,6 +61,9 @@ type OrderWithLines = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude
 //
 // Access: ADMIN sees every document; SALES only the documents it created.
 // READ_ONLY, WAREHOUSE and CHINA_OPERATOR have no access to prices.
+// Costs and profits are ADMIN only: SALES receives the sale price ENABLED by
+// administration (built on one purchase line, see supply/sale-prices), and
+// the cost fields of quote lines are removed from every response it gets.
 // Quotes never reserve stock. Confirming an order reserves the full
 // quantities of every line or nothing (shortages are reported and the order
 // waits for supply); a partial delivery needs an explicit partial dispatch.
@@ -101,42 +104,23 @@ export class SalesService {
 
   // --- Prices ---------------------------------------------------------------
 
-  // Last confirmed acquisition cost per profile for the material, origin and
-  // (when required) supplier. A pricing reference, not an inventory
-  // valuation method.
-  async lastCost(client: Tx | PrismaService, requirement: { referenceId: string; finishId: string; origin: MaterialOrigin; supplierId?: string | null }) {
-    return client.stockLot.findFirst({
-      where: {
-        referenceId: requirement.referenceId,
-        finishId: requirement.finishId,
-        origin: requirement.origin,
-        unitCost: { not: null },
-        ...(requirement.supplierId ? { supplierId: requirement.supplierId } : {}),
-      },
-      orderBy: [{ costConfirmedAt: 'desc' }, { id: 'desc' }],
-      select: { id: true, code: true, unitCost: true, costConfirmedAt: true, supplier: { select: { name: true } } },
+  // The price ADMIN enabled for this reference, finish and origin (at most
+  // one, unique index). Its cost comes from one specific purchase line.
+  enabledPrice(client: Tx | PrismaService, selection: { referenceId: string; finishId: string; origin: MaterialOrigin }) {
+    return client.salePrice.findFirst({
+      where: { referenceId: selection.referenceId, finishId: selection.finishId, origin: selection.origin, enabled: true },
     });
   }
 
-  async suggestPrice(query: PriceSuggestionQueryDto) {
-    const lot = await this.lastCost(this.prisma, query);
-    if (!lot?.unitCost) {
-      return { available: false, message: 'No hay un costo confirmado para ese material y origen; usa un precio manual autorizado.' };
-    }
-    try {
-      const price = priceFromCost(lot.unitCost, query.method, dec(query.percent));
+  async salePrice(query: SalePriceQueryDto) {
+    const price = await this.enabledPrice(this.prisma, query);
+    if (!price) {
       return {
-        available: true,
-        method: query.method,
-        percent: query.percent,
-        costBasis: lot.unitCost.toFixed(6),
-        costLot: lot.code,
-        costDate: lot.costConfirmedAt,
-        suggestedUnitPrice: price.toFixed(2),
+        available: false,
+        message: `Administración aún no habilitó un precio de venta para este perfil de origen ${query.origin === 'CHINA' ? 'China' : 'Nacional'}.`,
       };
-    } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : 'Porcentaje no válido');
     }
+    return { available: true, unitPrice: price.unitPrice.toFixed(2) };
   }
 
   availability(referenceId: string, finishId: string, inventoryLocationId?: string) {
@@ -181,7 +165,11 @@ export class SalesService {
     });
     // Same answer for "does not exist" and "not yours".
     if (!quote) throw new NotFoundException('La cotización no existe');
-    return quote;
+    if (user.role === 'ADMIN') return quote;
+    return {
+      ...quote,
+      lines: quote.lines.map(({ pricingMethod: _method, pricingPercent: _percent, costBasis: _cost, costLotId: _lot, priceReason: _reason, ...line }) => line),
+    };
   }
 
   async createQuote(dto: SaveQuoteDto, user: SafeUser) {
@@ -197,7 +185,7 @@ export class SalesService {
           createdById: user.id,
         },
       });
-      await this.writeQuoteLines(tx, quote.id, dto.lines, user);
+      await this.writeQuoteLines(tx, quote.id, dto.lines);
       return quote.id;
     });
     return this.getQuote(id, user);
@@ -224,7 +212,7 @@ export class SalesService {
           notes: dto.notes || null,
         },
       });
-      await this.writeQuoteLines(tx, id, dto.lines, user);
+      await this.writeQuoteLines(tx, id, dto.lines);
     });
     return this.getQuote(id, user);
   }
@@ -245,7 +233,7 @@ export class SalesService {
     return customer;
   }
 
-  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[], user: SafeUser) {
+  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[]) {
     const totals = { subtotal: [] as Decimal[], discount: [] as Decimal[], tax: [] as Decimal[], total: [] as Decimal[] };
     for (const [index, line] of lines.entries()) {
       const reference = await tx.reference.findUnique({ where: { id: line.referenceId } });
@@ -265,34 +253,20 @@ export class SalesService {
       if (discountPercent.greaterThan(100) || taxRatePercent.greaterThan(100)) {
         throw new BadRequestException(`Renglón ${index + 1}: los porcentajes no pueden superar 100`);
       }
-      let unitPrice: Decimal;
-      let costBasis: Decimal | null = null;
-      let costLotId: string | null = null;
-      let pricingPercent: Decimal | null = null;
-      if (line.pricingMethod === 'MANUAL') {
-        unitPrice = dec(line.unitPrice);
-      } else {
-        const lot = await this.lastCost(tx, line);
-        if (!lot?.unitCost) {
-          throw new BadRequestException(
-            `Renglón ${index + 1}: no hay costo confirmado de ${reference.code} ${finish.code} (${line.origin === 'CHINA' ? 'China' : 'Nacional'}). Usa un precio manual autorizado.`,
-          );
-        }
-        pricingPercent = dec(line.pricingPercent);
-        try {
-          unitPrice = priceFromCost(lot.unitCost, line.pricingMethod, pricingPercent);
-        } catch (error) {
-          throw new BadRequestException(`Renglón ${index + 1}: ${error instanceof Error ? error.message : 'porcentaje no válido'}`);
-        }
-        costBasis = lot.unitCost;
-        costLotId = lot.id;
+      // Values copied from the enabled price: later changes never touch it.
+      const price = await this.enabledPrice(tx, line);
+      if (!price) {
+        throw new BadRequestException(
+          `Renglón ${index + 1}: no hay precio de venta habilitado para ${reference.code} ${finish.code} (${line.origin === 'CHINA' ? 'China' : 'Nacional'}). Pide a administración que lo habilite.`,
+        );
       }
+      const unitPrice = price.unitPrice;
       const amounts = lineAmounts(line.quantity, unitPrice, discountPercent, taxRatePercent);
       totals.subtotal.push(amounts.lineSubtotal);
       totals.discount.push(amounts.discountAmount);
       totals.tax.push(amounts.taxAmount);
       totals.total.push(amounts.lineTotal);
-      const created = await tx.quoteLine.create({
+      await tx.quoteLine.create({
         data: {
           quoteId,
           lineNo: index + 1,
@@ -301,11 +275,10 @@ export class SalesService {
           origin: line.origin,
           supplierId: line.supplierId ?? null,
           quantity: line.quantity,
-          pricingMethod: line.pricingMethod,
-          pricingPercent,
-          costBasis,
-          costLotId,
-          priceReason: line.pricingMethod === 'MANUAL' ? line.priceReason ?? null : null,
+          pricingMethod: 'MARKUP_ON_COST',
+          pricingPercent: price.markupPercent,
+          costBasis: price.unitCost,
+          salePriceId: price.id,
           unitPrice,
           discountPercent,
           taxRatePercent,
@@ -317,16 +290,6 @@ export class SalesService {
           supplierName,
         },
       });
-      if (line.pricingMethod === 'MANUAL') {
-        await audit(tx, {
-          entity: 'QuoteLine',
-          entityId: created.id,
-          action: 'MANUAL_PRICE',
-          userId: user.id,
-          reason: line.priceReason,
-          data: { unitPrice: unitPrice.toFixed(2) },
-        });
-      }
     }
     await tx.quote.update({
       where: { id: quoteId },
@@ -390,6 +353,7 @@ export class SalesService {
                 finishCode: line.finishCode,
                 finishDescription: line.finishDescription,
                 supplierName: line.supplierName,
+                salePriceId: line.salePriceId,
               })),
             },
           },

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { FamiliesAdmin } from '../components/admin/FamiliesAdmin'
 import { LotsAdmin } from '../components/admin/LotsAdmin'
+import { SalePricesAdmin } from '../components/admin/SalePricesAdmin'
 import { PurchasesAdmin } from '../components/admin/PurchasesAdmin'
 import { ReadersAdmin } from '../components/admin/ReadersAdmin'
 import { ReferencesAdmin } from '../components/admin/ReferencesAdmin'
@@ -8,7 +9,7 @@ import { SuppliersAdmin } from '../components/admin/SuppliersAdmin'
 import { UsersAdmin } from '../components/admin/UsersAdmin'
 import { PageHeader } from '../components/ui'
 
-type Section = 'families' | 'references' | 'suppliers' | 'lots' | 'purchases' | 'readers' | 'users'
+type Section = 'families' | 'references' | 'suppliers' | 'lots' | 'purchases' | 'pricing' | 'readers' | 'users'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'families', label: 'Familias' },
@@ -16,6 +17,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'suppliers', label: 'Proveedores' },
   { id: 'lots', label: 'Lotes y procedencia' },
   { id: 'purchases', label: 'Compras y costos' },
+  { id: 'pricing', label: 'Precios de venta' },
   { id: 'readers', label: 'Lectores fijos' },
   { id: 'users', label: 'Usuarios' },
 ]
@@ -50,6 +52,7 @@ export function AdminView() {
       {section === 'suppliers' ? <SuppliersAdmin /> : null}
       {section === 'lots' ? <LotsAdmin /> : null}
       {section === 'purchases' ? <PurchasesAdmin /> : null}
+      {section === 'pricing' ? <SalePricesAdmin /> : null}
       {section === 'readers' ? <ReadersAdmin /> : null}
       {section === 'users' ? <UsersAdmin /> : null}
     </>

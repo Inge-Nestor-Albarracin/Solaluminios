@@ -1,17 +1,15 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { CatalogSelectors } from '../components/CatalogSelectors'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
   ORIGIN_LABEL,
-  PRICING_HELP,
   PRICING_LABEL,
   formatMoney,
   formatUnitCost,
   type AvailabilityGroup,
   type Customer,
   type MaterialOrigin,
-  type PricingMethod,
   type Quote,
   type Supplier,
 } from '../lib/commerce'
@@ -28,59 +26,83 @@ interface LineDraft {
   origin: MaterialOrigin
   supplierId: string
   quantity: string
-  pricingMethod: PricingMethod
-  pricingPercent: string
-  unitPrice: string
-  priceReason: string
   discountPercent: string
   taxRatePercent: string
 }
 
 // China preselected for new lines (agreed default), visible and editable.
+// IVA preloaded at 19 % and editable.
 const newLine = (): LineDraft => ({
   key: uuid(),
   catalog: EMPTY_CATALOG,
   origin: 'CHINA',
   supplierId: '',
   quantity: '',
-  pricingMethod: 'MARKUP_ON_COST',
-  pricingPercent: '',
-  unitPrice: '',
-  priceReason: '',
   discountPercent: '0',
-  taxRatePercent: '',
+  taxRatePercent: '19',
 })
 
 const decimal = (value: string) => value.trim().replace(',', '.')
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/
 
+interface Amounts {
+  subtotal: number
+  discount: number
+  tax: number
+  total: number
+}
+
+// Preview with the server's rule (subtotal = qty × price; discount on the
+// subtotal; IVA on the discounted base; cents rounded half up). The server
+// recomputes on save; this only keeps the screen in step while typing.
+function lineAmounts(line: LineDraft, unitPrice: string | null): Amounts | null {
+  const quantity = Number(line.quantity)
+  const discount = decimal(line.discountPercent || '0')
+  const tax = decimal(line.taxRatePercent)
+  if (!unitPrice || !Number.isInteger(quantity) || quantity < 1 || !DECIMAL.test(discount) || !DECIMAL.test(tax)) return null
+  const cents = Math.round(Number(unitPrice) * 100) * quantity
+  const discountCents = Math.round((cents * Number(discount)) / 100)
+  const taxCents = Math.round(((cents - discountCents) * Number(tax)) / 100)
+  return { subtotal: cents / 100, discount: discountCents / 100, tax: taxCents / 100, total: (cents - discountCents + taxCents) / 100 }
+}
+
 function LineEditor({
   line,
   index,
   suppliers,
+  unitPrice,
   onChange,
+  onPrice,
   onRemove,
 }: {
   line: LineDraft
   index: number
   suppliers: Supplier[]
+  unitPrice: string | null
   onChange: (line: LineDraft) => void
+  onPrice: (unitPrice: string | null) => void
   onRemove: (() => void) | null
 }) {
   const { referenceId, finishId } = line.catalog
   const enc = encodeURIComponent
   const availability = useLoad<AvailabilityGroup[]>(referenceId && finishId ? `/sales/availability?referenceId=${enc(referenceId)}&finishId=${enc(finishId)}` : null)
-  const percent = decimal(line.pricingPercent)
-  const suggestion = useLoad<{ available: boolean; message?: string; suggestedUnitPrice?: string; costBasis?: string; costLot?: string }>(
-    referenceId && finishId && line.pricingMethod !== 'MANUAL' && DECIMAL.test(percent)
-      ? `/sales/price-suggestion?referenceId=${enc(referenceId)}&finishId=${enc(finishId)}&origin=${line.origin}${line.supplierId ? `&supplierId=${enc(line.supplierId)}` : ''}&method=${line.pricingMethod}&percent=${enc(percent)}`
+  // Sale price configured by administration (no cost or profit reaches sales).
+  const price = useLoad<{ available: boolean; message?: string; unitPrice?: string }>(
+    referenceId && finishId
+      ? `/sales/price?referenceId=${enc(referenceId)}&finishId=${enc(finishId)}&origin=${line.origin}${line.supplierId ? `&supplierId=${enc(line.supplierId)}` : ''}`
       : null,
   )
+  const loadedPrice = referenceId && finishId && price.data?.available ? (price.data.unitPrice ?? null) : null
+  useEffect(() => onPrice(loadedPrice), [loadedPrice]) // eslint-disable-line react-hooks/exhaustive-deps
   const set = (patch: Partial<LineDraft>) => onChange({ ...line, ...patch })
   const forOrigin = (availability.data ?? []).filter((g) => g.origin === line.origin && (!line.supplierId || g.supplier?.id === line.supplierId))
   const available = forOrigin.reduce((total, g) => total + g.available, 0)
   const unknown = (availability.data ?? []).filter((g) => g.origin === 'UNKNOWN').reduce((total, g) => total + g.available, 0)
-  const originSuppliers = suppliers.filter((s) => s.origins.includes(line.origin))
+  // Kept from a saved quote (the API still accepts it); not chosen by sales.
+  const requiredSupplier = line.supplierId ? suppliers.find((s) => s.id === line.supplierId)?.name ?? 'proveedor exigido' : null
+  const vatPercent = Number(decimal(line.taxRatePercent))
+  const unitWithVat = unitPrice && DECIMAL.test(decimal(line.taxRatePercent)) ? Math.round(Number(unitPrice) * (100 + vatPercent)) / 100 : null
+  const amounts = lineAmounts(line, unitPrice)
 
   return (
     <fieldset className="card quote-line">
@@ -93,43 +115,17 @@ function LineEditor({
             <option value="NATIONAL">Nacional</option>
           </select>
         </Field>
-        <Field label="Proveedor exigido" hint="Solo si el cliente exige un proveedor concreto.">
-          <select value={line.supplierId} onChange={(e) => set({ supplierId: e.target.value })}>
-            <option value="">Cualquiera de origen {ORIGIN_LABEL[line.origin]}</option>
-            {originSuppliers.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </Field>
         <Field label="Perfiles">
           <input type="number" inputMode="numeric" min={1} value={line.quantity} onChange={(e) => set({ quantity: e.target.value })} />
         </Field>
-        <Field label="Precio" hint={PRICING_HELP[line.pricingMethod]}>
-          <select value={line.pricingMethod} onChange={(e) => set({ pricingMethod: e.target.value as PricingMethod })}>
-            {(Object.keys(PRICING_LABEL) as PricingMethod[]).map((method) => (
-              <option key={method} value={method}>{PRICING_LABEL[method]}</option>
-            ))}
-          </select>
+        <Field label="Precio de venta sin IVA" hint="Antes de añadir el IVA de venta; lo fija administración.">
+          <input readOnly value={unitPrice ? `${formatMoney(unitPrice)} / perfil` : '—'} />
         </Field>
-        {line.pricingMethod === 'MANUAL' ? (
-          <>
-            <Field label="Precio unitario sin IVA (COP)">
-              <input inputMode="decimal" value={line.unitPrice} onChange={(e) => set({ unitPrice: e.target.value })} />
-            </Field>
-            <Field label="Motivo del precio manual">
-              <input value={line.priceReason} maxLength={300} onChange={(e) => set({ priceReason: e.target.value })} />
-            </Field>
-          </>
-        ) : (
-          <Field label={line.pricingMethod === 'MARKUP_ON_COST' ? 'Recargo sobre costo (%)' : 'Margen bruto sobre venta (%)'}>
-            <input inputMode="decimal" value={line.pricingPercent} onChange={(e) => set({ pricingPercent: e.target.value })} placeholder="p. ej. 30" />
-          </Field>
-        )}
         <Field label="Descuento (%)">
           <input inputMode="decimal" value={line.discountPercent} onChange={(e) => set({ discountPercent: e.target.value })} />
         </Field>
-        <Field label="IVA de venta (%)" hint="Tarifa explícita del renglón (puede ser 0).">
-          <input inputMode="decimal" value={line.taxRatePercent} onChange={(e) => set({ taxRatePercent: e.target.value })} placeholder="p. ej. 19" />
+        <Field label="IVA de venta (%)" hint="19 % por defecto; puedes cambiarlo.">
+          <input inputMode="decimal" value={line.taxRatePercent} onChange={(e) => set({ taxRatePercent: e.target.value })} />
         </Field>
       </div>
       <div className="quote-line-info">
@@ -139,14 +135,17 @@ function LineEditor({
             {unknown > 0 ? ` · ${unknown} más de origen desconocido (no se usan sin clasificar)` : ''}
           </span>
         ) : null}
-        {suggestion.data?.available ? (
+        {requiredSupplier ? <span>Proveedor exigido: {requiredSupplier}</span> : null}
+        {unitWithVat !== null ? <span>Precio unitario con IVA de venta: {formatMoney(unitWithVat)}</span> : null}
+        {amounts ? (
           <span>
-            Precio sugerido: <strong>{formatMoney(suggestion.data.suggestedUnitPrice)}</strong> por perfil (último costo confirmado {formatUnitCost(suggestion.data.costBasis)}, lote {suggestion.data.costLot}).
+            Subtotal sin IVA {formatMoney(amounts.subtotal)}
+            {amounts.discount > 0 ? ` · Descuento ${formatMoney(amounts.discount)}` : ''} · IVA {formatMoney(amounts.tax)} ·{' '}
+            <strong>Total {formatMoney(amounts.total)}</strong>
           </span>
-        ) : suggestion.data ? (
-          <span className="field-error">{suggestion.data.message}</span>
         ) : null}
-        {suggestion.error ? <span className="field-error">{suggestion.error}</span> : null}
+        {price.data && !price.data.available ? <span className="field-error">{price.data.message}</span> : null}
+        {price.error ? <span className="field-error">{price.error}</span> : null}
         {onRemove ? <button type="button" className="text-button danger" onClick={onRemove}>Quitar renglón</button> : null}
       </div>
     </fieldset>
@@ -186,15 +185,13 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           origin: line.origin,
           supplierId: line.supplierId ?? '',
           quantity: String(line.quantity),
-          pricingMethod: line.pricingMethod,
-          pricingPercent: line.pricingPercent ?? '',
-          unitPrice: line.pricingMethod === 'MANUAL' ? line.unitPrice : '',
-          priceReason: line.priceReason ?? '',
           discountPercent: line.discountPercent,
           taxRatePercent: line.taxRatePercent,
         }))
       : [newLine()],
   )
+  // Configured sale price per line key, reported by each line editor.
+  const [prices, setPrices] = useState<Record<string, string | null>>({})
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -203,6 +200,13 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   useUnsavedWork(dirty ? 'Cotización con cambios sin guardar' : null)
 
   const editable = !id || quote?.status === 'DRAFT'
+  const draftAmounts = lines.map((line) => lineAmounts(line, prices[line.key] ?? null))
+  const draftTotals = draftAmounts.every((amounts) => amounts !== null)
+    ? (draftAmounts as Amounts[]).reduce<Amounts>(
+        (total, a) => ({ subtotal: total.subtotal + a.subtotal, discount: total.discount + a.discount, tax: total.tax + a.tax, total: total.total + a.total }),
+        { subtotal: 0, discount: 0, tax: 0, total: 0 },
+      )
+    : null
   const update = (index: number, line: LineDraft) => {
     setDirty(true)
     setLines((current) => current.map((item, i) => (i === index ? line : item)))
@@ -230,10 +234,6 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       origin: line.origin,
       ...(line.supplierId ? { supplierId: line.supplierId } : {}),
       quantity: Number(line.quantity),
-      pricingMethod: line.pricingMethod,
-      ...(line.pricingMethod === 'MANUAL'
-        ? { unitPrice: decimal(line.unitPrice), priceReason: line.priceReason.trim() }
-        : { pricingPercent: decimal(line.pricingPercent) }),
       discountPercent: decimal(line.discountPercent || '0'),
       taxRatePercent: decimal(line.taxRatePercent),
     })),
@@ -286,7 +286,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       <PageHeader
         eyebrow="Ventas · Cotización"
         title={quote ? quote.number : 'Nueva cotización'}
-        description="Guardar una cotización no reserva ni descuenta inventario. Los precios se calculan en el servidor y se conservan con sus condiciones."
+        description="Elige referencia, acabado, cantidad y origen: el precio de venta lo habilita administración. Guardar una cotización no reserva ni descuenta inventario. Los precios se calculan en el servidor y se conservan con sus condiciones."
         actions={
           <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales' })}>
             Volver a ventas
@@ -355,13 +355,21 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
               line={line}
               index={index}
               suppliers={suppliers.data ?? []}
+              unitPrice={prices[line.key] ?? null}
               onChange={(next) => update(index, next)}
+              onPrice={(price) => setPrices((current) => (current[line.key] === price ? current : { ...current, [line.key]: price }))}
               onRemove={lines.length > 1 ? () => { setDirty(true); setLines((current) => current.filter((_, i) => i !== index)) } : null}
             />
           ))}
           <button type="button" className="button button-secondary" onClick={() => { setDirty(true); setLines((current) => [...current, newLine()]) }}>
             + Agregar renglón
           </button>
+          {draftTotals ? (
+            <p className="quote-totals">
+              Subtotal sin IVA {formatMoney(draftTotals.subtotal)} · Descuentos {formatMoney(draftTotals.discount)} · IVA{' '}
+              {formatMoney(draftTotals.tax)} · <strong>Total {formatMoney(draftTotals.total)}</strong>
+            </p>
+          ) : null}
         </>
       ) : null}
 
@@ -383,7 +391,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                     <td data-label="Origen">{ORIGIN_LABEL[line.origin]}{line.supplierName ? ` · ${line.supplierName}` : ''}</td>
                     <td className="num" data-label="Perfiles">{line.quantity}</td>
                     <td data-label="Precio">
-                      {PRICING_LABEL[line.pricingMethod]}
+                      {line.pricingMethod ? PRICING_LABEL[line.pricingMethod] : 'Precio configurado'}
                       {line.pricingPercent ? ` ${Number(line.pricingPercent)} %` : ''}
                       {line.costBasis ? <span className="cell-sub"> costo base {formatUnitCost(line.costBasis)}</span> : null}
                     </td>

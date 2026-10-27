@@ -16,6 +16,7 @@ import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import {
   AssignBundlesDto,
   CreateOpeningLotDto,
+  CreateSalePriceDto,
   CreateShipmentDto,
   CreateSupplierDto,
   LinkLotsDto,
@@ -23,6 +24,7 @@ import {
   PreRegisterDto,
   PreRegistrationQueryDto,
   ReceiveDto,
+  SalePriceQueryDto,
   SavePurchaseDto,
   SupplierQueryDto,
   UpdateSettingsDto,
@@ -31,6 +33,7 @@ import {
 import { InboundService } from './inbound.service.js';
 import { LotsService } from './lots.service.js';
 import { PurchasesService } from './purchases.service.js';
+import { SalePricesService } from './sale-prices.service.js';
 import { SettingsService } from './settings.service.js';
 import { SuppliersService } from './suppliers.service.js';
 
@@ -40,7 +43,7 @@ function sessionUser(request: AuthenticatedRequest) {
 }
 
 // Suppliers are visible to the roles that choose them in forms; managing
-// them, settings, lots, costs and purchases is ADMIN only.
+// them, settings, lots, costs, purchases and sale prices is ADMIN only.
 @Controller()
 export class SupplyController {
   constructor(
@@ -48,12 +51,20 @@ export class SupplyController {
     private readonly settings: SettingsService,
     private readonly lots: LotsService,
     private readonly purchases: PurchasesService,
+    private readonly salePrices: SalePricesService,
   ) {}
 
   @Roles('ADMIN', 'SALES', 'WAREHOUSE')
   @Get('suppliers')
   listSuppliers(@Query() query: SupplierQueryDto) {
     return this.suppliers.list(query);
+  }
+
+  // Who China entries are assigned to (name only), for the entry forms.
+  @Roles('ADMIN', 'SALES', 'WAREHOUSE')
+  @Get('suppliers/china')
+  chinaSupplier() {
+    return this.settings.chinaSupplier();
   }
 
   @Roles('ADMIN')
@@ -78,6 +89,34 @@ export class SupplyController {
   @Patch('supply/settings')
   updateSettings(@Body() dto: UpdateSettingsDto, @Req() request: AuthenticatedRequest) {
     return this.settings.update(dto, sessionUser(request).id);
+  }
+
+  // Sale prices on a purchase line (cost and profit): ADMIN only. Sales
+  // receive the enabled price through GET /sales/price, without cost.
+  @Roles('ADMIN')
+  @Get('sale-prices')
+  listSalePrices(@Query() query: SalePriceQueryDto) {
+    return this.salePrices.list(query);
+  }
+
+  @Roles('ADMIN')
+  @Post('sale-prices')
+  createSalePrice(@Body() dto: CreateSalePriceDto, @Req() request: AuthenticatedRequest) {
+    return this.salePrices.create(dto, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('sale-prices/:id/enable')
+  @HttpCode(HttpStatus.OK)
+  enableSalePrice(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.salePrices.enable(id, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('sale-prices/:id/disable')
+  @HttpCode(HttpStatus.OK)
+  disableSalePrice(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.salePrices.disable(id, sessionUser(request));
   }
 
   @Roles('ADMIN')

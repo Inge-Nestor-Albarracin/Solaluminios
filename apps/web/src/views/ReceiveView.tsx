@@ -63,7 +63,7 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
 
   const amount = Number(quantity)
   const differs = found !== null && Number.isInteger(amount) && amount !== found.expectedQuantity
-  const valid = found?.status === 'PENDING' && Number.isInteger(amount) && amount >= 1 && !!location.rackId && (!differs || reason.trim().length > 0)
+  const valid = found?.status === 'PENDING' && Number.isInteger(amount) && amount >= 1 && !!location.rackId
 
   const receive = async () => {
     if (!found || !valid || busy) return
@@ -78,7 +78,7 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
           quantity: amount,
           inventoryLocationId: location.inventoryLocationId,
           rackId: location.rackId,
-          ...(differs ? { discrepancyReason: reason.trim() } : {}),
+          ...(differs && reason.trim() ? { discrepancyReason: reason.trim() } : {}),
           operationKey: key.current,
         },
       })
@@ -133,7 +133,6 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
             <div><span className="field-label">Referencia</span><p>{found.reference.code}{found.reference.description ? ` — ${found.reference.description}` : ''}</p></div>
             <div><span className="field-label">Acabado</span><p>{found.finish.description ?? found.finish.code}</p></div>
             <div><span className="field-label">Origen y proveedor</span><p>China · {found.lot.supplier?.name ?? '—'}</p></div>
-            <div><span className="field-label">Envío / lote</span><p>{found.shipment.code} · {found.lot.code}</p></div>
             <div><span className="field-label">Perfiles previstos</span><p>{found.expectedQuantity}</p></div>
             <div><span className="field-label">Registrado en China por</span><p>{found.createdBy.name}</p></div>
           </div>
@@ -149,7 +148,7 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
                   <input type="number" inputMode="numeric" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
                 </Field>
                 {differs ? (
-                  <Field label="Motivo de la diferencia" hint={`Se esperaban ${found.expectedQuantity}. La diferencia queda registrada y auditada.`}>
+                  <Field label="Nota de la diferencia (opcional)" hint={`Se esperaban ${found.expectedQuantity}. La diferencia queda registrada y auditada.`}>
                     <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
                   </Field>
                 ) : null}

@@ -197,6 +197,7 @@ model User {
   lotsCreated              StockLot[]               @relation("LotCreator")
   purchasesCreated         Purchase[]               @relation("PurchaseCreator")
   purchasesConfirmed       Purchase[]               @relation("PurchaseConfirmer")
+  salePricesCreated        SalePrice[]              @relation("SalePriceCreator")
   customersCreated         Customer[]               @relation("CustomerCreator")
   quotesCreated            Quote[]                  @relation("QuoteCreator")
   ordersCreated            SalesOrder[]             @relation("OrderCreator")
@@ -577,14 +578,51 @@ model PurchaseLine {
   costAmountCop        Decimal        @default(0) @db.Decimal(18, 2)
   profiles             Int            @default(0)
   unitCostCop          Decimal?       @db.Decimal(18, 6)
+  // true: grossAmount is the supplier's value WITH purchase VAT and the cost
+  // per profile is (gross - discount) / profiles. false: the earlier
+  // definition (net + charges + non-recoverable tax); kept as recorded.
+  grossIncludesTax     Boolean        @default(false)
 
-  purchase  Purchase   @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  reference Reference  @relation(fields: [referenceId], references: [id], onDelete: Restrict)
-  finish    Finish     @relation(fields: [finishId], references: [id], onDelete: Restrict)
-  lots      StockLot[]
+  purchase   Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  reference  Reference   @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish     Finish      @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  lots       StockLot[]
+  salePrices SalePrice[]
 
   @@unique([purchaseId, lineNo])
+  // Target of SalePrice: a price can only point to a line of its own material.
+  @@unique([id, referenceId, finishId, origin])
   @@map("purchase_lines")
+}
+
+// Sale price of ONE purchase line: its cost per profile (purchase VAT
+// included) plus a profit on that cost. Immutable: another margin is another
+// price. Sales receive the price ENABLED for a reference, finish and origin
+// (at most one, partial unique index); prices of other purchases are kept.
+model SalePrice {
+  id             String         @id @default(cuid())
+  purchaseLineId String
+  referenceId    String
+  finishId       String
+  origin         MaterialOrigin
+  unitCost       Decimal        @db.Decimal(18, 6)
+  markupPercent  Decimal        @db.Decimal(9, 4)
+  unitPrice      Decimal        @db.Decimal(18, 2)
+  enabled        Boolean        @default(false)
+  enabledAt      DateTime?      @db.Timestamptz(3)
+  disabledAt     DateTime?      @db.Timestamptz(3)
+  createdById    String
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  purchaseLine PurchaseLine     @relation(fields: [purchaseLineId, referenceId, finishId, origin], references: [id, referenceId, finishId, origin], onDelete: Restrict, onUpdate: Restrict)
+  createdBy    User             @relation("SalePriceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  quoteLines   QuoteLine[]
+  orderLines   SalesOrderLine[]
+
+  @@index([referenceId, finishId, origin])
+  @@index([purchaseLineId])
+  @@map("sale_prices")
 }
 
 // Attributable acquisition costs (freight, handling…), distributed over the
@@ -694,11 +732,15 @@ model QuoteLine {
   finishCode           String
   finishDescription    String?
   supplierName         String?
+  // Sale price used (and through it the purchase line). Null on lines saved
+  // before prices were linked to purchases.
+  salePriceId          String?
 
-  quote     Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  reference Reference @relation(fields: [referenceId], references: [id], onDelete: Restrict)
-  finish    Finish    @relation(fields: [finishId], references: [id], onDelete: Restrict)
-  supplier  Supplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  quote     Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  reference Reference  @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish    Finish     @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier  Supplier?  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  salePrice SalePrice? @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
 
   @@unique([quoteId, lineNo])
   @@map("quote_lines")
@@ -775,11 +817,14 @@ model SalesOrderLine {
   finishCode           String
   finishDescription    String?
   supplierName         String?
+  // Copied from the quote line: the sale price (and purchase line) used.
+  salePriceId          String?
 
   salesOrder    SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
   reference     Reference          @relation(fields: [referenceId], references: [id], onDelete: Restrict)
   finish        Finish             @relation(fields: [finishId], references: [id], onDelete: Restrict)
   supplier      Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  salePrice     SalePrice?         @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
   reservations  StockReservation[]
   dispatchLines DispatchLine[]
 
