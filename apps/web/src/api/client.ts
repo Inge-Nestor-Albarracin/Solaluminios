@@ -117,3 +117,37 @@ export function describeError(error: unknown): string {
   if (error instanceof ApiError) return error.message
   return 'Ocurrió un error inesperado.'
 }
+
+// Binary download (PDF documents). Same authentication, timeout and error
+// messages as apiRequest; the file name comes from Content-Disposition.
+export async function apiDownload(path: string, token: string): Promise<{ blob: Blob; filename: string | null }> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
+  let response: Response
+  let blob: Blob
+  try {
+    response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
+    blob = await response.blob()
+  } catch {
+    reportUnreachable()
+    throw new ApiError(0, noResponseMessage(timedOut))
+  } finally {
+    clearTimeout(timer)
+  }
+  reportReachable()
+  if (!response.ok) {
+    let data: unknown = null
+    try {
+      data = JSON.parse(await blob.text())
+    } catch {
+      data = null
+    }
+    throw new ApiError(response.status, errorMessage(response.status, data), data)
+  }
+  const match = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')
+  return { blob, filename: match?.[1] ?? null }
+}

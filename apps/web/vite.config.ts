@@ -28,9 +28,9 @@ export default defineConfig({
       },
       manifest: {
         id: base,
-        name: 'Solaluminios · Inventario',
-        short_name: 'Solaluminios',
-        description: 'Inventario por paquete, lectura RFID y tareas de Solaluminios (WeTracking).',
+        name: 'Solualuminios · Inventario',
+        short_name: 'Solualuminios',
+        description: 'Inventario por paquete, lectura RFID y tareas de Solualuminios (WeTracking).',
         lang: 'es-CO',
         dir: 'ltr',
         start_url: base,

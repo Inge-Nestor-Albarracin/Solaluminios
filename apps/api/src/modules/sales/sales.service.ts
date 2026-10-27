@@ -25,6 +25,7 @@ import type {
   UpdateOrderLineDto,
 } from './dto/sales.dto.js';
 import { lineAmounts } from './pricing.js';
+import { renderSalesPdf } from './sales-pdf.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
 
 const orderInclude = {
@@ -56,6 +57,15 @@ const orderInclude = {
 } satisfies Prisma.SalesOrderInclude;
 
 type OrderWithLines = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
+
+const QUOTE_STATUS = { DRAFT: 'Vigente', CONVERTED: 'Convertida en orden', CANCELLED: 'Cancelada' } as const;
+const ORDER_STATUS = {
+  DRAFT: 'Por confirmar',
+  PENDING_SUPPLY: 'Pendiente de abastecimiento',
+  CONFIRMED: 'Reservada',
+  COMPLETED: 'Entregada',
+  CANCELLED: 'Cancelada',
+} as const;
 
 // Sales: customers, quotes, orders and their reservations.
 //
@@ -537,6 +547,56 @@ export class SalesService {
       await audit(tx, { entity: 'SalesOrder', entityId: id, action: 'CANCELLED', userId: user.id, reason });
     });
     return this.getOrder(id, user);
+  }
+
+  // --- Printable documents ------------------------------------------------------
+
+  // Same access as reading the document (SALES: own documents only; others
+  // get 404). Prints customer-facing values only, never costs.
+  async quotePdf(id: string, user: SafeUser) {
+    const quote = await this.getQuote(id, user);
+    const pdf = await renderSalesPdf({
+      title: 'COTIZACIÓN',
+      number: quote.number,
+      issuedAt: quote.createdAt,
+      validUntil: quote.validUntil,
+      status: QUOTE_STATUS[quote.status],
+      related: quote.order ? `Orden de venta ${quote.order.number}` : null,
+      seller: quote.createdBy.name,
+      customer: { ...this.customerContact(quote.customer), name: quote.customerName },
+      lines: quote.lines,
+      subtotal: quote.subtotal,
+      discountTotal: quote.discountTotal,
+      taxTotal: quote.taxTotal,
+      total: quote.total,
+      notes: quote.notes,
+    });
+    return { number: quote.number, pdf };
+  }
+
+  async orderPdf(id: string, user: SafeUser) {
+    const order = await this.getOrder(id, user);
+    const customer = await this.prisma.customer.findUnique({ where: { id: order.customerId } });
+    const pdf = await renderSalesPdf({
+      title: 'ORDEN DE VENTA',
+      number: order.number,
+      issuedAt: order.createdAt,
+      status: ORDER_STATUS[order.status],
+      related: order.quote ? `Cotización ${order.quote.number}` : null,
+      seller: order.createdBy.name,
+      customer: { ...this.customerContact(customer), name: order.customerName },
+      lines: order.lines,
+      subtotal: order.subtotal,
+      discountTotal: order.discountTotal,
+      taxTotal: order.taxTotal,
+      total: order.total,
+      notes: order.notes,
+    });
+    return { number: order.number, pdf };
+  }
+
+  private customerContact(customer: { taxId: string | null; address: string | null; phone: string | null; email: string | null } | null) {
+    return { taxId: customer?.taxId ?? null, address: customer?.address ?? null, phone: customer?.phone ?? null, email: customer?.email ?? null };
   }
 
   // SALES may act only on its own orders (BOLA). ADMIN on any.

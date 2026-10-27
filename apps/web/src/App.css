@@ -3359,7 +3359,15 @@ tr.subrow td:first-child {
 
 .admin-section {
   display: grid;
+  /* minmax(0, …): wide tables scroll inside .table-wrap instead of
+     stretching the whole page. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
+}
+
+.admin-section .card > .subtitle:first-child,
+.admin-section .card > :first-child .subtitle:first-child {
+  margin-top: 0;
 }
 
 .check {
@@ -3387,6 +3395,8 @@ tr.subrow td:first-child {
   list-style: none;
 }
 
+/* Rows like the app design cards: white, soft shadow, navy bold title and a
+   brand accent bar on the left when they open something. */
 .doc-row {
   display: flex;
   flex-wrap: wrap;
@@ -3394,36 +3404,54 @@ tr.subrow td:first-child {
   justify-content: space-between;
   gap: 8px 16px;
   width: 100%;
-  padding: 12px 14px;
+  padding: 14px 18px;
   border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  box-shadow: var(--shadow);
   color: var(--text);
   font: inherit;
   text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 button.doc-row {
+  border-left-color: var(--brand-cyan);
   cursor: pointer;
 }
 
 button.doc-row:hover,
 button.doc-row:focus-visible {
   border-color: var(--line-strong);
+  border-left-color: var(--brand-blue);
   box-shadow: var(--shadow-lift);
 }
 
 .doc-main {
   display: grid;
   flex: 1 1 260px;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
+}
+
+.doc-main strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.doc-side strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .doc-main small,
 .doc-side small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   overflow-wrap: anywhere;
 }
 
@@ -3443,31 +3471,151 @@ button.doc-row:focus-visible {
   opacity: 0.7;
 }
 
-/* Quote / purchase lines */
+/* Quote / purchase lines: white card whose title is the navy step pill with
+   aqua text, sitting on the card edge. */
 .quote-line {
-  margin: 0 0 14px;
+  margin: 14px 0 20px;
   border: 1px solid var(--line);
 }
 
 .quote-line-title {
-  padding: 0 6px;
-  color: var(--ink);
-  font-weight: 800;
+  padding: 5px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-navy);
+  color: var(--brand-aqua);
+  font: 800 13px/1 var(--sans);
+  letter-spacing: 0.5px;
 }
 
+/* Availability, prices and amounts of a line: large and easy to read, each
+   fact in its own pill on a light panel with the brand accent bar. */
 .quote-line-info {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 18px;
-  margin-top: 8px;
-  font-size: 13.5px;
+  gap: 10px 12px;
+  margin-top: 18px;
+  padding: 14px 16px 14px 20px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, var(--brand-aqua), var(--brand-cyan)) left / 5px 100% no-repeat,
+    var(--surface-alt);
+  color: var(--ink);
+  font-size: 16.5px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
-.quote-totals {
-  margin: 12px 0 0;
+.quote-line-info > span:not(.field-error) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  padding: 8px 16px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px #0b194f0d;
+}
+
+@media (max-width: 640px) {
+  .quote-line-info > span:not(.field-error) {
+    width: 100%;
+    border-radius: var(--radius-sm);
+  }
+
+  .quote-totals {
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+.quote-line-info strong {
+  color: var(--ink-strong);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-line-info .field-error {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.quote-line-info .text-button {
+  margin-left: auto;
   font-size: 14px;
+}
+
+/* Document totals: navy panel of the design with the total in aqua. */
+.quote-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px 14px;
+  margin: 18px 0;
+  padding: 16px 22px;
+  border-radius: var(--radius);
+  background: var(--brand-gradient-tile);
+  box-shadow: var(--shadow);
+  color: #fff;
+  font-size: 16.5px;
+  font-weight: 600;
+  line-height: 1.5;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-totals strong {
+  color: var(--brand-aqua);
+  font: 800 22px/1.2 var(--display);
+}
+
+/* Values filled by the system (sale price, purchase data): read-only. */
+.quote-line input[readonly],
+.admin-section input[readonly] {
+  border-color: transparent;
+  background: var(--mint-soft);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.admin-section .card > .field-hint {
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+/* Checkbox option inside a form grid (e.g. «Habilitar para ventas»). */
+.check-option {
+  align-self: end;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.check-option input {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--brand-blue);
+}
+
+/* Text columns of the admin tables keep a readable width; the table
+   scrolls inside .table-wrap when needed. */
+.admin-section td[data-label='Material'],
+.admin-section td[data-label='Perfil'],
+.admin-section td[data-label='Compra'] {
+  min-width: 190px;
+}
+
+/* «+ Renglón» before the form actions. */
+.quote-line ~ .button + .actions {
+  margin-top: 18px;
 }
 
 .dispatch-form {
@@ -3491,8 +3639,8 @@ button.doc-row:focus-visible {
 }
 
 .badge-china {
-  background: #fff1e6;
-  color: #8a3b00;
+  background: var(--brand-navy);
+  color: var(--brand-aqua);
 }
 
 .badge-national {
@@ -3518,9 +3666,14 @@ button.doc-row:focus-visible {
   background: var(--surface-alt);
 }
 
+.pick-list li {
+  font-size: 15px;
+}
+
 .pick-list small {
   flex: 1 1 220px;
   color: var(--muted);
+  font-size: 14px;
 }
 
 .pick-qty {
@@ -3550,7 +3703,7 @@ button.doc-row:focus-visible {
   border-left: 4px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-alt);
-  font-size: 13.5px;
+  font-size: 15px;
 }
 
 .scan-feed li.scan-prepared,

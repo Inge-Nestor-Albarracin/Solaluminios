@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ApiError, apiRequest, type RequestOptions } from '../api/client'
+import { ApiError, apiDownload, apiRequest, type RequestOptions } from '../api/client'
 import type { LoginResponse, SessionUser } from '../api/types'
 import { SessionContext, type SessionValue } from './session-context'
 
@@ -58,9 +58,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [token, logout],
   )
 
+  const download = useCallback(
+    async (path: string) => {
+      if (!token) throw new ApiError(401, 'Debes iniciar sesión.')
+      try {
+        return await apiDownload(path, token)
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) logout(EXPIRED)
+        throw error
+      }
+    },
+    [token, logout],
+  )
+
   const value = useMemo<SessionValue>(
-    () => ({ user: session?.user ?? null, notice, login, logout, request }),
-    [session, notice, login, logout, request],
+    () => ({ user: session?.user ?? null, notice, login, logout, request, download }),
+    [session, notice, login, logout, request, download],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

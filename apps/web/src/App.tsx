@@ -68,7 +68,7 @@ function ChinaWorkspace() {
         <span className="topbar-brand">
           <BrandLogo className="topbar-logo" variant="minimal" tone="negative" title="WeTracking" />
           <span className="topbar-client">
-            <small>Solaluminios</small>
+            <small>Solualuminios</small>
             <strong>China</strong>
           </span>
         </span>
@@ -251,7 +251,7 @@ function Workspace() {
         </button>
         <div className="sidebar-client">
           <small>Inventario</small>
-          <strong>Solaluminios</strong>
+          <strong>Solualuminios</strong>
         </div>
         <nav className="nav-side">{navButtons('side')}</nav>
         <div className="sidebar-user">
@@ -272,7 +272,7 @@ function Workspace() {
           <BrandLogo className="topbar-mark" variant="mark" tone="negative" title="WeTracking" />
           <span className="topbar-client">
             <small>Inventario</small>
-            <strong>Solaluminios</strong>
+            <strong>Solualuminios</strong>
           </span>
         </button>
         <div className="topbar-user">

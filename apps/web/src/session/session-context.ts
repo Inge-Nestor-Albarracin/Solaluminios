@@ -8,6 +8,7 @@ export interface SessionValue {
   login: (email: string, password: string) => Promise<void>
   logout: (notice?: string) => void
   request: <T>(path: string, options?: RequestOptions) => Promise<{ status: number; data: T }>
+  download: (path: string) => Promise<{ blob: Blob; filename: string | null }>
 }
 
 export const SessionContext = createContext<SessionValue | null>(null)

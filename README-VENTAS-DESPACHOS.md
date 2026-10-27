@@ -133,6 +133,7 @@ El backend aplica todo. La interfaz solo oculta lo que el rol no puede usar.
 | Proveedores, ajustes, envíos China, lotes, compras/costos, lectores: gestionar | ✔ | ✘ | ✘ | ✘ |
 | Precios de venta por compra (`/sale-prices`: costo, ganancia, habilitar) | ✔ | ✘ | ✘ | ✘ |
 | Precio de venta habilitado (`/sales/price`, solo el precio) | ✔ | ✔ | ✘ | ✘ |
+| PDF de cotización u orden (`/quotes/:id/pdf`, `/sales-orders/:id/pdf`) | ✔ todas | ✔ **solo las propias** | ✘ | ✘ |
 | Proveedor fijo de China (`/suppliers/china`, solo el nombre) | ✔ | ✔ | ✔ | ✘ |
 | Prerregistro China | ver | ✘ | ✘ | ✔ crear y ver **solo los propios** |
 | Contexto/catálogo China | ✔ | ✘ | ✘ | ✔ (sin costos ni stock) |

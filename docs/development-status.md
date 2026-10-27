@@ -1236,6 +1236,74 @@ Detalle completo en `docs/refinamiento-registro-precios.md`.
 - Pruebas: unitarias 30/30, e2e 141/141, builds y lint OK, navegador con el
   ejemplo 1.190.000 / 3 % / 100 / 30 % / IVA 19 %.
 
+## PDF de cotizaciones y órdenes; nombre Solualuminios (27/10/2026)
+
+- **PDF** generado en la API con `pdfkit` 0.18.0 (y `@types/pdfkit` 0.17.6
+  como dependencia de desarrollo):
+  - `GET /quotes/:id/pdf` y `GET /sales-orders/:id/pdf`, para ADMIN y SALES;
+  - mismo control que ver el documento: SALES solo los propios, otro
+    vendedor recibe 404 y bodega 403.
+
+  Formato carta, como una factura:
+  - logo y NIT 901882638;
+  - número, fecha, vigencia, estado y documento relacionado;
+  - cliente (NIT, dirección, teléfono, correo) y vendedor;
+  - renglones con precio sin IVA, descuento e IVA de venta;
+  - totales y notas.
+
+  Nunca imprime costos, ganancias ni el origen del material (China o
+  Nacional), que es información interna; lo comprueba
+  `sales/sales-pdf.spec.ts` leyendo el texto del PDF. El pie aclara que es
+  un documento comercial y no una factura electrónica de venta (DIAN).
+- **Logo**: `apps/api/src/modules/sales/assets/solualuminios-logo.png`, que
+  `nest-cli.json` copia a `dist`.
+- **Web**: botón «Descargar PDF» en la cotización guardada y en la orden.
+- **Nombre visible** corregido a «Solualuminios» en:
+  - menú, inicio y login;
+  - pantalla de China;
+  - notificaciones push;
+  - título y descripción de la página;
+  - manifiesto de la PWA.
+
+  Las claves internas (`solaluminios.*`, caché del service worker, emisor
+  del JWT) no cambian, para no cerrar sesiones ni perder colas guardadas.
+- **Pruebas**:
+  - unitarias 30/30 y e2e 141/141, que comprueban `application/pdf`, el
+    nombre del archivo, la cabecera `%PDF-` y los permisos;
+  - builds de API y web correctos;
+  - PDF de muestra revisado visualmente.
+
+## Marca WeTracking en pantallas nuevas y textos más grandes (27/10/2026)
+
+Aplica el manual de marca y el diseño de la app (sección «Frontend con la
+marca WeTracking») a las pantallas creadas después: ventas, cotización,
+orden, despachos, compras, precios de venta y proveedores. Solo CSS y
+algunas marcas de texto; sin cambios de API ni de flujos.
+
+- Renglones de cotización y compra:
+  - el título es la píldora azul marino con texto aqua de los pasos;
+  - los datos del renglón (disponible, precio con IVA, subtotal/IVA/total,
+    costo por perfil) pasan de 13,5 px a 16,5 px;
+  - cada dato va en su propia píldora, con los valores en negrita de 18 px,
+    sobre un panel claro con la barra aqua → cian;
+  - en pantallas de 640 px o menos son bloques de ancho completo.
+- Totales: panel azul marino del diseño, con el total en aqua de 22 px.
+- Valores calculados por el sistema (precio de venta, proveedor, costo): en
+  campo de solo lectura con fondo azul claro y negrita.
+- Listas de documentos: tarjeta con sombra, barra de acento cian o azul,
+  título azul marino de 16 px y texto secundario de 14 px.
+- Insignia «China» en azul marino y aqua (antes naranja, fuera de la
+  paleta).
+- Despachos: textos de recogida y lecturas a 15 px.
+- Casilla «Habilitar para ventas» con tamaño normal.
+- Corregido: la sección de administración se ensanchaba con tablas anchas
+  (desbordamiento horizontal); ahora la tabla se desplaza dentro de su
+  recuadro.
+- Verificación en navegador (base de pruebas):
+  - cotización nueva en 1100 px y 390 px, sin desbordamiento;
+  - compras, nuevo registro de compra y precios de venta en 1100 px.
+- `tsc`, `oxlint` y `pnpm build` correctos.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

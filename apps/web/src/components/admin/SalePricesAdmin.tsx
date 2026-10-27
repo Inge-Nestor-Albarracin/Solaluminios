@@ -127,7 +127,7 @@ export function SalePricesAdmin() {
               <Field label="Ganancia sobre el costo (%)">
                 <input inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value)} placeholder="p. ej. 30" />
               </Field>
-              <label className="check field">
+              <label className="check check-option">
                 <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Habilitar para ventas (reemplaza el precio
                 habilitado de este perfil y origen)
               </label>

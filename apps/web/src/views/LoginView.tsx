@@ -107,7 +107,7 @@ export function LoginView() {
         </section>
 
         <footer className="login-footer">
-          <span>Inventario · Solaluminios</span>
+          <span>Inventario · Solualuminios</span>
         </footer>
       </div>
     </main>

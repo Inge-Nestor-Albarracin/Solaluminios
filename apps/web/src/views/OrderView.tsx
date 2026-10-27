@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { LocationSelectors } from '../components/LocationSelectors'
+import { DownloadPdfButton } from '../components/DownloadPdfButton'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
   DISPATCH_STATUS_LABEL,
@@ -122,9 +123,12 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
         title={data.number}
         description={`${data.customerName} · ${ORDER_STATUS_LABEL[data.status]}${data.inventoryLocation ? ` · sale de ${data.inventoryLocation.name}` : ''}`}
         actions={
-          <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales', tab: 'orders' })}>
-            Volver a ventas
-          </button>
+          <>
+            <DownloadPdfButton path={`/sales-orders/${encodeURIComponent(data.id)}/pdf`} fallbackName={data.number} />
+            <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales', tab: 'orders' })}>
+              Volver a ventas
+            </button>
+          </>
         }
       />
       {error ? <Notice kind="error">{error}</Notice> : null}

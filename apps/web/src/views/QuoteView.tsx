@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { CatalogSelectors } from '../components/CatalogSelectors'
+import { DownloadPdfButton } from '../components/DownloadPdfButton'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
   ORIGIN_LABEL,
@@ -136,7 +137,11 @@ function LineEditor({
           </span>
         ) : null}
         {requiredSupplier ? <span>Proveedor exigido: {requiredSupplier}</span> : null}
-        {unitWithVat !== null ? <span>Precio unitario con IVA de venta: {formatMoney(unitWithVat)}</span> : null}
+        {unitWithVat !== null ? (
+          <span>
+            Precio unitario con IVA de venta: <strong>{formatMoney(unitWithVat)}</strong>
+          </span>
+        ) : null}
         {amounts ? (
           <span>
             Subtotal sin IVA {formatMoney(amounts.subtotal)}
@@ -288,9 +293,12 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
         title={quote ? quote.number : 'Nueva cotización'}
         description="Elige referencia, acabado, cantidad y origen: el precio de venta lo habilita administración. Guardar una cotización no reserva ni descuenta inventario. Los precios se calculan en el servidor y se conservan con sus condiciones."
         actions={
-          <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales' })}>
-            Volver a ventas
-          </button>
+          <>
+            {quote ? <DownloadPdfButton path={`/quotes/${encodeURIComponent(quote.id)}/pdf`} fallbackName={quote.number} /> : null}
+            <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales' })}>
+              Volver a ventas
+            </button>
+          </>
         }
       />
       {quote && quote.status !== 'DRAFT' ? (

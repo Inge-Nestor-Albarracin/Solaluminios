@@ -494,6 +494,23 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const other = await http().post(`/quotes/${quote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(409);
     expect(other.body.message).toMatch(/ya se convirtió/);
     expect(await prisma.salesOrder.count({ where: { quoteId: quote.body.id } })).toBe(1);
+
+    // Printable PDFs: same access as the documents themselves.
+    const binary = (res: request.Response, done: (error: Error | null, body: Buffer) => void) => {
+      const stream = res as unknown as NodeJS.ReadableStream;
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('end', () => done(null, Buffer.concat(chunks)));
+    };
+    for (const [path, number] of [[`/quotes/${quote.body.id}/pdf`, quote.body.number], [`/sales-orders/${order1}/pdf`, a.body.number]] as const) {
+      const pdf = await http().get(path).set(as('SALES')).buffer(true).parse(binary).expect(200);
+      expect(pdf.headers['content-type']).toBe('application/pdf');
+      expect(pdf.headers['content-disposition']).toBe(`attachment; filename="${number}.pdf"`);
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+      await http().get(path).set(as('ADMIN')).expect(200);
+      await http().get(path).set(as('SALES2')).expect(404);
+      await http().get(path).set(as('WAREHOUSE')).expect(403);
+    }
   });
 
   it('#12 #13 shortage is reported without reservations; a partial dispatch reserves only what is authorised', async () => {

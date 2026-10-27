@@ -339,11 +339,14 @@ export function PurchasesAdmin() {
                 </div>
                 <div className="quote-line-info">
                   {amounts ? (
-                    <span>
-                      Descuento {formatMoney(amounts.discount)} · Costo después del descuento {formatMoney(amounts.cost)} ·{' '}
-                      <strong>Costo por perfil (IVA de compra incluido) {formatUnitCost(amounts.unitCost.toFixed(6))}</strong>
-                    </span>
-                  ) : null}
+                    <>
+                      <span>Descuento: <strong>{formatMoney(amounts.discount)}</strong></span>
+                      <span>Costo después del descuento: <strong>{formatMoney(amounts.cost)}</strong></span>
+                      <span>Costo por perfil (IVA de compra incluido): <strong>{formatUnitCost(amounts.unitCost.toFixed(6))}</strong></span>
+                    </>
+                  ) : (
+                    <span className="field-hint">Escribe cantidad, valor bruto y descuento para ver el costo por perfil.</span>
+                  )}
                   {form.lines.length > 1 ? (
                     <button type="button" className="text-button danger" onClick={() => setForm({ ...form, lines: form.lines.filter((_, i) => i !== index) })}>Quitar renglón</button>
                   ) : null}

@@ -46,7 +46,7 @@ self.addEventListener('message', (event) => {
 type View = 'home' | 'tasks' | 'sales' | 'dispatches'
 
 const MESSAGES: Record<string, { body: string; view: View }> = {
-  test: { body: 'Notificación de prueba: este dispositivo recibe los avisos de Solaluminios.', view: 'home' },
+  test: { body: 'Notificación de prueba: este dispositivo recibe los avisos de Solualuminios.', view: 'home' },
   'task-assigned': { body: 'Tienes una tarea nueva asignada. Abre la aplicación para verla.', view: 'tasks' },
   'dispatch-assigned': { body: 'Tienes un despacho asignado. Ábrelo en Tareas para prepararlo.', view: 'tasks' },
   'dispatch-reassigned': { body: 'Un despacho que tenías asignado pasó a otra persona.', view: 'tasks' },
@@ -55,7 +55,7 @@ const MESSAGES: Record<string, { body: string; view: View }> = {
   'dispatch-confirmed': { body: 'Se confirmó la salida de un despacho de tu orden.', view: 'sales' },
   'dispatch-overdue': { body: 'Un despacho está atrasado. Revísalo en la aplicación.', view: 'dispatches' },
 }
-const FALLBACK = { body: 'Tienes un aviso nuevo en Solaluminios.', view: 'home' as View }
+const FALLBACK = { body: 'Tienes un aviso nuevo en Solualuminios.', view: 'home' as View }
 const ALLOWED_VIEWS = new Set<View>(['home', 'tasks', 'sales', 'dispatches'])
 
 const scoped = (path: string) => new URL(path, self.registration.scope).href
@@ -69,7 +69,7 @@ self.addEventListener('push', (event) => {
   }
   const message = Object.hasOwn(MESSAGES, type) ? MESSAGES[type] : FALLBACK
   event.waitUntil(
-    self.registration.showNotification('Solaluminios', {
+    self.registration.showNotification('Solualuminios', {
       body: message.body,
       icon: scoped('icons/icon-192.png'),
       badge: scoped('icons/badge-96.png'),

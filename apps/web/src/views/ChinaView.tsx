@@ -101,7 +101,7 @@ export function ChinaView() {
   return (
     <div className="china">
       <PageHeader
-        eyebrow="Solaluminios · Supplier"
+        eyebrow="Solualuminios · Supplier"
         title="Pre-register bundles"
         description="Read the RFID tag, choose the reference and the finish, type the number of profiles and save. Supplier and origin are set automatically."
       />

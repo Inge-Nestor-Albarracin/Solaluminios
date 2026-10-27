@@ -139,7 +139,7 @@ export function HomeView({
         <span className="home-banner-pill home-banner-pill-1" aria-hidden="true" />
         <span className="home-banner-pill home-banner-pill-2" aria-hidden="true" />
         <small>Inventario de perfiles</small>
-        <strong>Solaluminios</strong>
+        <strong>Solualuminios</strong>
       </section>
 
       <svg width="0" height="0" className="sr-only" aria-hidden="true">

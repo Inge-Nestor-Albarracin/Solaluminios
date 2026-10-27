@@ -9,8 +9,11 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Roles } from '../auth/auth.metadata.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import {
@@ -30,6 +33,15 @@ import { SalesService } from './sales.service.js';
 function sessionUser(request: AuthenticatedRequest) {
   if (!request.user) throw new UnauthorizedException();
   return request.user;
+}
+
+function pdfResponse(response: Response, document: { number: string; pdf: Buffer }) {
+  response.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="${document.number.replace(/[^A-Za-z0-9._-]/g, '_')}.pdf"`,
+    'Cache-Control': 'no-store',
+  });
+  return new StreamableFile(document.pdf);
 }
 
 // Commercial documents: ADMIN and SALES only (SALES limited to its own
@@ -84,6 +96,12 @@ export class SalesController {
   }
 
   @Roles('ADMIN', 'SALES')
+  @Get('quotes/:id/pdf')
+  async quotePdf(@Param('id') id: string, @Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
+    return pdfResponse(response, await this.sales.quotePdf(id, sessionUser(request)));
+  }
+
+  @Roles('ADMIN', 'SALES')
   @Post('quotes')
   createQuote(@Body() dto: SaveQuoteDto, @Req() request: AuthenticatedRequest) {
     return this.sales.createQuote(dto, sessionUser(request));
@@ -119,6 +137,12 @@ export class SalesController {
   @Get('sales-orders/:id')
   getOrder(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.sales.getOrder(id, sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Get('sales-orders/:id/pdf')
+  async orderPdf(@Param('id') id: string, @Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
+    return pdfResponse(response, await this.sales.orderPdf(id, sessionUser(request)));
   }
 
   @Roles('ADMIN', 'SALES')
