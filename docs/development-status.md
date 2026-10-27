@@ -1304,6 +1304,40 @@ algunas marcas de texto; sin cambios de API ni de flujos.
   - compras, nuevo registro de compra y precios de venta en 1100 px.
 - `tsc`, `oxlint` y `pnpm build` correctos.
 
+## Contenido de los lotes y filtro de procedencia en Paquetes (27/10/2026)
+
+- **Lotes con costo pendiente al registrar una compra.** Cada lote muestra su
+  código, material, proveedor, paquetes y perfiles. Por ejemplo:
+  «LOT-000853 · PRUEBA Champaña · Proveedor… · 10 paquetes · 250 perfiles».
+  - Los perfiles son los que ingresaron (movimiento de alta de cada paquete),
+    así que una salida posterior no cambia lo que documenta la compra.
+  - En China se suma lo prerregistrado aún sin recibir («por recibir…»).
+  - Debajo aparece el total seleccionado. Si no coincide con la cantidad de
+    perfiles del renglón, se avisa sin bloquear.
+  - La lista múltiple pasa a casillas, porque en celular cortaba el texto.
+  - «Lotes y procedencia» muestra lo mismo, más los perfiles en existencia.
+  - API: `GET /lots` agrega `totals` a cada lote: `bundles`, `profiles`,
+    `inStock`, `pendingBundles` y `pendingProfiles`.
+- **Paquetes.**
+  - Filtros «Procedencia» (China, Nacional, Sin procedencia) y «Proveedor»,
+    que incluye proveedores inactivos.
+  - Columna nueva «Procedencia».
+  - API: `GET /inventory/bundles?origin=CHINA|NATIONAL|UNKNOWN&supplierId=`.
+  - Con «Sin procedencia», el proveedor se limpia y se desactiva.
+- **PDF de cotización.** El código y el build actual no tienen columna de
+  origen; `sales-pdf.spec.ts` lo comprueba. El API de desarrollo en el puerto
+  3000 se había iniciado a las 10:38, antes de esa versión, y hay que
+  reiniciarlo.
+- **Pruebas.**
+  - API: unitarias 31/31, e2e 141/141. Se ampliaron #1 (lote China con
+    pendientes) y #4 (filtros por procedencia y proveedor, totales del lote).
+  - Web: `tsc`, `oxlint` y build correctos.
+  - Navegador, contra la base de pruebas con datos temporales (sufijo 661ECD,
+    borrados por IDs exactos al terminar): filtros con 12 nacionales, 0 de
+    China, 1 sin procedencia y 13 en total; casillas de lotes en 375 px sin
+    desbordamiento; aviso de diferencia 240 frente a 250; el borrador guarda
+    el lote elegido.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

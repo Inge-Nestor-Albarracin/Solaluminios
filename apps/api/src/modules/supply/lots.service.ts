@@ -133,7 +133,43 @@ export class LotsService {
         take: pageSize,
       }),
     ]);
-    return { items, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+    return { items: await this.withTotals(items), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+  }
+
+  // What each lot holds, to match it with a purchase document: profiles that
+  // came in (its bundles' registration movement, unaffected by later exits),
+  // profiles still in stock and, for China, what is announced but not received.
+  private async withTotals<T extends { id: string }>(lots: T[]) {
+    const ids = lots.map((lot) => lot.id);
+    if (ids.length === 0) return [];
+    const [entered, current, pending] = await Promise.all([
+      this.prisma.$queryRaw<{ lotId: string; bundles: number; profiles: number }[]>`
+        SELECT b."lotId", COUNT(*)::int AS bundles, COALESCE(SUM(m.quantity), 0)::int AS profiles
+        FROM "bundles" b
+        JOIN "inventory_movements" m ON m."bundleId" = b.id AND m.type IN ('INITIAL_STOCK', 'ENTRY')
+        WHERE b."lotId" = ANY(${ids}::text[])
+        GROUP BY b."lotId"`,
+      this.prisma.bundle.groupBy({ by: ['lotId'], where: { lotId: { in: ids } }, _sum: { quantity: true } }),
+      this.prisma.inboundPreRegistration.groupBy({
+        by: ['lotId'],
+        where: { lotId: { in: ids }, status: 'PENDING' },
+        _count: { _all: true },
+        _sum: { expectedQuantity: true },
+      }),
+    ]);
+    const enteredBy = new Map(entered.map((row) => [row.lotId, row]));
+    const currentBy = new Map(current.map((row) => [row.lotId, row._sum.quantity ?? 0]));
+    const pendingBy = new Map(pending.map((row) => [row.lotId, row]));
+    return lots.map((lot) => ({
+      ...lot,
+      totals: {
+        bundles: enteredBy.get(lot.id)?.bundles ?? 0,
+        profiles: enteredBy.get(lot.id)?.profiles ?? 0,
+        inStock: currentBy.get(lot.id) ?? 0,
+        pendingBundles: pendingBy.get(lot.id)?._count._all ?? 0,
+        pendingProfiles: pendingBy.get(lot.id)?._sum.expectedQuantity ?? 0,
+      },
+    }));
   }
 
   // Historical stock without provenance, grouped for classification.

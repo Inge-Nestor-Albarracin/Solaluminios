@@ -64,7 +64,19 @@ interface LotOption {
   origin: MaterialOrigin
   unitCost: string | null
   supplier: { name: string } | null
-  _count: { bundles: number }
+  reference: { code: string }
+  finish: { code: string; description: string | null }
+  totals: { bundles: number; profiles: number; inStock: number; pendingBundles: number; pendingProfiles: number }
+}
+
+const plural = (count: number, one: string, many: string) => `${count.toLocaleString('es-CO')} ${count === 1 ? one : many}`
+
+// What a lot holds: bundles and profiles that came in (an exit does not
+// change what the purchase documents) plus, for China, what is still announced.
+function lotContents(totals: LotOption['totals']) {
+  const parts = [`${plural(totals.bundles, 'paquete', 'paquetes')} · ${plural(totals.profiles, 'perfil', 'perfiles')}`]
+  if (totals.pendingBundles > 0) parts.push(`por recibir ${plural(totals.pendingBundles, 'paquete', 'paquetes')} · ${plural(totals.pendingProfiles, 'perfil', 'perfiles')}`)
+  return parts.join(' + ')
 }
 
 const emptyLine = (): LineDraft => ({
@@ -101,20 +113,46 @@ function LotPicker({ line, onChange }: { line: LineDraft; onChange: (lotIds: str
       : null,
   )
   const chosen = line.lotIds ? line.lotIds.split(',') : []
+  const items = lots.data?.items ?? []
+  const selected = items.filter((lot) => chosen.includes(lot.id))
+  const sum = (key: keyof LotOption['totals']) => selected.reduce((total, lot) => total + lot.totals[key], 0)
+  const lineProfiles = Number(line.quantity)
+  const selectedProfiles = sum('profiles') + sum('pendingProfiles')
+  const hint =
+    selected.length === 0
+      ? 'Lotes de ese material y origen con costo pendiente.'
+      : `Seleccionado: ${lotContents({ bundles: sum('bundles'), profiles: sum('profiles'), inStock: sum('inStock'), pendingBundles: sum('pendingBundles'), pendingProfiles: sum('pendingProfiles') })}` +
+        (Number.isInteger(lineProfiles) && lineProfiles > 0 && lineProfiles !== selectedProfiles
+          ? `. El renglón dice ${plural(lineProfiles, 'perfil', 'perfiles')}: revisa que correspondan.`
+          : '.')
+  // Checkboxes, not a multiple select: the text wraps, so the contents of
+  // each lot stay readable on a phone.
   return (
-    <Field label="Lotes que documenta (opcional)" hint="Lotes de ese material y origen con costo pendiente.">
-      <select
-        multiple
-        value={chosen}
-        onChange={(e) => onChange([...e.target.selectedOptions].map((o) => o.value).join(','))}
-      >
-        {(lots.data?.items ?? []).map((lot) => (
-          <option key={lot.id} value={lot.id}>
-            {lot.code} · {lot.supplier?.name ?? 'sin proveedor'} · {lot._count.bundles} paquetes
-          </option>
-        ))}
-      </select>
-    </Field>
+    <div className="field field-wide">
+      <span className="field-label">Lotes que documenta (opcional)</span>
+      {items.length === 0 ? (
+        <span className="field-hint">{lots.loading ? 'Cargando lotes…' : 'No hay lotes de ese material y origen con costo pendiente.'}</span>
+      ) : (
+        <ul className="check-list lot-check-list">
+          {items.map((lot) => (
+            <li key={lot.id}>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(lot.id)}
+                  onChange={(e) => onChange((e.target.checked ? [...chosen, lot.id] : chosen.filter((id) => id !== lot.id)).join(','))}
+                />
+                <span>
+                  <strong>{lot.code}</strong> · {lot.reference.code} {lot.finish.description ?? lot.finish.code} · {lot.supplier?.name ?? 'sin proveedor'}
+                  <span className="cell-sub">{lotContents(lot.totals)}</span>
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      {items.length > 0 ? <span className="field-hint">{hint}</span> : null}
+    </div>
   )
 }
 

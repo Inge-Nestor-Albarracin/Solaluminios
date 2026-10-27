@@ -3386,6 +3386,27 @@ tr.subrow td:first-child {
   list-style: none;
 }
 
+/* Lots of a purchase line: two-line options (lot, then its contents). */
+.lot-check-list {
+  margin: 2px 0 4px;
+}
+
+.lot-check-list .check {
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  line-height: 1.35;
+}
+
+.lot-check-list input {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--brand-blue);
+}
+
 /* Document lists (quotes, orders, dispatches, suppliers, lots…) */
 .doc-list {
   display: grid;

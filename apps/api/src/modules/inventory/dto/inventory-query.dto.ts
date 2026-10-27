@@ -2,6 +2,7 @@ import { applyDecorators } from '@nestjs/common';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsString,
@@ -54,6 +55,8 @@ const IdField = () =>
     MaxLength(50),
   );
 
+export const BUNDLE_ORIGINS = ['CHINA', 'NATIONAL', 'UNKNOWN'] as const;
+
 export class InventoryFiltersDto extends PaginationQueryDto {
   @IdField() familyId?: string;
   @IdField() referenceId?: string;
@@ -78,6 +81,14 @@ export class ListBundlesQueryDto extends InventoryFiltersDto {
   @ValidateIf(optional)
   @IsBoolean({ message: 'unclassified debe ser true o false' })
   unclassified?: boolean;
+
+  // Provenance from the bundle's lot; UNKNOWN = not classified yet (no lot).
+  @Transform(trim)
+  @ValidateIf(optional)
+  @IsIn(BUNDLE_ORIGINS, { message: 'origin debe ser CHINA, NATIONAL o UNKNOWN' })
+  origin?: (typeof BUNDLE_ORIGINS)[number];
+
+  @IdField() supplierId?: string;
 }
 
 export class InventorySummaryQueryDto extends InventoryFiltersDto {}

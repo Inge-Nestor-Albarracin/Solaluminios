@@ -3,6 +3,7 @@ import type { Bundle, Page } from '../api/types'
 import { CatalogSelectors } from '../components/CatalogSelectors'
 import { LocationSelectors } from '../components/LocationSelectors'
 import { Empty, Field, FilterPanel, Loading, Notice, PageHeader, Pagination } from '../components/ui'
+import { ORIGIN_LABEL, type Supplier } from '../lib/commerce'
 import { formatDateTime } from '../lib/format'
 import { EMPTY_CATALOG, EMPTY_LOCATION, type CatalogValue, type LocationValue } from '../lib/forms'
 import { queryString, useLoad } from '../lib/useLoad'
@@ -20,7 +21,13 @@ export function BundlesView({
   const [catalog, setCatalog] = useState<CatalogValue>({ ...EMPTY_CATALOG, ...initialCatalog })
   const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION)
   const [available, setAvailable] = useState('')
+  // Provenance: CHINA / NATIONAL / UNKNOWN (not classified yet) and supplier.
+  const [origin, setOrigin] = useState('')
+  const [supplierId, setSupplierId] = useState('')
   const [page, setPage] = useState(1)
+  // Inactive suppliers too: older bundles may come from them.
+  const suppliers = useLoad<Supplier[]>('/suppliers')
+  const supplierOptions = (suppliers.data ?? []).filter((supplier) => origin === '' || supplier.origins.includes(origin as Supplier['origins'][number]))
 
   const path = `/inventory/bundles${queryString({
     familyId: catalog.familyId,
@@ -31,6 +38,8 @@ export function BundlesView({
     aisleId: location.aisleId,
     rackId: location.rackId,
     available,
+    origin,
+    supplierId,
     page,
     pageSize: PAGE_SIZE,
   })}`
@@ -39,7 +48,9 @@ export function BundlesView({
   const activeCount =
     Object.values(catalog).filter(Boolean).length +
     Object.values(location).filter(Boolean).length +
-    (available ? 1 : 0)
+    (available ? 1 : 0) +
+    (origin ? 1 : 0) +
+    (supplierId ? 1 : 0)
 
   // Any filter change returns to the first page.
   const filter = <T,>(set: (value: T) => void) => (value: T) => {
@@ -51,6 +62,8 @@ export function BundlesView({
     setCatalog(EMPTY_CATALOG)
     setLocation(EMPTY_LOCATION)
     setAvailable('')
+    setOrigin('')
+    setSupplierId('')
     setPage(1)
   }
 
@@ -61,7 +74,7 @@ export function BundlesView({
       <PageHeader
         eyebrow="Inventario · Paquetes"
         title="Paquetes"
-        description="Todos los paquetes registrados, del más reciente al más antiguo. Filtra por producto, ubicación o estado."
+        description="Todos los paquetes registrados, del más reciente al más antiguo. Filtra por producto, ubicación, procedencia o estado."
       />
 
       <FilterPanel activeCount={activeCount} onClear={clear}>
@@ -72,6 +85,34 @@ export function BundlesView({
             <option value="">Todos</option>
             <option value="true">Con perfiles</option>
             <option value="false">Agotados</option>
+          </select>
+        </Field>
+        <Field label="Procedencia">
+          <select
+            value={origin}
+            onChange={(e) => {
+              setOrigin(e.target.value)
+              // A supplier of the other origin would leave the list empty.
+              const kept = (suppliers.data ?? []).find((supplier) => supplier.id === supplierId)
+              if (e.target.value === 'UNKNOWN' || (kept && e.target.value && !kept.origins.includes(e.target.value as Supplier['origins'][number]))) setSupplierId('')
+              setPage(1)
+            }}
+          >
+            <option value="">Todas</option>
+            <option value="CHINA">{ORIGIN_LABEL.CHINA}</option>
+            <option value="NATIONAL">{ORIGIN_LABEL.NATIONAL}</option>
+            <option value="UNKNOWN">Sin procedencia (por clasificar)</option>
+          </select>
+        </Field>
+        <Field label="Proveedor">
+          <select value={supplierId} disabled={origin === 'UNKNOWN'} onChange={(e) => filter(setSupplierId)(e.target.value)}>
+            <option value="">Todos</option>
+            {supplierOptions.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+                {supplier.active ? '' : ' (inactivo)'}
+              </option>
+            ))}
           </select>
         </Field>
       </FilterPanel>
@@ -105,6 +146,7 @@ export function BundlesView({
                   <th>Referencia</th>
                   <th>Acabado</th>
                   <th className="num">Perfiles</th>
+                  <th>Procedencia</th>
                   <th>Ubicación</th>
                   <th>Registrado</th>
                 </tr>
@@ -130,6 +172,16 @@ export function BundlesView({
                     </td>
                     <td className="num" data-label="Perfiles">
                       {bundle.quantity === 0 ? <span className="badge badge-muted">Agotado</span> : bundle.quantity}
+                    </td>
+                    <td data-label="Procedencia">
+                      {bundle.lot ? (
+                        <>
+                          <span className="cell-main">{ORIGIN_LABEL[bundle.lot.origin]}</span>
+                          <span className="cell-sub">{bundle.lot.supplier?.name ?? 'Proveedor no documentado'}</span>
+                        </>
+                      ) : (
+                        <span className="badge badge-warning">Sin procedencia</span>
+                      )}
                     </td>
                     <td data-label="Ubicación">
                       <span className="cell-main">{bundle.inventoryLocation.name}</span>

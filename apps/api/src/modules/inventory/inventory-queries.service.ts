@@ -38,7 +38,15 @@ export class InventoryQueriesService {
       ...this.commonWhere(query),
       rackId: query.rackId,
       rack: query.aisleId ? { aisleId: query.aisleId } : undefined,
-      lotId: query.unclassified === true ? null : undefined,
+      lotId: query.unclassified === true || query.origin === 'UNKNOWN' ? null : undefined,
+      // A supplier only exists through a lot, so with UNKNOWN nothing matches.
+      lot:
+        (query.origin && query.origin !== 'UNKNOWN') || query.supplierId
+          ? {
+              ...(query.origin && query.origin !== 'UNKNOWN' ? { origin: query.origin } : {}),
+              ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+            }
+          : undefined,
       quantity:
         query.available === true
           ? { gt: 0 }

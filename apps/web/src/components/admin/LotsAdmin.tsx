@@ -21,6 +21,7 @@ interface Lot {
   shipment: { code: string } | null
   purchaseLine: { purchase: { documentNumber: string } } | null
   _count: { bundles: number; preRegistrations: number }
+  totals: { bundles: number; profiles: number; inStock: number; pendingBundles: number; pendingProfiles: number }
 }
 
 interface UnclassifiedGroup {
@@ -154,7 +155,9 @@ export function LotsAdmin() {
                 <small>
                   {KIND_LABEL[lot.kind]} · {ORIGIN_LABEL[lot.origin]}{lot.supplier ? ` · ${lot.supplier.name}` : ''}
                   {lot.shipment ? ` · envío ${lot.shipment.code}` : ''}
-                  {lot.purchaseLine ? ` · compra ${lot.purchaseLine.purchase.documentNumber}` : ''} · {lot._count.bundles} paquetes
+                  {lot.purchaseLine ? ` · compra ${lot.purchaseLine.purchase.documentNumber}` : ''} · {lot.totals.bundles} paquetes ·{' '}
+                  {lot.totals.profiles} perfiles ingresados ({lot.totals.inStock} en existencia)
+                  {lot.totals.pendingBundles > 0 ? ` · por recibir ${lot.totals.pendingBundles} paquetes · ${lot.totals.pendingProfiles} perfiles` : ''}
                 </small>
               </span>
               <span className="doc-side">{lot.unitCost ? `${formatUnitCost(lot.unitCost)} / perfil` : <span className="badge badge-warning">Costo pendiente</span>}</span>

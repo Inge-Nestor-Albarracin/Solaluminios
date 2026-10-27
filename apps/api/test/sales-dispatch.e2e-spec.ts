@@ -203,6 +203,9 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const pre = await prisma.inboundPreRegistration.findFirstOrThrow({ where: { epc: first }, include: { lot: true } });
     expect(pre.lot).toMatchObject({ origin: 'CHINA', supplierId: ids.cn, kind: 'CHINA_SHIPMENT' });
     expect(await prisma.bundle.count({ where: { epc: first } })).toBe(0);
+    // The lot shows what is announced and not yet received.
+    const lots = await http().get(`/lots?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=CHINA&pageSize=50`).set(as('ADMIN')).expect(200);
+    expect(lots.body.items.find((lot: { id: string }) => lot.id === pre.lotId).totals).toEqual({ bundles: 0, profiles: 0, inStock: 0, pendingBundles: 1, pendingProfiles: 25 });
     bundles.china = { id: '', epc: first };
   });
 
@@ -335,6 +338,29 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const availability = await http().get(`/sales/availability?referenceId=${ids.r1730}&finishId=${ids.bm}&inventoryLocationId=${ids.locA}`).set(as('SALES')).expect(200);
     const summary = Object.fromEntries(availability.body.map((g: { origin: string; supplier: { code: string } | null; physical: number }) => [`${g.origin}:${g.supplier?.code ?? '-'}`, g.physical]));
     expect(summary).toEqual({ [`CHINA:CN-${S}`]: 24, [`NATIONAL:N1-${S}`]: 40, [`NATIONAL:N2-${S}`]: 15, 'UNKNOWN:-': 50 });
+
+    // «Paquetes» filtered by provenance (other tests add bundles of this
+    // material, so membership is checked, not totals).
+    type Row = { id: string; lot: { origin: string; supplier: { id: string } | null } | null };
+    const list = async (filters: string) =>
+      (await http().get(`/inventory/bundles?referenceId=${ids.r1730}&finishId=${ids.bm}&pageSize=100${filters}`).set(as('WAREHOUSE')).expect(200)).body.items as Row[];
+    const national = await list('&origin=NATIONAL');
+    expect(national.every((b) => b.lot?.origin === 'NATIONAL')).toBe(true);
+    expect(national.map((b) => b.id)).toEqual(expect.arrayContaining([bundles.n1a.id, bundles.n1b.id, bundles.n2a.id]));
+    const n1Only = await list(`&origin=NATIONAL&supplierId=${ids.n1}`);
+    expect(n1Only.every((b) => b.lot?.supplier?.id === ids.n1)).toBe(true);
+    expect(n1Only.map((b) => b.id)).toEqual(expect.arrayContaining([bundles.n1a.id, bundles.n1b.id]));
+    expect(n1Only.some((b) => b.id === bundles.n2a.id)).toBe(false);
+    expect((await list('&origin=CHINA')).every((b) => b.lot?.origin === 'CHINA')).toBe(true);
+    const unclassified = await list('&origin=UNKNOWN');
+    expect(unclassified.every((b) => b.lot === null) && unclassified.some((b) => b.id === unknown.id)).toBe(true);
+    expect(await list(`&origin=UNKNOWN&supplierId=${ids.n1}`)).toEqual([]);
+    await http().get('/inventory/bundles?origin=PERU').set(as('WAREHOUSE')).expect(400);
+
+    // Lots pending cost show what they hold, for matching a purchase.
+    const lotId = (await prisma.bundle.findUniqueOrThrow({ where: { id: bundles.n1a.id } })).lotId;
+    const lots = await http().get(`/lots?referenceId=${ids.r1730}&finishId=${ids.bm}&origin=NATIONAL&costPending=true&pageSize=50`).set(as('ADMIN')).expect(200);
+    expect(lots.body.items.find((lot: { id: string }) => lot.id === lotId).totals).toEqual({ bundles: 1, profiles: 30, inStock: 30, pendingBundles: 0, pendingProfiles: 0 });
   });
 
   // --- 2. Purchases and costs ---------------------------------------------------
