@@ -501,7 +501,7 @@ export class SalesService {
             const authorised = line.dispatchLines.filter((dl) => dl.dispatch.status !== 'CANCELLED').reduce((total, dl) => total + dl.quantity, 0);
             const required = line.quantity - authorised;
             if (required <= 0) continue;
-            const plan = await this.reservations.plan(tx, line, dto.inventoryLocationId, required, taken);
+            const plan = await this.reservations.plan(tx, line, dto.inventoryLocationId, required, taken, candidates);
             if (plan.shortage > 0) {
               shortages.push({ lineNo: line.lineNo, referenceCode: line.referenceCode, finishCode: line.finishCode, origin: line.origin, required, available: plan.available, missing: plan.shortage });
             }

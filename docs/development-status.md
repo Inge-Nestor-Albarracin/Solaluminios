@@ -1338,6 +1338,67 @@ algunas marcas de texto; sin cambios de API ni de flujos.
     desbordamiento; aviso de diferencia 240 frente a 250; el borrador guarda
     el lote elegido.
 
+## Concurrencia de cotizaciones, órdenes y reservas (27/10/2026)
+
+**Duración de la reserva.** Al confirmar una orden, la reserva **no vence**.
+Dura hasta que ocurre una de estas cosas:
+- se confirma la salida del despacho (se consume);
+- se cancela la orden (se libera);
+- se cancela un despacho parcial (se liberan sus reservas);
+- se cambia lo preparado en un despacho (se reasigna).
+
+Tampoco hay vencimiento por la fecha «Válida hasta» de la cotización: no se
+comprueba al convertirla. Una orden «Pendiente de abastecimiento» no se
+reintenta sola cuando llega material. Las tres son decisiones de negocio
+pendientes.
+
+**Suite nueva** `test/sales-orders-concurrency.e2e-spec.ts`: 12 carreras ×
+20 rondas en PostgreSQL real. Cuando ambas operaciones abren transacción, la
+barrera las suelta juntas.
+- Conversión repetida con la misma clave.
+- Edición frente a conversión de una cotización.
+- Cancelación frente a conversión de una cotización.
+- Doble confirmación de la misma orden.
+- Confirmar frente a cancelar una orden.
+- Confirmar frente a salida manual del mismo paquete.
+- Cambio de proveedor exigido frente a confirmar.
+- Dos órdenes con los mismos dos materiales en orden inverso.
+- Creación de despacho repetida con la misma clave.
+- Dos despachos distintos para toda la orden.
+- Cancelar la orden frente a confirmar un despacho parcial.
+- Cancelar la orden frente a confirmar un despacho total.
+
+**Fallos encontrados por la suite** (fallaban antes de corregir):
+1. Cancelar una orden mientras se confirmaba su despacho producía un
+   deadlock: la confirmación bloqueaba despacho → orden y la cancelación
+   orden → despacho. Respondía 500 y dejaba la orden reservada. Ahora la
+   confirmación bloquea primero la orden (`lockOrderOf`), y
+   `cancelOpenDispatches` bloquea los despachos y relee su estado; un
+   despacho confirmado entretanto se omite, nunca se cancela sobre su salida.
+2. Los deadlocks y tiempos de espera de candados respondían 500 en lugar de
+   503 reintentable. El adaptador pg deja el código en `cause.originalCode`,
+   y PostgreSQL responde en español («se ha detectado un deadlock»). Nuevo
+   `sqlState()` en `shared/db.ts`, usado por el filtro global, por
+   `isLockTimeout` y por `isCheckViolation`. Prueba unitaria en
+   `retryable.spec.ts`.
+3. Crear el mismo despacho dos veces a la vez con la misma clave respondía
+   201 y 400: la comprobación de repetición estaba antes del bloqueo de la
+   orden. Ahora también se repite después del bloqueo.
+
+**Corrección preventiva.** `ReservationsService.plan()` solo usa paquetes
+bloqueados. Un paquete que se volvía elegible entre la lista de candidatos y
+el plan (ingreso, traslado o clasificación) podía reservarse sin bloqueo.
+No se reproduce de forma determinista; queda cubierto por las suites
+existentes.
+
+**Pruebas.** API unitarias 34/34, e2e 153/153 (18 archivos), lint correcto.
+- Algunas carreras siempre terminaron en el mismo orden: edición frente a
+  conversión, confirmar frente a cancelar, y confirmar frente a salida
+  manual. El servidor decide quién bloquea primero. Los casos secuenciales
+  inversos ya estaban cubiertos por otras pruebas.
+- `tsc` sobre `test/` mantiene un error previo en
+  `test/load/inventory.load-spec.ts`, ajeno a esta tarea.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

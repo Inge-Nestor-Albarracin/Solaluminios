@@ -17,11 +17,25 @@ export async function lockEpc(tx: Tx, epc: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'epc:' + epc}, 0))`;
 }
 
+// SQLSTATE of a database error, whatever wraps it: the pg driver adapter
+// (cause.originalCode, e.g. errors inside interactive transactions), Prisma
+// (meta.code) or pg itself (code). Messages are not reliable: the server may
+// answer in Spanish («se ha detectado un deadlock»).
+export function sqlState(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const e = error as { code?: unknown; meta?: { code?: unknown }; cause?: { originalCode?: unknown; code?: unknown } };
+  for (const value of [e.cause?.originalCode, e.cause?.code, e.meta?.code, e.code]) {
+    if (typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value) && !/^P\d{4}$/.test(value)) return value;
+  }
+  return null;
+}
+
 // PostgreSQL 55P03 lock_not_available, raised when lock_timeout expires.
 export function isLockTimeout(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (sqlState(error) === '55P03') return true;
   const meta = (error as { meta?: Record<string, unknown> }).meta;
-  return meta?.code === '55P03' || /55P03|lock timeout/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
+  return /55P03|lock timeout/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
 }
 
 export function isUniqueViolation(error: unknown): boolean {
@@ -31,6 +45,7 @@ export function isUniqueViolation(error: unknown): boolean {
 // A CHECK constraint or trigger raised check_violation (23514).
 export function isCheckViolation(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (sqlState(error) === '23514') return true;
   const meta = (error as { meta?: Record<string, unknown> }).meta;
   return /23514|check_violation|violates check constraint/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
 }

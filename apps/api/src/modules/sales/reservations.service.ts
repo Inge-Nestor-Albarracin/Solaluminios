@@ -67,16 +67,20 @@ export class ReservationsService {
   }
 
   // FIFO plan over locked candidates (oldest bundle first). `taken` holds
-  // quantities planned in the same transaction for other lines.
+  // quantities planned in the same transaction for other lines. `locked`
+  // limits the plan to the bundles the caller locked: one that became
+  // eligible after the lock (new entry, transfer, classification) is not
+  // locked, so it is left for the next confirmation instead of being used.
   async plan(
     tx: Tx,
     requirement: MaterialRequirement,
     inventoryLocationId: string,
     quantity: number,
     taken: Map<string, number> = new Map(),
+    locked?: ReadonlySet<string>,
   ): Promise<{ allocations: Allocation[]; shortage: number; available: number }> {
     const bundles = await tx.bundle.findMany({
-      where: eligibleWhere(requirement, inventoryLocationId),
+      where: { ...eligibleWhere(requirement, inventoryLocationId), ...(locked ? { id: { in: [...locked] } } : {}) },
       select: { id: true, quantity: true },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });

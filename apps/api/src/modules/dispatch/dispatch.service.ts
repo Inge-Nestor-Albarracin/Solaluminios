@@ -93,6 +93,15 @@ export class DispatchService {
     return dispatch;
   }
 
+  // Locks the sales order of a dispatch (its salesOrderId never changes).
+  // Access is checked afterwards by lockDispatch.
+  private async lockOrderOf(tx: Tx, dispatchId: string) {
+    await setLockTimeout(tx);
+    await tx.$queryRaw`
+      SELECT o.id FROM "sales_orders" o JOIN "dispatches" d ON d."salesOrderId" = o.id
+      WHERE d.id = ${dispatchId} FOR UPDATE OF o`;
+  }
+
   async eligibleAssignees(inventoryLocationId: string) {
     return this.prisma.user.findMany({
       where: { active: true, role: 'WAREHOUSE', defaultInventoryLocationId: inventoryLocationId },
@@ -121,12 +130,18 @@ export class DispatchService {
     try {
       const id = await this.prisma.$transaction(
         async (tx) => {
-          const replay = await tx.dispatch.findUnique({ where: { createOperationKey: dto.operationKey } });
-          if (replay) {
-            if (replay.salesOrderId !== orderId) throw new ConflictException('La clave de operación ya se usó con otra orden');
-            return replay.id;
-          }
+          const replayed = async () => {
+            const replay = await tx.dispatch.findUnique({ where: { createOperationKey: dto.operationKey } });
+            if (replay && replay.salesOrderId !== orderId) throw new ConflictException('La clave de operación ya se usó con otra orden');
+            return replay?.id ?? null;
+          };
+          const earlier = await replayed();
+          if (earlier) return earlier;
           const order = await this.sales.lockOrder(tx, orderId, user);
+          // Again after the lock: the same request sent twice at once waited
+          // here while the first one created the dispatch.
+          const concurrent = await replayed();
+          if (concurrent) return concurrent;
           if (order.status === 'CANCELLED' || order.status === 'COMPLETED') throw new ConflictException('La orden no admite nuevos despachos');
           const partial = order.status !== 'CONFIRMED';
           if (partial && !dto.partial) {
@@ -171,7 +186,7 @@ export class DispatchService {
             const shortages: string[] = [];
             for (const input of dto.lines) {
               const line = byId.get(input.salesOrderLineId)!;
-              const plan = await this.reservations.plan(tx, line, locationId, input.quantity, taken);
+              const plan = await this.reservations.plan(tx, line, locationId, input.quantity, taken, candidates);
               if (plan.shortage > 0) shortages.push(`Renglón ${line.lineNo} (${line.referenceCode} ${line.finishCode}): faltan ${plan.shortage} perfiles`);
               for (const a of plan.allocations) taken.set(a.bundleId, (taken.get(a.bundleId) ?? 0) + a.quantity);
               plans.push({ lineId: line.id, quantity: input.quantity, allocations: plan.allocations });
@@ -716,6 +731,11 @@ export class DispatchService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
+          // Order first, then the dispatch: the same lock order as cancelling
+          // the order (which cancels its dispatches). The other way round both
+          // transactions wait for each other (deadlock), or the cancellation
+          // overwrites an exit that was just confirmed.
+          await this.lockOrderOf(tx, id);
           const dispatch = await this.lockDispatch(tx, id, user);
           this.assertExecutor(dispatch, user);
           if (dispatch.status === 'CONFIRMED') {

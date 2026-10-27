@@ -10,7 +10,13 @@ export async function cancelOpenDispatches(
   input: { dispatchIds: string[]; reason: string; userId: string; keepReservations: boolean },
 ) {
   const now = new Date();
-  for (const dispatchId of [...input.dispatchIds].sort()) {
+  const ids = [...new Set(input.dispatchIds)].sort();
+  if (ids.length === 0) return;
+  // Wait for operations in progress on these dispatches (preparation,
+  // confirmation) and read their state after them: a dispatch confirmed
+  // meanwhile is skipped, never cancelled over its exit.
+  await tx.$queryRaw`SELECT id FROM "dispatches" WHERE id = ANY(${ids}::text[]) ORDER BY id FOR UPDATE`;
+  for (const dispatchId of ids) {
     const dispatch = await tx.dispatch.findUnique({ where: { id: dispatchId }, include: { lines: { select: { id: true } } } });
     if (!dispatch || dispatch.status !== 'OPEN') continue;
     const lineIds = dispatch.lines.map((line) => line.id);

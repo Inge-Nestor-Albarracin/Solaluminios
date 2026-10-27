@@ -369,6 +369,14 @@ Resultados de esta entrega:
 
 ## 11. Limitaciones y pendientes
 
+- **Las reservas no vencen**:
+  - una orden confirmada retiene su material hasta que sale, se cancela la
+    orden o se cancela un despacho parcial;
+  - la fecha «Válida hasta» de la cotización no se comprueba al convertirla;
+  - una orden pendiente de abastecimiento no se reintenta sola.
+
+  Definir un plazo es una decisión de negocio pendiente. Las carreras de esta
+  parte están en `test/sales-orders-concurrency.e2e-spec.ts`.
 - **Base de desarrollo sin migrar** (`solaluminios_dev`): falta
   `prisma migrate deploy`. Hoy tiene 18 paquetes que quedarán «sin
   procedencia» hasta clasificarlos.

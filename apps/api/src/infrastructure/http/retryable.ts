@@ -6,6 +6,7 @@ import {
 import { BaseExceptionFilter } from '@nestjs/core';
 import type { Response } from 'express';
 import { Prisma } from '../../generated/prisma/client.js';
+import { sqlState } from '../../shared/db.js';
 
 // A temporary condition: the request was NOT applied and can be sent again
 // unchanged (same operationKey). Clients must not treat it as a definitive
@@ -40,6 +41,8 @@ export function isTransientDatabaseError(error: unknown): boolean {
   const text = `${error.message} ${JSON.stringify(meta ?? {})}`;
   if (error instanceof Prisma.PrismaClientKnownRequestError && RETRYABLE_PRISMA_CODES.includes(error.code)) return true;
   if (typeof code === 'string' && (RETRYABLE_SQLSTATES.includes(code) || RETRYABLE_PRISMA_CODES.includes(code))) return true;
+  const state = sqlState(error);
+  if (state && RETRYABLE_SQLSTATES.includes(state)) return true;
   if (RETRYABLE_SQLSTATES.some((state) => text.includes(state))) return true;
   return RETRYABLE_MESSAGES.some((pattern) => pattern.test(text));
 }
