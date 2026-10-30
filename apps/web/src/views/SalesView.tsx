@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Page } from '../api/types'
 import { Empty, Loading, Notice, PageHeader, Pagination } from '../components/ui'
-import { ORDER_STATUS_LABEL, formatMoney, type OrderStatus } from '../lib/commerce'
+import { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, formatMoney, type OrderStatus, type PaymentStatus } from '../lib/commerce'
 import { formatDateTime } from '../lib/format'
 import { useLoad } from '../lib/useLoad'
 import type { Navigate } from './navigation'
@@ -14,7 +14,8 @@ interface QuoteRow {
   total: string
   createdAt: string
   order: { id: string; number: string } | null
-  createdBy: { name: string }
+  // ADMIN only (the API omits it for other roles).
+  createdBy?: { name: string }
   _count: { lines: number }
 }
 
@@ -25,7 +26,10 @@ interface OrderRow {
   status: OrderStatus
   total: string
   createdAt: string
-  createdBy: { name: string }
+  paymentStatus: PaymentStatus | null
+  // ADMIN only (the API omits them for other roles).
+  createdBy?: { name: string }
+  convertedBy?: { name: string } | null
   _count: { lines: number; dispatches: number }
 }
 
@@ -81,7 +85,10 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                 <button type="button" className="doc-row" onClick={() => navigate({ name: 'quote', id: quote.id })}>
                   <span className="doc-main">
                     <strong>{quote.number}</strong>
-                    <small>{quote.customerName} · {quote._count.lines} renglones · {formatDateTime(quote.createdAt)}</small>
+                    <small>
+                      {quote.customerName} · {quote._count.lines} renglones · {formatDateTime(quote.createdAt)}
+                      {quote.createdBy ? ` · creada por ${quote.createdBy.name}` : ''}
+                    </small>
                   </span>
                   <span className="doc-side">
                     <strong>{formatMoney(quote.total)}</strong>
@@ -103,11 +110,17 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                 <button type="button" className="doc-row" onClick={() => navigate({ name: 'order', id: order.id })}>
                   <span className="doc-main">
                     <strong>{order.number}</strong>
-                    <small>{order.customerName} · {order._count.dispatches} despachos · {formatDateTime(order.createdAt)}</small>
+                    <small>
+                      {order.customerName} · {order._count.dispatches} despachos · {formatDateTime(order.createdAt)}
+                      {order.createdBy ? ` · creada por ${order.convertedBy?.name ?? 'sin registro'}` : ''}
+                    </small>
                   </span>
                   <span className="doc-side">
                     <strong>{formatMoney(order.total)}</strong>
                     <span className={`badge status-${order.status.toLowerCase()}`}>{ORDER_STATUS_LABEL[order.status]}</span>
+                    {order.paymentStatus ? (
+                      <span className={`badge ${order.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-warning'}`}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</span>
+                    ) : null}
                   </span>
                 </button>
               </li>

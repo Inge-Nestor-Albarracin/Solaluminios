@@ -23,6 +23,7 @@ import {
   LotQueryDto,
   PreRegisterDto,
   PreRegistrationQueryDto,
+  PurchaseQueryDto,
   ReceiveDto,
   SalePriceQueryDto,
   SavePurchaseDto,
@@ -146,8 +147,8 @@ export class SupplyController {
 
   @Roles('ADMIN')
   @Get('purchases')
-  listPurchases() {
-    return this.purchases.list();
+  listPurchases(@Query() query: PurchaseQueryDto) {
+    return this.purchases.list(query);
   }
 
   @Roles('ADMIN')

@@ -337,11 +337,17 @@ export class PurchaseLineDto {
   @Max(1000000)
   quantity!: number;
 
+  // Gross value WITHOUT purchase VAT, as on the invoice.
   @Matches(DECIMAL_PATTERN, { message: `grossAmount ${DECIMAL_MESSAGE}` })
   grossAmount!: string;
 
+  // Applied to the gross value, before VAT.
   @Matches(DECIMAL_PATTERN, { message: `discountPercent ${DECIMAL_MESSAGE}` })
   discountPercent!: string;
+
+  // Purchase VAT on the discounted base. Explicit (may be 0); no default rate.
+  @Matches(DECIMAL_PATTERN, { message: `taxRatePercent ${DECIMAL_MESSAGE}` })
+  taxRatePercent!: string;
 
   // Lots whose acquisition cost this line documents (optional).
   @IsOptional()
@@ -352,8 +358,37 @@ export class PurchaseLineDto {
   lotIds?: string[];
 }
 
-// Purchases are recorded in COP with the supplier's values VAT included; no
-// currency conversion, recoverable-VAT choice or charges are asked for.
+// Filters of the purchase list; any combination, or none.
+export class PurchaseQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  supplierId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  familyId?: string;
+
+  // Purchases with at least one line of this reference.
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  referenceId?: string;
+
+  // Document date range, both ends included.
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateFrom debe tener el formato AAAA-MM-DD' })
+  dateFrom?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateTo debe tener el formato AAAA-MM-DD' })
+  dateTo?: string;
+}
+
+// Purchases are recorded in COP in the order of the invoice: gross value
+// without VAT, discount, VAT. No currency conversion, recoverable-VAT choice
+// or charges are asked for.
 export class SavePurchaseDto {
   @IsString()
   @IsNotEmpty()

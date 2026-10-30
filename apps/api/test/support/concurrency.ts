@@ -179,6 +179,11 @@ function replay(
         location = m.destinationLocationId;
         rack = m.destinationRackId;
         break;
+      case 'OPENING':
+        // The bundle is opened where it is: same balance, same place.
+        if (m.quantity !== m.quantityBefore || m.quantityAfter !== m.quantityBefore) return 'OPENING: cantidad distinta del saldo vigente';
+        if (m.sourceLocationId !== location || m.sourceRackId !== rack) return 'OPENING: lugar distinto de la ubicación vigente';
+        break;
       default:
         return `tipo desconocido ${m.type}`;
     }

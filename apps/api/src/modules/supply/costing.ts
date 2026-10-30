@@ -3,12 +3,19 @@ import { Decimal, HUNDRED, ZERO, allocate, dec, money, sum, unitCost } from '../
 
 // Purchase costing (pure functions, unit-tested).
 //
-// CURRENT RULE (computeTaxIncludedLine): the administrator enters the
-// supplier's gross value WITH purchase VAT; that VAT is never added,
-// extracted or split again:
-//   discount  = gross × discount % / 100
-//   cost      = gross − discount               (purchase VAT stays inside)
-//   unit cost = cost ÷ profiles                (6 decimals)
+// CURRENT RULE (computeTaxOnNetLine), in the order of the invoice: the
+// administrator enters the gross value WITHOUT purchase VAT; the discount is
+// applied before VAT and the VAT on the discounted base:
+//   discount  = gross × discount % / 100       (cents)
+//   base      = gross − discount
+//   VAT       = base × VAT % / 100              (cents; explicit rate, may be 0)
+//   total     = base + VAT
+//   unit cost = total ÷ profiles               (6 decimals; purchase VAT is
+//                                               part of the cost, as before)
+//
+// PREVIOUS RULE (computeTaxIncludedLine, kept for lines recorded with it):
+// gross value WITH purchase VAT; discount = gross × % ; cost = gross −
+// discount; unit cost = cost ÷ profiles.
 //
 // EARLIER DEFINITION (computePurchase, kept for documents recorded with it):
 // Per line:   gross     = quantity × unit price
@@ -167,4 +174,23 @@ export function computeTaxIncludedLine(grossAmount: Decimal, discountPercent: De
   const costAmount = gross.minus(discountAmount);
   const valid = profiles > 0 && Number.isInteger(profiles) && costAmount.greaterThan(0);
   return { discountAmount, costAmount, unitCost: valid ? unitCost(costAmount.dividedBy(profiles)) : null };
+}
+
+export interface TaxOnNetLine {
+  discountAmount: Decimal;
+  netAmount: Decimal;
+  taxAmount: Decimal;
+  costAmount: Decimal;
+  unitCost: Decimal | null;
+}
+
+// Current rule: gross WITHOUT VAT → discount → VAT on the discounted base.
+export function computeTaxOnNetLine(grossAmount: Decimal, discountPercent: Decimal, taxRatePercent: Decimal, profiles: number): TaxOnNetLine {
+  const gross = money(grossAmount);
+  const discountAmount = money(gross.times(discountPercent).dividedBy(HUNDRED));
+  const netAmount = gross.minus(discountAmount);
+  const taxAmount = money(netAmount.times(taxRatePercent).dividedBy(HUNDRED));
+  const costAmount = netAmount.plus(taxAmount);
+  const valid = profiles > 0 && Number.isInteger(profiles) && costAmount.greaterThan(0);
+  return { discountAmount, netAmount, taxAmount, costAmount, unitCost: valid ? unitCost(costAmount.dividedBy(profiles)) : null };
 }

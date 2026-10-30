@@ -15,6 +15,7 @@ import type { SafeUser } from '../auth/auth.types.js';
 import type {
   BundleAdjustmentDto,
   BundleExitDto,
+  BundleOpenDto,
   BundleTransferDto,
 } from './dto/bundle-operation.dto.js';
 import {
@@ -59,7 +60,7 @@ interface Operation {
   apply: (tx: Tx, bundle: Bundle) => Promise<MovementData>;
 }
 
-// Exits, transfers and adjustments.
+// Exits, transfers, adjustments and openings.
 //
 // Consistency: every operation runs in one interactive transaction that first
 // locks the bundle row with SELECT ... FOR UPDATE. Concurrent operations on
@@ -96,6 +97,42 @@ export class InventoryOperationsService {
           quantity: dto.quantity,
           quantityBefore: bundle.quantity,
           quantityAfter,
+          sourceLocationId: bundle.inventoryLocationId,
+          sourceRackId: bundle.rackId,
+          reason,
+        };
+      },
+    });
+  }
+
+  // Opens a closed bundle: its profiles become LOOSE profiles in the same
+  // location and rack. Not an exit: the total stays the same, the bundle row
+  // (EPC, history, lot) remains as antecedent and no new chip is needed. Its
+  // reservations stay on the same row, so they follow the profiles without
+  // ever being released. A bundle is opened only once (also a DB trigger).
+  open(bundleId: string, dto: BundleOpenDto, user: SafeUser) {
+    const reason = dto.reason || null;
+    return this.execute(bundleId, user, {
+      operationKey: dto.operationKey,
+      matches: (m) => m.type === 'OPENING' && m.reason === reason,
+      apply: async (tx, bundle) => {
+        if (bundle.openedAt) {
+          throw new ConflictException(
+            `El paquete ya fue abierto el ${bundle.openedAt.toISOString().slice(0, 10)}; sus perfiles ya son sueltos`,
+          );
+        }
+        if (bundle.quantity === 0) {
+          throw new ConflictException('El paquete está agotado: no tiene perfiles para abrir');
+        }
+        await tx.bundle.update({
+          where: { id: bundle.id },
+          data: { openedAt: new Date(), openedById: user.id },
+        });
+        return {
+          type: 'OPENING',
+          quantity: bundle.quantity,
+          quantityBefore: bundle.quantity,
+          quantityAfter: bundle.quantity,
           sourceLocationId: bundle.inventoryLocationId,
           sourceRackId: bundle.rackId,
           reason,

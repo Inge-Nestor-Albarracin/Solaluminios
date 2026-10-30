@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { MaterialOrigin, Prisma, SalesOrderStatus } from '../../generated/prisma/client.js';
+import type { MaterialOrigin, PaymentMethod, PaymentStatus, Prisma, SalesOrderStatus } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { RetryableException } from '../../infrastructure/http/retryable.js';
 import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
@@ -32,6 +32,8 @@ const orderInclude = {
   customer: { select: { id: true, name: true, taxId: true } },
   inventoryLocation: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, name: true } },
+  convertedBy: { select: { id: true, name: true } },
+  paymentStatusBy: { select: { id: true, name: true } },
   quote: { select: { id: true, number: true } },
   lines: {
     orderBy: { lineNo: 'asc' },
@@ -59,6 +61,31 @@ const orderInclude = {
 type OrderWithLines = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
 
 const QUOTE_STATUS = { DRAFT: 'Vigente', CONVERTED: 'Convertida en orden', CANCELLED: 'Cancelada' } as const;
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  CASH: 'Contado – efectivo',
+  TRANSFER: 'Contado – transferencia',
+  PARTIAL: 'Abono',
+  CREDIT: 'Cartera (crédito)',
+};
+
+// Who created a quote or an order (and who changed its payment state) is
+// shown to ADMIN only: other roles get the documents without `createdBy`,
+// `convertedBy` and `paymentStatusBy` (SALES only sees its own documents
+// anyway). Printable documents keep the seller's name.
+function forViewer<T extends object>(document: T, user: SafeUser): T {
+  if (user.role === 'ADMIN') return document;
+  const { createdBy: _createdBy, convertedBy: _convertedBy, paymentStatusBy: _paymentStatusBy, ...rest } = document as T & {
+    createdBy?: unknown;
+    convertedBy?: unknown;
+    paymentStatusBy?: unknown;
+  };
+  return rest as T;
+}
+
+// Payment methods whose collection is followed (paid / pending).
+const COLLECTED_LATER: readonly PaymentMethod[] = ['PARTIAL', 'CREDIT'];
+
+const authorSelect = { select: { id: true, name: true } } as const;
 const ORDER_STATUS = {
   DRAFT: 'Por confirmar',
   PENDING_SUPPLY: 'Pendiente de abastecimiento',
@@ -154,7 +181,7 @@ export class SalesService {
       this.prisma.quote.count({ where }),
       this.prisma.quote.findMany({
         where,
-        include: { order: { select: { id: true, number: true } }, createdBy: { select: { id: true, name: true } }, _count: { select: { lines: true } } },
+        include: { order: { select: { id: true, number: true } }, ...(user.role === 'ADMIN' ? { createdBy: authorSelect } : {}), _count: { select: { lines: true } } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -164,6 +191,11 @@ export class SalesService {
   }
 
   async getQuote(id: string, user: SafeUser) {
+    return forViewer(await this.loadQuote(id, user), user);
+  }
+
+  // Full quote (with its author) for internal use, e.g. the printable copy.
+  private async loadQuote(id: string, user: SafeUser) {
     const quote = await this.prisma.quote.findFirst({
       where: { id, ...this.quoteScope(user) },
       include: {
@@ -192,6 +224,8 @@ export class SalesService {
           customerName: customer.name,
           validUntil: dto.validUntil ? new Date(`${dto.validUntil}T00:00:00.000Z`) : null,
           notes: dto.notes || null,
+          paymentMethod: dto.paymentMethod,
+          paymentTerms: dto.paymentTerms || null,
           createdById: user.id,
         },
       });
@@ -220,6 +254,8 @@ export class SalesService {
           customerName: customer.name,
           validUntil: dto.validUntil ? new Date(`${dto.validUntil}T00:00:00.000Z`) : null,
           notes: dto.notes || null,
+          paymentMethod: dto.paymentMethod,
+          paymentTerms: dto.paymentTerms || null,
         },
       });
       await this.writeQuoteLines(tx, id, dto.lines);
@@ -329,6 +365,8 @@ export class SalesService {
         if (existing) throw new ConflictException(`La cotización ya se convirtió en la orden ${existing.number}`);
         if (rows[0].status !== 'DRAFT') throw new ConflictException('Solo se convierte una cotización vigente (borrador)');
         const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+        // Quotes saved before the payment method existed must choose one first.
+        if (!quote.paymentMethod) throw new ConflictException('Indica la forma de pago y guarda la cotización antes de convertirla en orden');
         const order = await tx.salesOrder.create({
           data: {
             number: await nextNumber(tx, 'sales_order_number_seq', 'OV'),
@@ -341,8 +379,14 @@ export class SalesService {
             taxTotal: quote.taxTotal,
             total: quote.total,
             notes: quote.notes,
+            paymentMethod: quote.paymentMethod,
+            paymentTerms: quote.paymentTerms,
+            // Abono / credit: pending until someone records the payment.
+            paymentStatus: COLLECTED_LATER.includes(quote.paymentMethod) ? 'PENDING' : null,
             convertOperationKey: dto.operationKey,
+            // The seller of the quote keeps owning the order; who converted it is recorded.
             createdById: quote.createdById,
+            convertedById: user.id,
             lines: {
               create: quote.lines.map((line) => ({
                 lineNo: line.lineNo,
@@ -400,7 +444,7 @@ export class SalesService {
       this.prisma.salesOrder.count({ where }),
       this.prisma.salesOrder.findMany({
         where,
-        include: { createdBy: { select: { id: true, name: true } }, _count: { select: { lines: true, dispatches: true } } },
+        include: { ...(user.role === 'ADMIN' ? { createdBy: authorSelect, convertedBy: authorSelect } : {}), _count: { select: { lines: true, dispatches: true } } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -410,6 +454,11 @@ export class SalesService {
   }
 
   async getOrder(id: string, user: SafeUser) {
+    return forViewer(await this.loadOrder(id, user), user);
+  }
+
+  // Full order (with its authors) for internal use, e.g. the printable copy.
+  private async loadOrder(id: string, user: SafeUser) {
     const order = await this.prisma.salesOrder.findFirst({ where: { id, ...this.orderScope(user) }, include: orderInclude });
     if (!order) throw new NotFoundException('La orden no existe');
     return this.withFulfilment(order);
@@ -531,6 +580,21 @@ export class SalesService {
     }
   }
 
+  // Abono / credit orders: the owner (SALES) or ADMIN records whether the
+  // customer already paid. Reversible; every change is audited with its author.
+  async setPaymentStatus(id: string, status: PaymentStatus, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id, user);
+      if (!order.paymentMethod || !COLLECTED_LATER.includes(order.paymentMethod)) {
+        throw new ConflictException('Solo las órdenes con abono o a crédito (cartera) registran si ya están pagadas');
+      }
+      if (order.paymentStatus === status) return;
+      await tx.salesOrder.update({ where: { id }, data: { paymentStatus: status, paymentStatusAt: new Date(), paymentStatusById: user.id } });
+      await audit(tx, { entity: 'SalesOrder', entityId: id, action: 'PAYMENT_STATUS_CHANGED', userId: user.id, data: { from: order.paymentStatus, to: status } });
+    });
+    return this.getOrder(id, user);
+  }
+
   // Releases pending reservations and open dispatches; confirmed exits stay.
   async cancelOrder(id: string, reason: string, user: SafeUser) {
     await this.prisma.$transaction(async (tx) => {
@@ -554,7 +618,7 @@ export class SalesService {
   // Same access as reading the document (SALES: own documents only; others
   // get 404). Prints customer-facing values only, never costs.
   async quotePdf(id: string, user: SafeUser) {
-    const quote = await this.getQuote(id, user);
+    const quote = await this.loadQuote(id, user);
     const pdf = await renderSalesPdf({
       title: 'COTIZACIÓN',
       number: quote.number,
@@ -563,6 +627,7 @@ export class SalesService {
       status: QUOTE_STATUS[quote.status],
       related: quote.order ? `Orden de venta ${quote.order.number}` : null,
       seller: quote.createdBy.name,
+      payment: this.paymentLabel(quote),
       customer: { ...this.customerContact(quote.customer), name: quote.customerName },
       lines: quote.lines,
       subtotal: quote.subtotal,
@@ -575,7 +640,7 @@ export class SalesService {
   }
 
   async orderPdf(id: string, user: SafeUser) {
-    const order = await this.getOrder(id, user);
+    const order = await this.loadOrder(id, user);
     const customer = await this.prisma.customer.findUnique({ where: { id: order.customerId } });
     const pdf = await renderSalesPdf({
       title: 'ORDEN DE VENTA',
@@ -584,6 +649,7 @@ export class SalesService {
       status: ORDER_STATUS[order.status],
       related: order.quote ? `Cotización ${order.quote.number}` : null,
       seller: order.createdBy.name,
+      payment: this.paymentLabel(order),
       customer: { ...this.customerContact(customer), name: order.customerName },
       lines: order.lines,
       subtotal: order.subtotal,
@@ -593,6 +659,11 @@ export class SalesService {
       notes: order.notes,
     });
     return { number: order.number, pdf };
+  }
+
+  private paymentLabel(document: { paymentMethod: PaymentMethod | null; paymentTerms: string | null }) {
+    if (!document.paymentMethod) return null;
+    return `${PAYMENT_METHOD_LABEL[document.paymentMethod]}${document.paymentTerms ? ` · ${document.paymentTerms}` : ''}`;
   }
 
   private customerContact(customer: { taxId: string | null; address: string | null; phone: string | null; email: string | null } | null) {

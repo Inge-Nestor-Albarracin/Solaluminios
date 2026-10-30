@@ -64,6 +64,7 @@ export async function reservedQuantity(tx: Tx, bundleId: string): Promise<number
 
 export const bundleDetailInclude = {
   ...bundleListInclude,
+  openedBy: { select: { id: true, name: true } },
   // Latest movements only, newest first; the full history is paginated at
   // GET /inventory/bundles/:id/movements. Keeps responses bounded.
   movements: {

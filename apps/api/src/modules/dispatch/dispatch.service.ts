@@ -12,11 +12,11 @@ import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, ty
 import type { SafeUser } from '../auth/auth.types.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
 import { enqueue } from '../notifications/outbox.js';
-import { ReservationsService, eligibleWhere } from '../sales/reservations.service.js';
+import { ReservationsService, USE_ORDER, eligibleWhere } from '../sales/reservations.service.js';
 import { SalesService } from '../sales/sales.service.js';
 import { SETTING_KEYS, SettingsService } from '../supply/settings.service.js';
 import { cancelOpenDispatches } from './dispatch-cancel.js';
-import type { CreateDispatchDto, DispatchQueryDto, ReassignDispatchDto } from './dto/dispatch.dto.js';
+import type { CreateDispatchDto, DispatchQueryDto, PrepareLooseDto, ReassignDispatchDto } from './dto/dispatch.dto.js';
 import { matchBundle, type DispatchLineRequirement, type ScannedBundle } from './validation.js';
 
 const MAX_DUE_DAYS = 366;
@@ -50,6 +50,12 @@ const finishLabel = (finish: { code: string; description: string | null }) =>
 // only through confirm(). Prices and costs are never part of dispatch
 // responses. Concurrency: every dispatch operation locks the dispatch row
 // first and then the bundle rows in id order.
+//
+// Loose profiles (opened bundles) are used FIRST: the reservations of every
+// line prefer them (rebalance), the detail reports how many loose profiles are
+// assigned to each line and what is still missing, and they are prepared
+// without reading a chip (prepareLoose). A closed bundle that leaves only in
+// part is opened at the confirmation; its remainder stays loose.
 @Injectable()
 export class DispatchService {
   constructor(
@@ -221,6 +227,9 @@ export class DispatchService {
             } else {
               await this.assignOrderReservations(tx, plan.lineId, dispatchLine.id, plan.quantity);
             }
+            // Loose profiles first: closed-bundle reservations are swapped for
+            // free loose ones of the location, in this same transaction.
+            await this.rebalance(tx, dispatch, dispatchLine.id, user.id);
           }
           const summary = dto.lines
             .map((input) => {
@@ -341,6 +350,7 @@ export class DispatchService {
                     id: true,
                     epc: true,
                     quantity: true,
+                    openedAt: true,
                     rack: { select: { number: true, aisle: { select: { number: true } } } },
                   },
                 },
@@ -354,6 +364,7 @@ export class DispatchService {
                     id: true,
                     epc: true,
                     quantity: true,
+                    openedAt: true,
                     lot: { select: { code: true, origin: true, supplier: { select: { name: true } } } },
                     rack: { select: { number: true, aisle: { select: { number: true } } } },
                   },
@@ -371,6 +382,15 @@ export class DispatchService {
       .sort((a, b) => a.salesOrderLine.lineNo - b.salesOrderLine.lineNo)
       .map((line) => {
         const prepared = line.picks.reduce((total, pick) => total + pick.quantity, 0);
+        // Loose profiles ASSIGNED to this line (its reservations on opened
+        // bundles): material no other order can take, not a general balance.
+        const looseReserved = line.reservations.filter((r) => r.bundle.openedAt);
+        const looseAssigned = looseReserved.reduce((total, r) => total + r.quantity, 0);
+        const loosePrepared = line.picks.filter((pick) => pick.bundle.openedAt).reduce((total, pick) => total + pick.quantity, 0);
+        const closedPicked = line.picks.filter((pick) => !pick.bundle.openedAt).reduce((total, pick) => total + pick.quantity, 0);
+        const places = [
+          ...new Set(looseReserved.map((r) => (r.bundle.rack ? `Pasillo ${r.bundle.rack.aisle.number} · Burro ${r.bundle.rack.number}` : null)).filter((p): p is string => p !== null)),
+        ];
         return {
           id: line.id,
           lineNo: line.salesOrderLine.lineNo,
@@ -384,12 +404,31 @@ export class DispatchService {
           prepared,
           pending: line.quantity - prepared,
           dispatched: line.dispatchedQuantity,
+          loose: {
+            assigned: looseAssigned,
+            prepared: loosePrepared,
+            toTake: looseAssigned - loosePrepared,
+            // Still to obtain from closed bundles (read whole, or open one).
+            missing: Math.max(0, line.quantity - looseAssigned - closedPicked),
+            places,
+          },
+          // Closed bundles reserved for this line and not yet read.
           suggested: line.reservations
-            .filter((r) => !line.picks.some((pick) => pick.bundle.id === r.bundle.id))
-            .map((r) => ({ bundleId: r.bundle.id, epc: r.bundle.epc, quantity: r.quantity, aisle: r.bundle.rack?.aisle.number ?? null, rack: r.bundle.rack?.number ?? null })),
+            .filter((r) => !r.bundle.openedAt && !line.picks.some((pick) => pick.bundle.id === r.bundle.id))
+            .map((r) => ({
+              bundleId: r.bundle.id,
+              epc: r.bundle.epc,
+              quantity: r.quantity,
+              bundleQuantity: r.bundle.quantity,
+              // Only part of it is needed: open it; the rest stays loose.
+              needsOpening: r.quantity < r.bundle.quantity,
+              aisle: r.bundle.rack?.aisle.number ?? null,
+              rack: r.bundle.rack?.number ?? null,
+            })),
           picks: line.picks.map((pick) => ({
             bundleId: pick.bundle.id,
             epc: pick.bundle.epc,
+            loose: pick.bundle.openedAt !== null,
             quantity: pick.quantity,
             bundleQuantity: pick.bundle.quantity,
             lot: pick.bundle.lot?.code ?? null,
@@ -525,6 +564,16 @@ export class DispatchService {
       return { result: 'ALREADY_PREPARED' as const, epc, message: `Paquete ya preparado (${existingPick.quantity} perfiles); la lectura repetida no suma de nuevo.`, quantity: existingPick.quantity };
     }
 
+    // Opened bundle: its profiles are loose (no chip to read for them).
+    if (bundle.openedAt) {
+      await record('OPENED');
+      return {
+        result: 'OPENED' as const,
+        epc,
+        message: 'Este paquete ya está abierto: sus perfiles son sueltos del almacén. Prepáralos con el aviso de sueltos del despacho, sin leer chips.',
+      };
+    }
+
     const lines = await this.requirements(tx, dispatch.id);
     const location = await tx.inventoryLocation.findUniqueOrThrow({ where: { id: dispatch.inventoryLocationId }, select: { code: true, name: true } });
     const scanned: ScannedBundle = {
@@ -560,7 +609,27 @@ export class DispatchService {
       const created = await incident('NOT_AVAILABLE', `El paquete ${epc} está reservado para otra orden; no se puede usar en este despacho.`, bundle.id);
       return { result: 'INCIDENT' as const, epc, message: created.message, incident: created };
     }
-    const suggested = Math.min(free, match.line.pending);
+    // Loose profiles assigned to the line and not yet prepared go first: a
+    // closed bundle only covers what they do not.
+    const looseHeld = await tx.stockReservation.aggregate({
+      where: { dispatchLineId: match.line.dispatchLineId, status: 'ACTIVE', bundle: { openedAt: { not: null } } },
+      _sum: { quantity: true },
+    });
+    const loosePicked = await tx.dispatchPick.aggregate({
+      where: { dispatchLineId: match.line.dispatchLineId, bundle: { openedAt: { not: null } } },
+      _sum: { quantity: true },
+    });
+    const looseToTake = (looseHeld._sum.quantity ?? 0) - (loosePicked._sum.quantity ?? 0);
+    const fromClosed = match.line.pending - looseToTake;
+    if (fromClosed <= 0) {
+      await record('LOOSE_FIRST');
+      return {
+        result: 'LOOSE_FIRST' as const,
+        epc,
+        message: `Renglón ${match.line.lineNo}: lo que falta se completa con ${looseToTake} perfiles sueltos del almacén. No uses este paquete.`,
+      };
+    }
+    const suggested = Math.min(free, fromClosed);
     await record('MATCH');
     if (!context.prepare) {
       return { result: 'MATCH' as const, epc, lineNo: match.line.lineNo, suggestedQuantity: suggested, message: 'Coincide con el despacho (solo monitoreo: no se prepara automáticamente).' };
@@ -576,7 +645,7 @@ export class DispatchService {
       lineNo: match.line.lineNo,
       quantity: suggested,
       message: partialOfBundle
-        ? `Preparado: ${suggested} de ${bundle.quantity} perfiles del paquete (salida parcial; el resto queda en el paquete). Ajusta la cantidad si es necesario.`
+        ? `Preparado: ${suggested} de ${bundle.quantity} perfiles del paquete. Al confirmar la salida el paquete queda abierto y sus ${bundle.quantity - suggested} perfiles restantes pasan a sueltos. Ajusta la cantidad si es necesario.`
         : `Preparado: paquete completo de ${suggested} perfiles.`,
     };
   }
@@ -605,10 +674,12 @@ export class DispatchService {
   }
 
   // Profiles of a (locked) bundle usable by a dispatch line: its quantity
-  // minus ACTIVE reservations of anything else.
+  // minus ACTIVE reservations of anything else, including order reservations
+  // not yet assigned to a dispatch (dispatchLineId NULL: `NOT { dispatchLineId }`
+  // would skip them, as NULL <> x is not true in SQL).
   private async freeFor(tx: Tx, bundleId: string, quantity: number, dispatchLineId: string) {
     const others = await tx.stockReservation.aggregate({
-      where: { bundleId, status: 'ACTIVE', NOT: { dispatchLineId } },
+      where: { bundleId, status: 'ACTIVE', OR: [{ dispatchLineId: null }, { dispatchLineId: { not: dispatchLineId } }] },
       _sum: { quantity: true },
     });
     return quantity - (others._sum.quantity ?? 0);
@@ -655,54 +726,44 @@ export class DispatchService {
 
   // Keeps the ACTIVE reservations of a dispatch line equal to its authorised
   // quantity and aligned with the picks: picked bundles hold exactly their
-  // picked profiles, the remainder stays on previously reserved bundles or is
-  // taken FIFO from free eligible stock. This is the atomic substitution of
-  // bundles: no profile is ever reserved twice (locks + deferred trigger).
+  // picked profiles; the remainder uses LOOSE profiles first (the line's own,
+  // then free loose profiles of the location) and only then closed bundles
+  // (the line's own, then free ones FIFO). Every involved bundle is locked in
+  // one statement, in id order, before anything is read, and the swap happens
+  // in the caller's transaction: reserved material is never free for another
+  // order in between, and no profile is reserved twice (locks + deferred
+  // trigger).
   private async rebalance(tx: Tx, dispatch: Dispatch, dispatchLineId: string, userId: string) {
     const line = await tx.dispatchLine.findUniqueOrThrow({ where: { id: dispatchLineId }, include: { picks: true, salesOrderLine: true } });
     const current = await tx.stockReservation.findMany({ where: { dispatchLineId, status: 'ACTIVE' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     const picks = new Map(line.picks.map((pick) => [pick.bundleId, pick.quantity]));
-    const touched = new Set<string>([...picks.keys(), ...current.map((row) => row.bundleId)]);
-    await this.reservations.lockBundles(tx, [...touched]);
+    const eligible = await tx.bundle.findMany({ where: eligibleWhere(line.salesOrderLine, dispatch.inventoryLocationId), select: { id: true } });
+    const involved = new Set<string>([...picks.keys(), ...current.map((row) => row.bundleId), ...eligible.map((bundle) => bundle.id)]);
+    await this.reservations.lockBundles(tx, [...involved]);
+    // Read again after the lock: quantities, openings and places may have changed.
+    const candidates = await tx.bundle.findMany({
+      where: { ...eligibleWhere(line.salesOrderLine, dispatch.inventoryLocationId), id: { in: [...involved] } },
+      select: { id: true, quantity: true, openedAt: true },
+      orderBy: USE_ORDER,
+    });
 
     const target = new Map(picks);
     let remainder = line.quantity - [...picks.values()].reduce((total, q) => total + q, 0);
     const currentByBundle = new Map<string, number>();
     for (const row of current) currentByBundle.set(row.bundleId, (currentByBundle.get(row.bundleId) ?? 0) + row.quantity);
-    // 1) keep previous reservations of bundles not picked
-    for (const [bundleId, quantity] of currentByBundle) {
-      if (remainder === 0) break;
-      if (picks.has(bundleId)) continue;
-      const keep = Math.min(quantity, remainder);
-      target.set(bundleId, keep);
-      remainder -= keep;
-    }
-    // 2) keep previous extra on picked bundles
-    for (const [bundleId, quantity] of currentByBundle) {
-      if (remainder === 0) break;
-      const picked = picks.get(bundleId);
-      if (picked === undefined || quantity <= picked) continue;
-      const extra = Math.min(quantity - picked, remainder);
-      target.set(bundleId, picked + extra);
-      remainder -= extra;
-    }
-    // 3) take free eligible stock
-    if (remainder > 0) {
-      const candidates = await tx.bundle.findMany({
-        where: { ...eligibleWhere(line.salesOrderLine, dispatch.inventoryLocationId), id: { notIn: [...target.keys()] } },
-        select: { id: true, quantity: true },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      });
-      await this.reservations.lockBundles(tx, candidates.map((c) => c.id));
-      for (const candidate of candidates) {
-        if (remainder === 0) break;
-        const free = await this.freeFor(tx, candidate.id, candidate.quantity, dispatchLineId);
-        if (free <= 0) continue;
-        const take = Math.min(free, remainder);
-        target.set(candidate.id, take);
-        remainder -= take;
-      }
-    }
+    const take = async (bundle: { id: string; quantity: number }) => {
+      if (remainder <= 0) return;
+      // Free for this line (its own reservations included) minus what the
+      // target already holds on it (e.g. its pick).
+      const room = (await this.freeFor(tx, bundle.id, bundle.quantity, dispatchLineId)) - (target.get(bundle.id) ?? 0);
+      if (room <= 0) return;
+      const used = Math.min(room, remainder);
+      target.set(bundle.id, (target.get(bundle.id) ?? 0) + used);
+      remainder -= used;
+    };
+    const ownFirst = <T extends { id: string }>(list: T[]) => [...list.filter((b) => currentByBundle.has(b.id)), ...list.filter((b) => !currentByBundle.has(b.id))];
+    for (const bundle of ownFirst(candidates.filter((b) => b.openedAt))) await take(bundle);
+    for (const bundle of ownFirst(candidates.filter((b) => !b.openedAt))) await take(bundle);
     if (remainder > 0) {
       throw new ConflictException('No hay existencias libres para mantener reservada la cantidad autorizada de este renglón');
     }
@@ -718,6 +779,78 @@ export class DispatchService {
           data: { bundleId, salesOrderLineId: line.salesOrderLineId, dispatchLineId, quantity: want, createdById: userId },
         });
       }
+    }
+  }
+
+  // --- Loose profiles -----------------------------------------------------------
+
+  // Applies the loose-first rule to every line of an OPEN dispatch (e.g. after
+  // a bundle was opened, or when the dispatch is shown to its executor).
+  async refreshLoose(id: string, user: SafeUser) {
+    await this.inLockedOpenDispatch(id, user, async (tx, dispatch) => {
+      for (const line of await tx.dispatchLine.findMany({ where: { dispatchId: id }, select: { id: true } })) {
+        await this.rebalance(tx, dispatch, line.id, user.id);
+      }
+    });
+    return this.get(id, user);
+  }
+
+  // «Ya retiré los sueltos»: prepares, without reading any chip, exactly the
+  // loose profiles assigned to each line. The client sends the quantities it
+  // showed; if the assignment changed meanwhile nothing is prepared (409) and
+  // the screen shows the new instruction. Repeating it changes nothing.
+  async prepareLoose(id: string, dto: PrepareLooseDto, user: SafeUser) {
+    await this.inLockedOpenDispatch(id, user, async (tx, dispatch) => {
+      const lines = await tx.dispatchLine.findMany({ where: { dispatchId: id }, include: { salesOrderLine: { select: { lineNo: true } } } });
+      for (const line of lines) await this.rebalance(tx, dispatch, line.id, user.id);
+      const expected = new Map(dto.lines.map((line) => [line.dispatchLineId, line.quantity]));
+      for (const dispatchLineId of expected.keys()) {
+        if (!lines.some((line) => line.id === dispatchLineId)) throw new BadRequestException('Un renglón no pertenece a este despacho');
+      }
+      let prepared = 0;
+      for (const line of lines) {
+        const loose = await tx.stockReservation.findMany({
+          where: { dispatchLineId: line.id, status: 'ACTIVE', bundle: { openedAt: { not: null } } },
+          select: { bundleId: true, quantity: true },
+        });
+        const assigned = loose.reduce((total, row) => total + row.quantity, 0);
+        if (!expected.has(line.id)) continue;
+        if (assigned !== expected.get(line.id)) {
+          throw new ConflictException(
+            `Renglón ${line.salesOrderLine.lineNo}: los sueltos asignados cambiaron (ahora ${assigned}). Revisa el aviso y confirma de nuevo; no se preparó nada.`,
+          );
+        }
+        const byBundle = new Map<string, number>();
+        for (const row of loose) byBundle.set(row.bundleId, (byBundle.get(row.bundleId) ?? 0) + row.quantity);
+        for (const [bundleId, quantity] of byBundle) {
+          const pick = await tx.dispatchPick.findUnique({ where: { dispatchId_bundleId: { dispatchId: id, bundleId } } });
+          if (pick && pick.dispatchLineId !== line.id) throw new ConflictException('Estos sueltos ya están preparados en otro renglón del despacho');
+          if (pick?.quantity === quantity) continue;
+          if (pick) await tx.dispatchPick.update({ where: { id: pick.id }, data: { quantity } });
+          else await tx.dispatchPick.create({ data: { dispatchId: id, dispatchLineId: line.id, bundleId, quantity, createdById: user.id } });
+          prepared += quantity - (pick?.quantity ?? 0);
+        }
+        await this.rebalance(tx, dispatch, line.id, user.id);
+      }
+      if (prepared > 0) await audit(tx, { entity: 'Dispatch', entityId: id, action: 'LOOSE_PREPARED', userId: user.id, data: { profiles: prepared } });
+    });
+    return this.get(id, user);
+  }
+
+  private async inLockedOpenDispatch(id: string, user: SafeUser, work: (tx: Tx, dispatch: Dispatch) => Promise<void>) {
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const dispatch = await this.lockDispatch(tx, id, user);
+          this.assertExecutor(dispatch, user);
+          if (dispatch.status !== 'OPEN') throw new ConflictException('El despacho no está abierto');
+          await work(tx, dispatch);
+        },
+        { maxWait: 10000, timeout: 30000 },
+      );
+    } catch (error) {
+      if (isLockTimeout(error)) throw new RetryableException('El despacho o sus perfiles están ocupados por otra operación; reintenta.');
+      throw error;
     }
   }
 
@@ -802,6 +935,26 @@ export class DispatchService {
             const reserved = await tx.stockReservation.aggregate({ where: { dispatchLineId: pick.line.id, bundleId: bundle.id, status: 'ACTIVE' }, _sum: { quantity: true } });
             if ((reserved._sum.quantity ?? 0) !== pick.quantity) {
               throw new ConflictException(`La reserva del paquete ${bundle.epc} no coincide con lo preparado; vuelve a leerlo`);
+            }
+            // A closed bundle that leaves only in part is opened here: the rest
+            // of its profiles stays in the location as loose profiles.
+            if (!bundle.openedAt && pick.quantity < bundle.quantity) {
+              await tx.bundle.update({ where: { id: bundle.id }, data: { openedAt: now, openedById: user.id } });
+              await tx.inventoryMovement.create({
+                data: {
+                  bundleId: bundle.id,
+                  type: 'OPENING',
+                  quantity: bundle.quantity,
+                  quantityBefore: bundle.quantity,
+                  quantityAfter: bundle.quantity,
+                  sourceLocationId: bundle.inventoryLocationId,
+                  sourceRackId: bundle.rackId,
+                  occurredAt: now,
+                  performedById: user.id,
+                  reason: `Abierto al confirmar el despacho ${dispatch.number}: salen ${pick.quantity} de ${bundle.quantity} perfiles; el resto queda suelto`,
+                  operationKey: `dispatch:${operationKey}:${bundle.id}:open`,
+                },
+              });
             }
             const quantityAfter = bundle.quantity - pick.quantity;
             await tx.bundle.update({ where: { id: bundle.id }, data: { quantity: quantityAfter } });

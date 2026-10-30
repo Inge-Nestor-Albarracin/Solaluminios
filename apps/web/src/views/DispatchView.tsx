@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { FixedReaderPanel } from '../components/FixedReaderPanel'
 import { IconScan } from '../components/icons'
+import { LooseProfilesNotice } from '../components/LooseProfilesNotice'
 import { Field, Kpi, Loading, Notice, PageHeader } from '../components/ui'
 import type { TagRead } from '../lib/chafon'
 import { DISPATCH_STATUS_LABEL, ORIGIN_LABEL, type DispatchDetail } from '../lib/commerce'
@@ -20,7 +21,7 @@ import type { Navigate } from './navigation'
 // leaves with «Confirmar salida física».
 
 interface ScanResult {
-  result: 'PREPARED' | 'ALREADY_PREPARED' | 'LINE_COMPLETE' | 'INCIDENT' | 'MATCH'
+  result: 'PREPARED' | 'ALREADY_PREPARED' | 'LINE_COMPLETE' | 'INCIDENT' | 'MATCH' | 'OPENED' | 'LOOSE_FIRST'
   epc: string
   message: string
   quantity?: number
@@ -127,6 +128,18 @@ export function DispatchView({ id, navigate, onChanged }: { id: string; navigate
             : null,
   )
 
+  // When its executor opens it, the server applies «loose first» again:
+  // loose profiles that appeared since (an opened bundle) replace closed
+  // bundles not read yet. Once per dispatch shown.
+  const refreshed = useRef(false)
+  useEffect(() => {
+    if (!open || !executor || refreshed.current) return
+    refreshed.current = true
+    request(`/dispatches/${enc(id)}/loose/refresh`, { method: 'POST' })
+      .then(() => detail.reload())
+      .catch(() => undefined) // The detail already shows the current state.
+  }, [open, executor, request, enc, id, detail])
+
   // Refreshes the open dispatch every 20 s while visible (incidents from a
   // portal, reassignments). The stock rules never depend on this screen.
   useEffect(() => {
@@ -217,12 +230,16 @@ export function DispatchView({ id, navigate, onChanged }: { id: string; navigate
       {data.status === 'CONFIRMED' ? <Notice kind="success">Salida confirmada {data.confirmedAt ? formatDateTime(data.confirmedAt) : ''}{data.confirmedBy ? ` por ${data.confirmedBy.name}` : ''}.</Notice> : null}
       {data.status === 'CANCELLED' ? <Notice kind="warning">Despacho cancelado: {data.cancelReason}</Notice> : null}
 
+      {/* Main instruction first: loose profiles assigned to this dispatch. */}
+      <LooseProfilesNotice dispatch={data} executor={open && executor} onChanged={detail.reload} />
+
       <div className="kpis">
         <Kpi label="Autorizado" value={data.progress.authorised} hint="perfiles" dark />
         <Kpi label="Preparado" value={data.progress.prepared} hint="perfiles" />
         <Kpi label="Entregado" value={data.progress.dispatched} hint="perfiles" />
         <Kpi label="Incidencias" value={data.progress.openIncidents} hint="abiertas" />
       </div>
+
 
       {data.lines.map((line) => (
         <section key={line.id} className="card dispatch-line">
@@ -239,10 +256,11 @@ export function DispatchView({ id, navigate, onChanged }: { id: string; navigate
             <ul className="pick-list">
               {line.picks.map((pick) => (
                 <li key={pick.bundleId}>
-                  <span className="mono">{pick.epc}</span>
+                  {pick.loose ? <strong>Sueltos del almacén</strong> : <span className="mono">{pick.epc}</span>}
                   <small>
                     {pick.origin ? ORIGIN_LABEL[pick.origin] : '—'}{pick.supplier ? ` · ${pick.supplier}` : ''} · lote {pick.lot ?? '—'}
-                    {pick.aisle !== null ? ` · P${pick.aisle}/B${pick.rack}` : ''} · paquete de {pick.bundleQuantity}
+                    {pick.aisle !== null ? ` · P${pick.aisle}/B${pick.rack}` : ''}
+                    {pick.loose ? ` · paquete abierto ${pick.epc}` : ` · paquete de ${pick.bundleQuantity}`}
                   </small>
                   {open && executor ? (
                     <span className="pick-qty">

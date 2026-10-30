@@ -5,16 +5,21 @@ import { DownloadPdfButton } from '../components/DownloadPdfButton'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
   ORIGIN_LABEL,
+  PAYMENT_METHOD_LABEL,
+  PAYMENT_TERMS_HINT,
   PRICING_LABEL,
   formatMoney,
   formatUnitCost,
+  paymentLabel,
   type AvailabilityGroup,
   type Customer,
   type MaterialOrigin,
+  type PaymentMethod,
   type Quote,
   type Supplier,
 } from '../lib/commerce'
 import { EMPTY_CATALOG, type CatalogValue } from '../lib/forms'
+import { formatDateTime } from '../lib/format'
 import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
@@ -174,7 +179,8 @@ export function QuoteView({ id, navigate }: { id?: string; navigate: Navigate })
 }
 
 function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quote | null; reload: () => void; navigate: Navigate }) {
-  const { request } = useSession()
+  const { request, user } = useSession()
+  const isAdmin = user?.role === 'ADMIN'
   const suppliers = useLoad<Supplier[]>('/suppliers?active=true')
   const [search, setSearch] = useState('')
   const customers = useLoad<Customer[]>(`/customers${search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''}`)
@@ -182,6 +188,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const [newCustomer, setNewCustomer] = useState<{ name: string; taxId: string } | null>(null)
   const [validUntil, setValidUntil] = useState(quote?.validUntil?.slice(0, 10) ?? '')
   const [notes, setNotes] = useState(quote?.notes ?? '')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>(quote?.paymentMethod ?? '')
+  const [paymentTerms, setPaymentTerms] = useState(quote?.paymentTerms ?? '')
   const [lines, setLines] = useState<LineDraft[]>(() =>
     quote
       ? quote.lines.map((line) => ({
@@ -233,6 +241,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     customerId,
     ...(validUntil ? { validUntil } : {}),
     ...(notes.trim() ? { notes: notes.trim() } : {}),
+    paymentMethod,
+    ...(paymentTerms.trim() ? { paymentTerms: paymentTerms.trim() } : {}),
     lines: lines.map((line) => ({
       referenceId: line.catalog.referenceId,
       finishId: line.catalog.finishId,
@@ -301,6 +311,14 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           </>
         }
       />
+      {quote ? (
+        <p className="doc-facts">
+          <span>Forma de pago: <strong>{paymentLabel(quote)}</strong></span>
+          {isAdmin && quote.createdBy ? (
+            <span>Creada por <strong>{quote.createdBy.name}</strong> · {formatDateTime(quote.createdAt)}</span>
+          ) : null}
+        </p>
+      ) : null}
       {quote && quote.status !== 'DRAFT' ? (
         <Notice kind="info">
           {quote.status === 'CONVERTED' && quote.order ? (
@@ -333,6 +351,17 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           </Field>
           <Field label="Notas">
             <input value={notes} disabled={!editable} maxLength={1000} onChange={(e) => { setNotes(e.target.value); setDirty(true) }} />
+          </Field>
+          <Field label="Forma de pago">
+            <select value={paymentMethod} disabled={!editable} onChange={(e) => { setPaymentMethod(e.target.value as PaymentMethod | ''); setDirty(true) }}>
+              <option value="">Elige…</option>
+              {(Object.keys(PAYMENT_METHOD_LABEL) as PaymentMethod[]).map((method) => (
+                <option key={method} value={method}>{PAYMENT_METHOD_LABEL[method]}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Condiciones de pago" hint={paymentMethod ? PAYMENT_TERMS_HINT[paymentMethod] : 'Opcional.'}>
+            <input value={paymentTerms} disabled={!editable} maxLength={300} onChange={(e) => { setPaymentTerms(e.target.value); setDirty(true) }} />
           </Field>
         </div>
         {editable ? (
@@ -421,7 +450,13 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       {error ? <Notice kind="error">{error}</Notice> : null}
       {editable ? (
         <div className="actions">
-          <button type="button" className="button" disabled={busy || !customerId} onClick={() => void save()}>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || !customerId || !paymentMethod}
+            title={!paymentMethod ? 'Elige la forma de pago' : undefined}
+            onClick={() => void save()}
+          >
             {busy ? 'Guardando…' : id ? 'Guardar cambios' : 'Guardar cotización'}
           </button>
           {id && quote?.status === 'DRAFT' ? (

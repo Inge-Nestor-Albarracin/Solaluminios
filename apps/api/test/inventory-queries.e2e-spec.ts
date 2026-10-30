@@ -102,7 +102,7 @@ describe('Inventory list, summary and history (e2e)', () => {
     const { ids } = fx;
     const res = await get(`/inventory/summary?branchId=${ids.branch}`).expect(200);
     expect(res.body.total).toBe(3);
-    expect(res.body.totals).toEqual({ profiles: 32, bundles: 5 });
+    expect(res.body.totals).toEqual({ profiles: 32, bundles: 5, looseProfiles: 0 });
 
     const [aa, ab, ba] = res.body.items;
     expect([aa.reference.id, aa.finish.id]).toEqual([ids.referenceA, ids.finishA]);
@@ -122,7 +122,7 @@ describe('Inventory list, summary and history (e2e)', () => {
     expect([ba.reference.id, ba.finish.id, ba.profiles, ba.bundles]).toEqual([ids.referenceB, ids.finishA, 6, 1]);
 
     const family = await get(`/inventory/summary?familyId=${ids.familyA}`).expect(200);
-    expect(family.body.totals).toEqual({ profiles: 26, bundles: 4 });
+    expect(family.body.totals).toEqual({ profiles: 26, bundles: 4, looseProfiles: 0 });
 
     const warehouse = await get(`/inventory/summary?inventoryLocationId=${ids.location2}`).expect(200);
     expect(warehouse.body.items).toHaveLength(1);
@@ -132,7 +132,7 @@ describe('Inventory list, summary and history (e2e)', () => {
     expect(page2.body).toMatchObject({ total: 3, totalPages: 3 });
     expect(page2.body.items[0].finish.id).toBe(ids.finishB);
     // Totals describe the whole filtered result, not only the page.
-    expect(page2.body.totals).toEqual({ profiles: 32, bundles: 5 });
+    expect(page2.body.totals).toEqual({ profiles: 32, bundles: 5, looseProfiles: 0 });
 
     await get(`/inventory/summary?familyId=missing-${suffix}`).expect(404);
     await get('/inventory/summary?aisleId=x').expect(400);

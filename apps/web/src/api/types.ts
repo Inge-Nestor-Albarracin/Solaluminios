@@ -73,6 +73,7 @@ export type MovementType =
   | 'TRANSFER'
   | 'ADJUSTMENT_IN'
   | 'ADJUSTMENT_OUT'
+  | 'OPENING'
 
 export interface Bundle {
   id: string
@@ -92,6 +93,9 @@ export interface Bundle {
   rack: (Rack & { aisle: Aisle }) | null
   // Provenance (no cost). null = origin unknown (historical stock).
   lot?: { id: string; code: string; origin: 'CHINA' | 'NATIONAL'; supplier: { id: string; code: string; name: string } | null } | null
+  // Opened bundle: `quantity` are loose profiles in its location.
+  openedAt?: string | null
+  openedBy?: { id: string; name: string } | null
 }
 
 export interface MovementPlace {
@@ -134,7 +138,9 @@ export interface SummaryLocation {
   aisle: Aisle | null
   rack: Rack | null
   profiles: number
+  // Closed bundles; loose profiles (opened bundles) apart.
   bundles: number
+  looseProfiles: number
 }
 
 export interface SummaryGroup {
@@ -144,11 +150,12 @@ export interface SummaryGroup {
   finish: Finish
   profiles: number
   bundles: number
+  looseProfiles: number
   locations: SummaryLocation[]
 }
 
 export interface SummaryPage extends Page<SummaryGroup> {
-  totals: { profiles: number; bundles: number }
+  totals: { profiles: number; bundles: number; looseProfiles: number }
 }
 
 export interface OperationResult {

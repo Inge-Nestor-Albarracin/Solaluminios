@@ -67,7 +67,7 @@ describe('Quotes, orders and reservations under concurrency (e2e)', () => {
 
   const line = (quantity: number, finishId = ids.finishA) => ({ referenceId: ids.ref, finishId, origin: 'NATIONAL', quantity, discountPercent: '0', taxRatePercent: '19' });
   const quote = async (lines: ReturnType<typeof line>[]) =>
-    (await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, lines }).expect(201)).body as { id: string };
+    (await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, paymentMethod: 'CASH', lines }).expect(201)).body as { id: string };
   const order = async (lines: ReturnType<typeof line>[]) => {
     const q = await quote(lines);
     return (await http().post(`/quotes/${q.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(200)).body as { id: string; lines: { id: string }[] };
@@ -106,7 +106,7 @@ describe('Quotes, orders and reservations under concurrency (e2e)', () => {
         supplierId: ids.supplier1,
         documentNumber: `SORACE-${S}`,
         documentDate: '2026-10-20',
-        lines: [ids.finishA, ids.finishB].map((finishId) => ({ referenceId: ids.ref, finishId, origin: 'NATIONAL', quantity: 10, grossAmount: '10000', discountPercent: '0' })),
+        lines: [ids.finishA, ids.finishB].map((finishId) => ({ referenceId: ids.ref, finishId, origin: 'NATIONAL', quantity: 10, grossAmount: '10000', discountPercent: '0', taxRatePercent: '0' })),
       })
       .expect(201);
     const confirmed = await http().post(`/purchases/${purchase.body.id}/confirm`).set(as('ADMIN')).expect(200);
@@ -176,7 +176,7 @@ describe('Quotes, orders and reservations under concurrency (e2e)', () => {
       const q = await quote([line(3)]);
       const [converted, edited] = await together([
         () => http().post(`/quotes/${q.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }),
-        () => http().patch(`/quotes/${q.id}`).set(as('SALES')).send({ customerId: ids.customer, lines: [line(7)] }),
+        () => http().patch(`/quotes/${q.id}`).set(as('SALES')).send({ customerId: ids.customer, paymentMethod: 'CASH', lines: [line(7)] }),
       ]);
       expect(converted.status).toBe(200);
       const saved = await prisma.quote.findUniqueOrThrow({ where: { id: q.id }, include: { lines: true } });

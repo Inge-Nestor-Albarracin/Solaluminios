@@ -28,6 +28,9 @@ enum InventoryMovementType {
   TRANSFER
   ADJUSTMENT_IN
   ADJUSTMENT_OUT
+  // The bundle is opened: its profiles become loose in the same place. Not an
+  // exit: quantity before = after = quantity.
+  OPENING
 }
 
 enum UserRole {
@@ -201,6 +204,9 @@ model User {
   customersCreated         Customer[]               @relation("CustomerCreator")
   quotesCreated            Quote[]                  @relation("QuoteCreator")
   ordersCreated            SalesOrder[]             @relation("OrderCreator")
+  ordersConverted          SalesOrder[]             @relation("OrderConverter")
+  orderPaymentStatuses     SalesOrder[]             @relation("OrderPaymentStatus")
+  bundlesOpened            Bundle[]                 @relation("BundleOpener")
   reservationsCreated      StockReservation[]       @relation("ReservationCreator")
   dispatchesCreated        Dispatch[]               @relation("DispatchCreator")
   dispatchesAssigned       Dispatch[]               @relation("DispatchAssignee")
@@ -233,6 +239,11 @@ model Bundle {
   // Canonical origin, supplier and acquisition cost come from the lot. null:
   // historical stock with unknown origin (never assumed Chinese).
   lotId                String?
+  // Opened bundle: from then on `quantity` are LOOSE profiles in its location
+  // (no new chip; the bundle, its EPC and history stay as antecedents). A
+  // bundle is opened once (trigger bundle_opened_is_final).
+  openedAt             DateTime?            @db.Timestamptz(3)
+  openedById           String?
   createdAt            DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime             @updatedAt @db.Timestamptz(3)
 
@@ -241,6 +252,7 @@ model Bundle {
   inventoryLocation InventoryLocation       @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
   rack              Rack?                   @relation(fields: [rackId], references: [id], onDelete: Restrict)
   lot               StockLot?               @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  openedBy          User?                   @relation("BundleOpener", fields: [openedById], references: [id], onDelete: Restrict)
   movements         InventoryMovement[]
   preRegistration   InboundPreRegistration?
   reservations      StockReservation[]
@@ -582,6 +594,11 @@ model PurchaseLine {
   // per profile is (gross - discount) / profiles. false: the earlier
   // definition (net + charges + non-recoverable tax); kept as recorded.
   grossIncludesTax     Boolean        @default(false)
+  // true (current rule): grossAmount WITHOUT purchase VAT, as on the invoice;
+  // discount on it, VAT (taxRatePercent) on the discounted base, and the cost
+  // per profile = (base + VAT) / profiles. Never true together with
+  // grossIncludesTax (CHECK purchase_lines_one_cost_rule).
+  taxOnNet             Boolean        @default(false)
 
   purchase   Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
   reference  Reference   @relation(fields: [referenceId], references: [id], onDelete: Restrict)
@@ -678,24 +695,43 @@ enum PricingMethod {
   MANUAL
 }
 
+// How the customer pays a quote / order (agreed terms, not a payment record).
+enum PaymentMethod {
+  CASH // Contado – efectivo
+  TRANSFER // Contado – transferencia
+  PARTIAL // Abono
+  CREDIT // Cartera (crédito)
+}
+
+// Collection state of an order paid by abono or on credit (cartera). Cash and
+// transfer orders are paid at the sale and have no state (NULL).
+enum PaymentStatus {
+  PENDING
+  PAID
+}
+
 // Quotes never reserve or move stock. Lines keep a copy of the conditions
 // used (labels, cost basis, method, percent, taxes).
 model Quote {
-  id            String      @id @default(cuid())
-  number        String      @unique
+  id            String         @id @default(cuid())
+  number        String         @unique
   customerId    String
   customerName  String
-  status        QuoteStatus @default(DRAFT)
-  validUntil    DateTime?   @db.Date
-  currency      String      @default("COP") @db.Char(3)
+  status        QuoteStatus    @default(DRAFT)
+  validUntil    DateTime?      @db.Date
+  currency      String         @default("COP") @db.Char(3)
   notes         String?
-  subtotal      Decimal     @default(0) @db.Decimal(18, 2)
-  discountTotal Decimal     @default(0) @db.Decimal(18, 2)
-  taxTotal      Decimal     @default(0) @db.Decimal(18, 2)
-  total         Decimal     @default(0) @db.Decimal(18, 2)
+  // Required on every save from now on; null only on quotes saved before.
+  paymentMethod PaymentMethod?
+  // Free details agreed with the customer (advance amount, credit days…).
+  paymentTerms  String?
+  subtotal      Decimal        @default(0) @db.Decimal(18, 2)
+  discountTotal Decimal        @default(0) @db.Decimal(18, 2)
+  taxTotal      Decimal        @default(0) @db.Decimal(18, 2)
+  total         Decimal        @default(0) @db.Decimal(18, 2)
   createdById   String
-  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
 
   customer  Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
   createdBy User        @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
@@ -775,8 +811,19 @@ model SalesOrder {
   taxTotal            Decimal          @db.Decimal(18, 2)
   total               Decimal          @db.Decimal(18, 2)
   notes               String?
+  // Copied from the quote when it is converted.
+  paymentMethod       PaymentMethod?
+  paymentTerms        String?
+  // Only for PARTIAL / CREDIT (CHECK): starts PENDING; the owner or ADMIN
+  // marks it PAID (and back), each change audited.
+  paymentStatus       PaymentStatus?
+  paymentStatusAt     DateTime?        @db.Timestamptz(3)
+  paymentStatusById   String?
   convertOperationKey String           @unique
+  // Owner (seller of the quote): decides who may see and act on the order.
   createdById         String
+  // Who converted the quote into this order (null on orders made before).
+  convertedById       String?
   confirmedAt         DateTime?        @db.Timestamptz(3)
   completedAt         DateTime?        @db.Timestamptz(3)
   cancelledAt         DateTime?        @db.Timestamptz(3)
@@ -788,6 +835,8 @@ model SalesOrder {
   customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
   inventoryLocation InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
   createdBy         User               @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  convertedBy       User?              @relation("OrderConverter", fields: [convertedById], references: [id], onDelete: Restrict)
+  paymentStatusBy   User?              @relation("OrderPaymentStatus", fields: [paymentStatusById], references: [id], onDelete: Restrict)
   lines             SalesOrderLine[]
   dispatches        Dispatch[]
 

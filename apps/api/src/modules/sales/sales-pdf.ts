@@ -32,6 +32,8 @@ export interface SalesPdfData {
   status: string;
   related?: string | null;
   seller: string;
+  // Agreed payment method (and terms); null on documents saved before it existed.
+  payment?: string | null;
   customer: { name: string; taxId: string | null; address: string | null; phone: string | null; email: string | null };
   lines: SalesPdfLine[];
   subtotal: Amount;
@@ -107,8 +109,14 @@ export function renderSalesPdf(data: SalesPdfData): Promise<Buffer> {
   doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8).text('CLIENTE', LEFT, y);
   doc.text('VENDEDOR', LEFT + 340, y);
   y += 12;
+  doc.fillColor(INK).font('Helvetica').fontSize(10).text(data.seller, LEFT + 340, y, { width: 192 });
+  let side = doc.y;
+  if (data.payment) {
+    doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8).text('FORMA DE PAGO', LEFT + 340, side + 8);
+    doc.fillColor(INK).font('Helvetica').fontSize(10).text(data.payment, LEFT + 340, doc.y + 2, { width: 192 });
+    side = doc.y;
+  }
   doc.fillColor(INK).font('Helvetica-Bold').fontSize(10).text(data.customer.name, LEFT, y, { width: 320 });
-  doc.font('Helvetica').text(data.seller, LEFT + 340, y, { width: 192 });
   y = doc.y + 2;
   const contact = [
     data.customer.taxId ? `NIT / CC: ${data.customer.taxId}` : null,
@@ -116,7 +124,7 @@ export function renderSalesPdf(data: SalesPdfData): Promise<Buffer> {
     [data.customer.phone, data.customer.email].filter(Boolean).join(' · ') || null,
   ].filter(Boolean);
   if (contact.length) doc.fontSize(9).fillColor(MUTED).text(contact.join('\n'), LEFT, y, { width: 320, lineGap: 1 });
-  y = Math.max(doc.y, y) + 14;
+  y = Math.max(doc.y, y, side) + 14;
 
   // --- Lines -------------------------------------------------------------------
   const header = (top: number) => {

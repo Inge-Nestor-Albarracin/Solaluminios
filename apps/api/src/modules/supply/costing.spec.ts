@@ -1,6 +1,6 @@
 import { allocate, dec } from '../../shared/money.js';
 import { lineAmounts, markupOnCost } from '../sales/pricing.js';
-import { computePurchase, computeTaxIncludedLine, type CostingLineInput } from './costing.js';
+import { computePurchase, computeTaxIncludedLine, computeTaxOnNetLine, type CostingLineInput } from './costing.js';
 
 const line = (lineNo: number, quantity: string, unitPrice: string, extra: Partial<CostingLineInput> = {}): CostingLineInput => ({
   lineNo,
@@ -95,7 +95,39 @@ describe('purchase costing', () => {
   });
 });
 
-describe('purchase with VAT included (current rule)', () => {
+describe('purchase in invoice order: gross without VAT, discount, then VAT (current rule)', () => {
+  it('1.000.000 without VAT, 3 %, VAT 19 %, 100 profiles → 30.000, 970.000, 184.300, 1.154.300, 11.543', () => {
+    const line = computeTaxOnNetLine(dec('1000000'), dec(3), dec(19), 100);
+    expect(line.discountAmount.toFixed(2)).toBe('30000.00');
+    expect(line.netAmount.toFixed(2)).toBe('970000.00');
+    expect(line.taxAmount.toFixed(2)).toBe('184300.00');
+    expect(line.costAmount.toFixed(2)).toBe('1154300.00');
+    expect(line.unitCost?.toFixed(6)).toBe('11543.000000');
+  });
+
+  it('the discount is taken before VAT, never on the VAT', () => {
+    // 100.000 − 10 % = 90.000; VAT 19 % of 90.000 = 17.100 (not 19.000 − 1.900 taken twice).
+    const line = computeTaxOnNetLine(dec('100000'), dec(10), dec(19), 10);
+    expect(line.taxAmount.toFixed(2)).toBe('17100.00');
+    expect(line.costAmount.toFixed(2)).toBe('107100.00');
+    expect(line.unitCost?.toFixed(6)).toBe('10710.000000');
+  });
+
+  it('rounds discount and VAT to cents; VAT may be 0', () => {
+    const line = computeTaxOnNetLine(dec('333.33'), dec('2.5'), dec(19), 3);
+    expect(line.discountAmount.toFixed(2)).toBe('8.33');
+    expect(line.taxAmount.toFixed(2)).toBe('61.75');
+    expect(line.costAmount.toFixed(2)).toBe('386.75');
+    expect(computeTaxOnNetLine(dec('1000'), dec(0), dec(0), 10).costAmount.toFixed(2)).toBe('1000.00');
+  });
+
+  it('no unit cost without profiles or with a 100 % discount', () => {
+    expect(computeTaxOnNetLine(dec('1000'), dec(0), dec(19), 0).unitCost).toBeNull();
+    expect(computeTaxOnNetLine(dec('1000'), dec(100), dec(19), 10).unitCost).toBeNull();
+  });
+});
+
+describe('purchase with VAT included (previous rule, lines already recorded)', () => {
   it('1.190.000 with VAT, 3 % discount, 100 profiles → 35.700, 1.154.300, 11.543 per profile', () => {
     const line = computeTaxIncludedLine(dec('1190000'), dec(3), 100);
     expect(line.discountAmount.toFixed(2)).toBe('35700.00');

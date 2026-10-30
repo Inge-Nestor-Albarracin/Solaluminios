@@ -29,6 +29,7 @@ const data: SalesPdfData = {
   validUntil: new Date('2026-11-10T00:00:00Z'),
   status: 'Vigente',
   seller: 'Vendedor',
+  payment: 'Cartera (crédito) · 30 días',
   customer: { name: 'Cliente', taxId: '900000000', address: null, phone: null, email: null },
   lines: [
     { lineNo: 1, referenceCode: '17.30', referenceDescription: 'Perfil', finishCode: 'BM', finishDescription: 'Blanco mate', quantity: 20, unitPrice: '15005.90', discountPercent: '0', taxRatePercent: '19', lineTotal: '357140.42' },
@@ -41,11 +42,15 @@ const data: SalesPdfData = {
 };
 
 describe('sales PDF', () => {
+  it('omits the payment section on documents saved before it existed', async () => {
+    expect(visibleText(await renderSalesPdf({ ...data, payment: null })).includes('FORMA DE PAGO')).toBe(false);
+  });
+
   it('shows the company, NIT and line, never the origin of the material', async () => {
     const pdf = await renderSalesPdf(data);
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
     const text = visibleText(pdf);
-    for (const word of ['SOLUALUMINIOS', 'NIT 901882638', 'COT-000001', '17.30', 'Blanco mate']) expect(text.includes(word), word).toBe(true);
+    for (const word of ['SOLUALUMINIOS', 'NIT 901882638', 'COT-000001', '17.30', 'Blanco mate', 'FORMA DE PAGO', 'Cartera (crédito) · 30 días']) expect(text.includes(word), word).toBe(true);
     for (const word of ['origen', 'nacional', 'china']) expect(text.toLowerCase().includes(word), word).toBe(false);
   });
 });

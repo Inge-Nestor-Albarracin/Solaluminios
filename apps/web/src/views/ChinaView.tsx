@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { ApiError, describeError } from '../api/client'
 import type { Page } from '../api/types'
 import { Field, Notice, PageHeader } from '../components/ui'
@@ -7,8 +7,10 @@ import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
 import { useSession } from '../session/session-context'
 
-// China operator (English UI). One bundle at a time: read the EPC, choose
-// Reference and Finish / Color, type the quantity of profiles, save, next.
+// China operator (English UI). One bundle at a time: choose Reference and
+// Finish / Color, read the EPC, confirm the quantity of profiles, save, next.
+// Reference, finish and quantity are kept for the next bundle (the quantity
+// starts from the operator's latest bundle), so usually only the EPC changes.
 // Supplier, origin and shipment are assigned by the server from the
 // configuration; nothing here becomes stock in Colombia until it is received.
 
@@ -48,15 +50,36 @@ export function ChinaView() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const epcInput = useRef<HTMLInputElement>(null)
+  const quantityInput = useRef<HTMLInputElement>(null)
   // Retry key of the bundle being saved: kept while the outcome is unknown.
   const key = useRef<string | null>(null)
   const lock = useRef(false)
 
-  useUnsavedWork(epc.trim() || quantity ? 'Pre-registration form with unsaved data' : null)
+  // The quantity is a value reused between bundles, not unsaved work.
+  useUnsavedWork(epc.trim() ? 'Pre-registration form with unsaved data' : null)
 
   useEffect(() => {
     epcInput.current?.focus()
   }, [])
+
+  // Start from the quantity of the operator's latest bundle (also after a
+  // reload or on another device); it can be changed at any time.
+  const latestQuantity = recent.data?.items[0]?.quantity
+  const prefilled = useRef(false)
+  useEffect(() => {
+    if (prefilled.current || latestQuantity === undefined) return
+    prefilled.current = true
+    setQuantity((current) => current || String(latestQuantity))
+  }, [latestQuantity])
+
+  // The reader types the EPC and then Enter: go to the quantity (selected, so
+  // typing replaces it) instead of saving with the previous quantity unseen.
+  const epcKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    quantityInput.current?.focus()
+    quantityInput.current?.select()
+  }
 
   const normalized = epc.trim().toUpperCase()
   const amount = Number(quantity)
@@ -77,11 +100,13 @@ export function ChinaView() {
       })
       key.current = null
       setMessage({ kind: 'success', text: `Saved: ${data.preRegistration.epc} · ${amount} profiles${data.replayed ? ' (already saved before)' : ''}. Read the next bundle.` })
-      // Reference and finish stay for the next bundle of the same kind.
+      // Reference, finish and quantity stay for the next bundle of the same kind.
       setEpc('')
-      setQuantity('')
       recent.reload()
-      requestAnimationFrame(() => epcInput.current?.focus())
+      // Back to the EPC for the next read (not on requestAnimationFrame: it is
+      // paused while the page is not painted, and the reader would type the
+      // next tag into the quantity).
+      window.setTimeout(() => epcInput.current?.focus(), 0)
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 0
       const retryable = err instanceof ApiError && (err.data as { retryable?: boolean } | null)?.retryable === true
@@ -89,7 +114,8 @@ export function ChinaView() {
         setMessage({ kind: 'warning', text: 'No answer from the server: this bundle may have been saved. Press Save again without changing anything; it will not be duplicated.' })
       } else {
         if (!retryable) key.current = null
-        setMessage({ kind: 'error', text: `${describeError(err)} ${retryable ? 'Retry in a few seconds.' : 'Nothing was saved.'}` })
+        const reason = describeError(err)
+        setMessage({ kind: 'error', text: `${/[.!?]$/.test(reason) ? reason : `${reason}.`} ${retryable ? 'Retry in a few seconds.' : 'Nothing was saved.'}` })
         if (status === 409) context.reload()
       }
     } finally {
@@ -103,7 +129,7 @@ export function ChinaView() {
       <PageHeader
         eyebrow="Solualuminios · Supplier"
         title="Pre-register bundles"
-        description="Read the RFID tag, choose the reference and the finish, type the number of profiles and save. Supplier and origin are set automatically."
+        description="Choose the reference and the finish, read the RFID tag, check the number of profiles and save. Supplier and origin are set automatically."
       />
 
       {context.data ? (
@@ -122,20 +148,7 @@ export function ChinaView() {
       {context.error ? <Notice kind="error">{context.error}</Notice> : null}
 
       <form className="card china-form" onSubmit={(e) => void save(e)}>
-        <Field label="1. RFID tag (EPC)" hint="Point the reader at the tag: the code is typed here. You can also type it.">
-          <input
-            ref={epcInput}
-            className="mono"
-            value={epc}
-            autoComplete="off"
-            autoCapitalize="characters"
-            spellCheck={false}
-            placeholder="E280…"
-            onChange={(e) => setEpc(e.target.value)}
-          />
-        </Field>
-        {epc && !EPC.test(normalized) ? <span className="field-error">Letters and digits only.</span> : null}
-        <Field label="2. Reference">
+        <Field label="1. Reference">
           <select value={referenceId} onChange={(e) => setReferenceId(e.target.value)}>
             <option value="">Choose…</option>
             {(catalog.data?.references ?? []).map((item) => (
@@ -143,7 +156,7 @@ export function ChinaView() {
             ))}
           </select>
         </Field>
-        <Field label="3. Finish / Color">
+        <Field label="2. Finish / Color">
           <select value={finishId} onChange={(e) => setFinishId(e.target.value)}>
             <option value="">Choose…</option>
             {(catalog.data?.finishes ?? []).map((item) => (
@@ -151,9 +164,35 @@ export function ChinaView() {
             ))}
           </select>
         </Field>
-        <Field label="4. Quantity — profiles">
-          <input inputMode="numeric" type="number" min={1} step={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        </Field>
+        {/* EPC and quantity together, at the end: the two values of each bundle. */}
+        <div className="china-scan">
+          <Field label="3. RFID tag (EPC)" hint="Point the reader at the tag, or type the code.">
+            <input
+              ref={epcInput}
+              className="mono"
+              value={epc}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              placeholder="E280…"
+              onChange={(e) => setEpc(e.target.value)}
+              onKeyDown={epcKeyDown}
+            />
+          </Field>
+          <Field label="4. Quantity — profiles" hint="Same as the last bundle; change it if needed.">
+            <input
+              ref={quantityInput}
+              inputMode="numeric"
+              type="number"
+              min={1}
+              step={1}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              onFocus={(e) => e.target.select()}
+            />
+          </Field>
+        </div>
+        {epc && !EPC.test(normalized) ? <span className="field-error">Letters and digits only.</span> : null}
         {catalog.error ? <Notice kind="error">{catalog.error}</Notice> : null}
         {message ? <Notice kind={message.kind}>{message.text}</Notice> : null}
         <button type="submit" className="button china-save" disabled={!valid || saving}>

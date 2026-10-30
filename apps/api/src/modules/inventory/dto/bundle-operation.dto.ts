@@ -25,6 +25,15 @@ class OperationDto {
   operationKey!: string;
 }
 
+// Opening a closed bundle: all its profiles become loose in the same place.
+export class BundleOpenDto extends OperationDto {
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string | null;
+}
+
 export class BundleExitDto extends OperationDto {
   @IsInt({ message: 'La cantidad debe ser un número entero de perfiles' })
   @Min(1, { message: 'La cantidad debe ser mayor que cero' })

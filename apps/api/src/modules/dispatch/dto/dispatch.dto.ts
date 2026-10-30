@@ -95,6 +95,29 @@ export class ConfirmDispatchDto {
   operationKey!: string;
 }
 
+export class LooseLineDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  dispatchLineId!: string;
+
+  // Loose profiles of the line shown to the worker (assigned to it).
+  @IsInt()
+  @Min(1)
+  @Max(1000000)
+  quantity!: number;
+}
+
+// «Ya retiré los sueltos»: the quantities the screen showed, per line.
+export class PrepareLooseDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Indica los sueltos que retiraste' })
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => LooseLineDto)
+  lines!: LooseLineDto[];
+}
+
 export class ReassignDispatchDto {
   @IsString()
   @IsNotEmpty()

@@ -37,7 +37,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
     const quote = await http()
       .post('/quotes')
       .set(H.SALES)
-      .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '0', taxRatePercent: '0' }] })
+      .send({ customerId: ids.customer, paymentMethod: 'CASH', lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '0', taxRatePercent: '0' }] })
       .expect(201);
     const converted = await http().post(`/quotes/${quote.body.id}/convert`).set(H.SALES).send({ operationKey: randomUUID() }).expect(200);
     return converted.body as { id: string; lines: { id: string }[] };
@@ -65,7 +65,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
     const purchase = await http()
       .post('/purchases')
       .set(H.ADMIN)
-      .send({ supplierId: ids.supplier, documentNumber: `RACE-${S}`, documentDate: '2026-10-20', lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 10, grossAmount: '10000', discountPercent: '0' }] })
+      .send({ supplierId: ids.supplier, documentNumber: `RACE-${S}`, documentDate: '2026-10-20', lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 10, grossAmount: '10000', discountPercent: '0', taxRatePercent: '0' }] })
       .expect(201);
     const confirmed = await http().post(`/purchases/${purchase.body.id}/confirm`).set(H.ADMIN).expect(200);
     await http().post('/sale-prices').set(H.ADMIN).send({ purchaseId: purchase.body.id, purchaseLineId: confirmed.body.lines[0].id, markupPercent: '30', enabled: true }).expect(201);
@@ -152,7 +152,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
       const quote = await http()
         .post('/quotes')
         .set(H.SALES)
-        .send({ customerId: ids.customer, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 1, discountPercent: '0', taxRatePercent: '0' }] })
+        .send({ customerId: ids.customer, paymentMethod: 'CASH', lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity: 1, discountPercent: '0', taxRatePercent: '0' }] })
         .expect(201);
       const results = await Promise.all([1, 2].map(() => http().post(`/quotes/${quote.body.id}/convert`).set(H.SALES).send({ operationKey: randomUUID() })));
       outcomes.push(`${sorted(results)}:${await prisma.salesOrder.count({ where: { quoteId: quote.body.id } })}`);

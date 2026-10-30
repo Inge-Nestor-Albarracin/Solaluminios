@@ -20,6 +20,7 @@ import {
   ConfirmDispatchDto,
   CreateDispatchDto,
   DispatchQueryDto,
+  PrepareLooseDto,
   ReassignDispatchDto,
   ResolveIncidentDto,
   ScanDto,
@@ -76,6 +77,22 @@ export class DispatchController {
   @Patch('dispatches/:id/picks/:bundleId')
   setPick(@Param('id') id: string, @Param('bundleId') bundleId: string, @Body() dto: SetPickDto, @Req() request: AuthenticatedRequest) {
     return this.dispatches.setPick(id, bundleId, dto.quantity, sessionUser(request));
+  }
+
+  // Loose profiles: apply «loose first» again (e.g. after opening a bundle)
+  // and prepare the assigned loose profiles without reading chips.
+  @Roles('ADMIN', 'WAREHOUSE')
+  @Post('dispatches/:id/loose/refresh')
+  @HttpCode(HttpStatus.OK)
+  refreshLoose(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.dispatches.refreshLoose(id, sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'WAREHOUSE')
+  @Post('dispatches/:id/loose/prepare')
+  @HttpCode(HttpStatus.OK)
+  prepareLoose(@Param('id') id: string, @Body() dto: PrepareLooseDto, @Req() request: AuthenticatedRequest) {
+    return this.dispatches.prepareLoose(id, dto, sessionUser(request));
   }
 
   @Roles('ADMIN', 'WAREHOUSE')

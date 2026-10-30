@@ -93,7 +93,10 @@ export interface Quote {
   createdAt: string
   lines: QuoteLine[]
   order: { id: string; number: string } | null
-  createdBy: { id: string; name: string }
+  paymentMethod: PaymentMethod | null
+  paymentTerms: string | null
+  // ADMIN only (the API omits it for other roles).
+  createdBy?: { id: string; name: string }
 }
 
 export type OrderStatus = 'DRAFT' | 'PENDING_SUPPLY' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED'
@@ -125,11 +128,51 @@ export interface DispatchSummary {
   _count: { incidents: number }
 }
 
+export type PaymentMethod = 'CASH' | 'TRANSFER' | 'PARTIAL' | 'CREDIT'
+
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  CASH: 'Contado – efectivo',
+  TRANSFER: 'Contado – transferencia',
+  PARTIAL: 'Abono',
+  CREDIT: 'Cartera (crédito)',
+}
+
+// Example for the free terms field, by method.
+export const PAYMENT_TERMS_HINT: Record<PaymentMethod, string> = {
+  CASH: 'Opcional.',
+  TRANSFER: 'Opcional, p. ej. la cuenta o el plazo de la transferencia.',
+  PARTIAL: 'P. ej. «anticipo del 50 %, saldo contra entrega».',
+  CREDIT: 'P. ej. «30 días».',
+}
+
+// «Contado – efectivo · condiciones»; documents saved before have none.
+export function paymentLabel(document: { paymentMethod: PaymentMethod | null; paymentTerms: string | null }) {
+  if (!document.paymentMethod) return 'Sin forma de pago registrada'
+  return `${PAYMENT_METHOD_LABEL[document.paymentMethod]}${document.paymentTerms ? ` · ${document.paymentTerms}` : ''}`
+}
+
+// Abono / credit orders only (cash and transfer: null).
+export type PaymentStatus = 'PENDING' | 'PAID'
+
+export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
+  PENDING: 'Pago pendiente',
+  PAID: 'Pagada',
+}
+
 export interface SalesOrder {
   id: string
   number: string
   status: OrderStatus
   customerName: string
+  paymentMethod: PaymentMethod | null
+  paymentTerms: string | null
+  paymentStatus: PaymentStatus | null
+  paymentStatusAt: string | null
+  // ADMIN only: who recorded the current payment state.
+  paymentStatusBy?: { id: string; name: string } | null
+  // ADMIN only (the API omits them for other roles).
+  createdBy?: { id: string; name: string }
+  convertedBy?: { id: string; name: string } | null
   subtotal: string
   discountTotal: string
   taxTotal: string
@@ -155,6 +198,8 @@ export interface Shortage {
 export interface DispatchPick {
   bundleId: string
   epc: string
+  // From an opened bundle: loose profiles of the warehouse.
+  loose: boolean
   quantity: number
   bundleQuantity: number
   lot: string | null
@@ -177,7 +222,18 @@ export interface DispatchLine {
   prepared: number
   pending: number
   dispatched: number
-  suggested: { bundleId: string; epc: string; quantity: number; aisle: number | null; rack: number | null }[]
+  // Loose profiles ASSIGNED to this line (its reservations on opened bundles).
+  loose: { assigned: number; prepared: number; toTake: number; missing: number; places: string[] }
+  // Closed bundles reserved for the line and not read yet.
+  suggested: {
+    bundleId: string
+    epc: string
+    quantity: number
+    bundleQuantity: number
+    needsOpening: boolean
+    aisle: number | null
+    rack: number | null
+  }[]
   picks: DispatchPick[]
 }
 

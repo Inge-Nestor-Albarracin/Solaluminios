@@ -9,6 +9,7 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
   TRANSFER: 'Traslado',
   ADJUSTMENT_IN: 'Ajuste (+)',
   ADJUSTMENT_OUT: 'Ajuste (−)',
+  OPENING: 'Apertura (pasa a sueltos)',
 }
 
 export const MONTHS = [

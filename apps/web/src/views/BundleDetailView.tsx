@@ -107,6 +107,7 @@ export function BundleDetailView({ id, navigate }: { id: string; navigate: Navig
           <p className="big">
             {data.quantity}
             {data.quantity === 0 ? <span className="badge badge-muted">Agotado</span> : null}
+            {data.openedAt ? <span className="badge badge-loose">Abierto · sueltos</span> : null}
           </p>
         </div>
         <div>

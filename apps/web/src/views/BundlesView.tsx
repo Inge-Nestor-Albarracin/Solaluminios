@@ -172,6 +172,7 @@ export function BundlesView({
                     </td>
                     <td className="num" data-label="Perfiles">
                       {bundle.quantity === 0 ? <span className="badge badge-muted">Agotado</span> : bundle.quantity}
+                      {bundle.openedAt && bundle.quantity > 0 ? <span className="badge badge-loose">Sueltos</span> : null}
                     </td>
                     <td data-label="Procedencia">
                       {bundle.lot ? (

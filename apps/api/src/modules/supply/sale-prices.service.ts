@@ -64,8 +64,8 @@ export class SalePricesService {
       // The line must belong to the purchase the administrator selected.
       if (!line || line.purchaseId !== dto.purchaseId) throw new NotFoundException('El renglón no pertenece a esa compra');
       if (line.purchase.status !== 'CONFIRMED') throw new BadRequestException('Confirma la compra antes de crear su precio de venta');
-      if (!line.grossIncludesTax) {
-        throw new BadRequestException('Este renglón se registró con la definición de costo anterior; registra la compra con el valor IVA incluido');
+      if (!line.taxOnNet && !line.grossIncludesTax) {
+        throw new BadRequestException('Este renglón se registró con la definición de costo anterior; registra la compra con valor bruto, descuento e IVA');
       }
       if (!line.unitCostCop) throw new BadRequestException('El renglón no tiene costo por perfil');
       const markupPercent = dec(dto.markupPercent);

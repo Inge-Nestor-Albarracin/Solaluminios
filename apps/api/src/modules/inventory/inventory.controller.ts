@@ -17,6 +17,7 @@ import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import {
   BundleAdjustmentDto,
   BundleExitDto,
+  BundleOpenDto,
   BundleTransferDto,
 } from './dto/bundle-operation.dto.js';
 import {
@@ -114,6 +115,21 @@ export class InventoryController {
     return withStatus(
       response,
       await this.operations.exit(id, dto, sessionUser(request)),
+    );
+  }
+
+  // «Abrir paquete»: same roles as exits and transfers.
+  @Roles('ADMIN', 'WAREHOUSE')
+  @Post('bundles/:id/open')
+  async open(
+    @Param('id') id: string,
+    @Body() dto: BundleOpenDto,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return withStatus(
+      response,
+      await this.operations.open(id, dto, sessionUser(request)),
     );
   }
 

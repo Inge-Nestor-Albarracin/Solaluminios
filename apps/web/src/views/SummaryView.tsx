@@ -56,7 +56,8 @@ export function SummaryView({ navigate }: { navigate: Navigate }) {
           value={data ? number.format(data.totals.profiles) : '—'}
           hint={activeCount > 0 ? 'Con los filtros aplicados' : 'Todo el inventario'}
         />
-        <Kpi label="Paquetes con existencias" value={data ? number.format(data.totals.bundles) : '—'} />
+        <Kpi label="Paquetes cerrados" value={data ? number.format(data.totals.bundles) : '—'} />
+        <Kpi label="Perfiles sueltos" value={data ? number.format(data.totals.looseProfiles) : '—'} hint="De paquetes abiertos (incluidos en el total)" />
         <Kpi label="Referencia + acabado" value={data ? number.format(data.total) : '—'} hint="Combinaciones con stock" />
       </div>
 
@@ -133,7 +134,10 @@ export function SummaryView({ navigate }: { navigate: Navigate }) {
                         <td className="num" data-label="Perfiles">
                           <strong>{number.format(group.profiles)}</strong>
                         </td>
-                        <td className="num" data-label="Paquetes">{group.bundles}</td>
+                        <td className="num" data-label="Paquetes">
+                          {group.bundles}
+                          {group.looseProfiles > 0 ? <span className="cell-sub">+ {number.format(group.looseProfiles)} sueltos</span> : null}
+                        </td>
                         <td className="no-label" data-label="Acciones">
                           <div className="actions">
                             <button type="button" className="text-button" aria-expanded={expanded} onClick={() => toggle(key)}>
@@ -171,7 +175,10 @@ export function SummaryView({ navigate }: { navigate: Navigate }) {
                                 </span>
                               </td>
                               <td className="num" data-label="Perfiles">{number.format(row.profiles)}</td>
-                              <td className="num" data-label="Paquetes">{row.bundles}</td>
+                              <td className="num" data-label="Paquetes">
+                                {row.bundles}
+                                {row.looseProfiles > 0 ? <span className="cell-sub">+ {number.format(row.looseProfiles)} sueltos</span> : null}
+                              </td>
                               <td className="no-label" aria-hidden="true" />
                             </tr>
                           ))

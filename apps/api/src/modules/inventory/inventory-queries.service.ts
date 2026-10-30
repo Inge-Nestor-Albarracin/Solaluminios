@@ -20,8 +20,12 @@ export interface LocationRow {
   };
   aisle: { id: string; number: number; floorNumber: number | null } | null;
   rack: { id: string; number: number } | null;
+  // All profiles here (closed bundles + loose), counted once.
   profiles: number;
+  // Closed bundles with profiles.
   bundles: number;
+  // Loose profiles (from opened bundles).
+  looseProfiles: number;
 }
 
 // Read-only inventory queries. Stock is always computed from the current
@@ -85,17 +89,21 @@ export class InventoryQueriesService {
   }
 
   // Groups by reference + finish. Empty bundles (quantity 0) are excluded
-  // from both profile and bundle counts.
+  // from both profile and bundle counts. Closed bundles and loose profiles
+  // (opened bundles) are reported apart; each profile is counted once.
   async summary(query: InventorySummaryQueryDto) {
     await this.requireFilterTargets(query);
     const { page, pageSize, skip } = paginate(query);
 
-    const rows = await this.prisma.bundle.groupBy({
-      by: ['referenceId', 'finishId', 'inventoryLocationId', 'rackId'],
-      where: { ...this.commonWhere(query), quantity: { gt: 0 } },
-      _sum: { quantity: true },
-      _count: { _all: true },
-    });
+    const groupBy = (opened: boolean) =>
+      this.prisma.bundle.groupBy({
+        by: ['referenceId', 'finishId', 'inventoryLocationId', 'rackId'],
+        where: { ...this.commonWhere(query), quantity: { gt: 0 }, openedAt: opened ? { not: null } : null },
+        _sum: { quantity: true },
+        _count: { _all: true },
+      });
+    const [closedRows, looseRows] = await Promise.all([groupBy(false), groupBy(true)]);
+    const rows = [...closedRows.map((row) => ({ ...row, loose: false })), ...looseRows.map((row) => ({ ...row, loose: true }))];
 
     const unique = <T>(values: (T | null)[]) =>
       [...new Set(values.filter((v): v is T => v !== null))];
@@ -149,6 +157,7 @@ export class InventoryQueriesService {
         finish: (typeof finishes)[number];
         profiles: number;
         bundles: number;
+        looseProfiles: number;
         locations: LocationRow[];
       }
     >();
@@ -162,22 +171,34 @@ export class InventoryQueriesService {
           finish: finishMap.get(row.finishId)!,
           profiles: 0,
           bundles: 0,
+          looseProfiles: 0,
           locations: [],
         };
         groups.set(key, group);
       }
       const profiles = row._sum.quantity ?? 0;
-      const bundles = row._count._all;
+      const bundles = row.loose ? 0 : row._count._all;
+      const looseProfiles = row.loose ? profiles : 0;
       const rack = row.rackId ? rackMap.get(row.rackId) : undefined;
       group.profiles += profiles;
       group.bundles += bundles;
-      group.locations.push({
-        inventoryLocation: locationMap.get(row.inventoryLocationId)!,
-        aisle: rack?.aisle ?? null,
-        rack: rack ? { id: rack.id, number: rack.number } : null,
-        profiles,
-        bundles,
-      });
+      group.looseProfiles += looseProfiles;
+      // Closed and loose of the same place share one row.
+      const place = group.locations.find((l) => l.inventoryLocation.id === row.inventoryLocationId && (l.rack?.id ?? null) === row.rackId);
+      if (place) {
+        place.profiles += profiles;
+        place.bundles += bundles;
+        place.looseProfiles += looseProfiles;
+      } else {
+        group.locations.push({
+          inventoryLocation: locationMap.get(row.inventoryLocationId)!,
+          aisle: rack?.aisle ?? null,
+          rack: rack ? { id: rack.id, number: rack.number } : null,
+          profiles,
+          bundles,
+          looseProfiles,
+        });
+      }
     }
 
     const sorted = [...groups.values()].sort(
@@ -208,6 +229,7 @@ export class InventoryQueriesService {
       totals: {
         profiles: sorted.reduce((sum, g) => sum + g.profiles, 0),
         bundles: sorted.reduce((sum, g) => sum + g.bundles, 0),
+        looseProfiles: sorted.reduce((sum, g) => sum + g.looseProfiles, 0),
       },
     };
   }

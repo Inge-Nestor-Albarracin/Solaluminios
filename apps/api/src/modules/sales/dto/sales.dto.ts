@@ -17,7 +17,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { MaterialOrigin } from '../../../generated/prisma/client.js';
+import { MaterialOrigin, PaymentMethod, PaymentStatus } from '../../../generated/prisma/client.js';
 import { DECIMAL_PATTERN } from '../../../shared/money.js';
 import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 
@@ -156,6 +156,17 @@ export class SaveQuoteDto {
   @MaxLength(1000)
   notes?: string;
 
+  // Contado (efectivo / transferencia), abono or cartera (crédito).
+  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, abono o cartera (crédito)' })
+  paymentMethod!: PaymentMethod;
+
+  // Details agreed with the customer, e.g. advance amount or credit days.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  paymentTerms?: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'La cotización necesita al menos un renglón' })
   @ArrayMaxSize(100)
@@ -199,6 +210,12 @@ export class UpdateOrderLineDto {
   @IsNotEmpty({ message: 'Indica el motivo del cambio' })
   @MaxLength(300)
   reason!: string;
+}
+
+// Abono / credit orders: whether the customer already paid.
+export class UpdatePaymentStatusDto {
+  @IsEnum(PaymentStatus, { message: 'El estado de pago es PENDING (pendiente) o PAID (pagada)' })
+  status!: PaymentStatus;
 }
 
 export class ReasonDto {

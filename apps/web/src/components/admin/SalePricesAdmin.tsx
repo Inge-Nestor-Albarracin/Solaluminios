@@ -65,7 +65,7 @@ export function SalePricesAdmin() {
   useUnsavedWork(percent.trim() ? 'Precio de venta sin guardar' : null)
 
   const confirmed = (purchases.data ?? []).filter((p) => p.status === 'CONFIRMED')
-  const lines = (purchase.data?.id === purchaseId ? purchase.data.lines : []).filter((line) => line.grossIncludesTax && line.unitCostCop)
+  const lines = (purchase.data?.id === purchaseId ? purchase.data.lines : []).filter((line) => (line.taxOnNet || line.grossIncludesTax) && line.unitCostCop)
   const line = lines.find((l) => l.id === lineId) ?? null
   const markup = percent.trim().replace(',', '.')
   const amounts = line?.unitCostCop ? preview(line.unitCostCop, markup) : null
@@ -110,7 +110,7 @@ export function SalePricesAdmin() {
           </Field>
           <Field label="Perfil de la compra">
             <select value={lineId} disabled={!purchaseId} onChange={(e) => setLineId(e.target.value)}>
-              <option value="">{purchaseId && purchase.data && lines.length === 0 ? 'Sin renglones con costo IVA incluido' : 'Elige el renglón…'}</option>
+              <option value="">{purchaseId && purchase.data && lines.length === 0 ? 'Sin renglones con costo por perfil' : 'Elige el renglón…'}</option>
               {lines.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.lineNo}. {l.reference.code} · {l.finish.description ?? l.finish.code} · {ORIGIN_LABEL[l.origin]}

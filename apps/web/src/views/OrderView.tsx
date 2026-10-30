@@ -7,7 +7,10 @@ import {
   DISPATCH_STATUS_LABEL,
   ORDER_STATUS_LABEL,
   ORIGIN_LABEL,
+  PAYMENT_STATUS_LABEL,
   formatMoney,
+  paymentLabel,
+  type PaymentStatus,
   type SalesOrder,
   type Shortage,
 } from '../lib/commerce'
@@ -23,7 +26,8 @@ import type { Navigate } from './navigation'
 // shown and the order waits for supply); deliveries are dispatches assigned
 // to a warehouse worker of the order's location.
 export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) {
-  const { request } = useSession()
+  const { request, user } = useSession()
+  const isAdmin = user?.role === 'ADMIN'
   const enc = encodeURIComponent
   const order = useLoad<SalesOrder>(`/sales-orders/${enc(id)}`)
   const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION)
@@ -54,6 +58,14 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
       setBusy(false)
     }
   }
+
+  // Abono / credit: the owner (the only SALES user who sees the order) or
+  // ADMIN records whether the customer paid. Reversible and audited.
+  const setPaymentStatus = (status: PaymentStatus) =>
+    run(async () => {
+      await request(`/sales-orders/${enc(id)}/payment-status`, { method: 'PATCH', body: { status } })
+      order.reload()
+    })
 
   const confirm = () =>
     run(async () => {
@@ -131,6 +143,35 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
           </>
         }
       />
+      <p className="doc-facts">
+        <span>Forma de pago: <strong>{paymentLabel(data)}</strong></span>
+        {data.paymentStatus ? (
+          <span className="payment-state">
+            <span className={`badge ${data.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-warning'}`}>{PAYMENT_STATUS_LABEL[data.paymentStatus]}</span>
+            {data.paymentStatusAt ? (
+              <small>
+                {data.paymentStatus === 'PAID' ? 'registrada' : 'marcada'} {formatDateTime(data.paymentStatusAt)}
+                {isAdmin && data.paymentStatusBy ? ` por ${data.paymentStatusBy.name}` : ''}
+              </small>
+            ) : null}
+            {data.paymentStatus === 'PENDING' ? (
+              <button type="button" className="button button-secondary" disabled={busy} onClick={() => void setPaymentStatus('PAID')}>
+                Marcar como pagada
+              </button>
+            ) : (
+              <button type="button" className="text-button" disabled={busy} onClick={() => void setPaymentStatus('PENDING')}>
+                Volver a pendiente
+              </button>
+            )}
+          </span>
+        ) : null}
+        {isAdmin && data.createdBy ? (
+          <span>
+            Creada por <strong>{data.convertedBy?.name ?? 'sin registro (orden anterior)'}</strong> · {formatDateTime(data.createdAt)}
+            {data.convertedBy && data.convertedBy.id !== data.createdBy.id ? <> · vendedor <strong>{data.createdBy.name}</strong></> : null}
+          </span>
+        ) : null}
+      </p>
       {error ? <Notice kind="error">{error}</Notice> : null}
       {data.status === 'CANCELLED' ? <Notice kind="warning">Orden cancelada: {data.cancelReason}</Notice> : null}
 

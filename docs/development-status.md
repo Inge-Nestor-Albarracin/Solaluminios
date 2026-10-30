@@ -1399,6 +1399,285 @@ existentes.
 - `tsc` sobre `test/` mantiene un error previo en
   `test/load/inventory.load-spec.ts`, ajeno a esta tarea.
 
+## Compras: orden de la factura (sin IVA → descuento → IVA) y filtros (29/10/2026)
+
+- **Regla nueva** (`computeTaxOnNetLine`): por renglón se registra el valor
+  bruto sin IVA; el descuento % se aplica sobre él; el IVA de compra % (obligatorio,
+  puede ser 0; la pantalla propone 19) va sobre la base ya descontada.
+  - Total = base + IVA.
+  - Costo por perfil = total ÷ perfiles: el IVA de compra sigue dentro del
+    costo, como en la regla anterior.
+  - Con 1.000.000 sin IVA, 3 % y 19 % se obtiene 11.543 por perfil: el mismo
+    costo que 1.190.000 con IVA y 3 %. Cambia el registro y el desglose, no el
+    costo.
+- **Migración nueva** `20261029120000_purchase_tax_on_net`: columna
+  `purchase_lines.taxOnNet` y CHECK para que un renglón tenga una sola regla.
+  - No recalcula nada: los renglones existentes conservan sus importes y la
+    pantalla los identifica («(con IVA)», «Incluido en el bruto»).
+  - Aplicada en la base de pruebas. **Pendiente en desarrollo**:
+    `pnpm --dir apps/api exec prisma migrate deploy`.
+- **Precios de venta**: aceptan renglones de la regla nueva y de la de IVA
+  incluido.
+- **Filtros de «Compras y costos»** (`GET /purchases`): proveedor (incluye
+  inactivos), fecha desde, fecha hasta (ambas incluidas), familia y
+  referencia.
+  - Se combinan libremente o no se usa ninguno.
+  - Fechas inexistentes o invertidas → 400.
+- **Pantalla**:
+  - el renglón pide, en este orden, valor bruto sin IVA, descuento e IVA;
+  - la vista previa muestra descuento, base, IVA, total y costo por perfil;
+  - la tabla tiene las columnas valor bruto sin IVA, descuento, base después
+    del descuento, IVA de compra, total con IVA y costo por perfil;
+  - totales del documento: bruto, descuentos, base, IVA y total. Las compras
+    de la regla anterior conservan sus rótulos.
+- **Pruebas**:
+  - API: unitarias 38/38 (4 nuevas de costeo); e2e 154/154. La #7 pasa a la
+    regla nueva, con IVA obligatorio y como máximo 100 %; hay una prueba nueva
+    de filtros combinados y fechas inválidas.
+  - Web: `tsc`, `oxlint` y build correctos.
+  - Navegador, base de pruebas con datos temporales (sufijo 592926, borrados
+    por IDs al terminar):
+    - filtros solos y combinados (proveedor, proveedor + desde, proveedor +
+      referencia, solo referencia, rango, sin resultados, limpiar);
+    - detalle y edición de una compra de dos renglones (400.000 − 5 % sin IVA
+      = 9.500 por perfil; 100.000 − 10 % + 19 % = 10.710);
+    - compra antigua con IVA incluido mostrada con sus rótulos;
+    - 375 px sin desbordamiento.
+- **Cantidad desde los lotes** (mismo día, solo web):
+  - Al marcar lotes en un renglón, «Cantidad de perfiles» se llena con la
+    suma de sus perfiles: los ingresados más, en China, lo prerregistrado por
+    recibir. La selección de lotes va antes de la cantidad.
+  - La cantidad se puede corregir a mano y el aviso de diferencia con los
+    lotes se mantiene. Al cambiar los lotes se vuelve a tomar la suma.
+  - Si se desmarcan todos, o cambian el material o el origen, se vacía solo
+    la cantidad que venía de los lotes.
+  - Verificado en navegador con lotes temporales de 250 y 33 perfiles
+    (sufijo F1FCC8, borrados): 250, luego 283, manual 280 con aviso, vuelta a
+    250, vacía al desmarcar y al cambiar de origen.
+
+## Prerregistro China: cantidad reutilizada y EPC junto a la cantidad (29/10/2026)
+
+Solo web (`ChinaView.tsx`, `App.css`).
+
+- **Orden del formulario**: 1. Reference, 2. Finish / Color, 3. EPC,
+  4. Quantity, 5. Save. El EPC y la cantidad van juntos al final: lado a lado
+  desde 520 px de ancho y uno debajo del otro en celular.
+- **Cantidad reutilizada**:
+  - Después de guardar se conserva, igual que referencia y acabado; se puede
+    cambiar.
+  - Al abrir la pantalla toma la cantidad del último paquete del operador,
+    así que vale también tras recargar o en otro equipo.
+  - Ya no cuenta como trabajo sin guardar, pero un EPC escrito sí.
+- **Lector**:
+  - El Enter que envía la pistola tras el EPC pasa a la cantidad, con el
+    valor seleccionado, en vez de guardar sin mostrarla. El segundo Enter
+    guarda; escribir encima la reemplaza.
+  - Tras guardar, el foco vuelve al EPC con `setTimeout` en lugar de
+    `requestAnimationFrame`, que no corre si la página no se está pintando: el
+    siguiente chip podía quedar escrito en la cantidad.
+- **Corregido**: faltaba el punto entre el error del servidor y «Nothing was
+  saved.».
+- **Verificado en navegador** (base de pruebas, datos temporales con sufijo
+  902753; el ajuste `china.supplierId` creado para la prueba se eliminó porque
+  no existía antes):
+  - 375 px y 768 px;
+  - 25, 25 reutilizado y luego 30;
+  - tras volver a iniciar sesión empieza en 30;
+  - un EPC duplicado se rechaza y conserva la cantidad.
+- `tsc`, `oxlint` y build correctos.
+
+## Forma de pago en cotizaciones y autor visible solo para ADMIN (29/10/2026)
+
+- **Migración nueva** `20261029160000_quote_payment_method`. Aplicada en la
+  base de pruebas; **pendiente en desarrollo**. Contenido:
+  - enum `PaymentMethod` con CASH (Contado – efectivo), TRANSFER (Contado –
+    transferencia), PARTIAL (Abono) y CREDIT (Cartera, crédito);
+  - en `quotes` y `sales_orders`: `paymentMethod` (nulo en documentos
+    anteriores) y `paymentTerms` (texto libre ≤ 300, con CHECK);
+  - en `sales_orders`: `convertedById`, con FK a users.
+
+  No asume nada sobre los documentos existentes.
+- **Reglas**:
+  - Guardar una cotización exige forma de pago; las condiciones son
+    opcionales («anticipo del 50 %», «30 días»).
+  - La orden copia ambas al convertirse.
+  - Una cotización anterior sin forma de pago no se puede convertir (409):
+    primero se elige y se guarda.
+  - El PDF de cotización y de orden muestra «FORMA DE PAGO» bajo el vendedor
+    (no aparece en documentos anteriores).
+- **Autoría**:
+  - `createdBy`, y en órdenes `convertedBy`, solo llegan a ADMIN, en el
+    detalle y en los listados (`forViewer` en `sales.service.ts`). Las demás
+    respuestas los omiten.
+  - El dueño de la orden sigue siendo el vendedor de la cotización (permisos
+    sin cambios). Ahora queda registrado quién la convirtió.
+  - En pantalla, ADMIN ve «Creada por X · fecha» en cotización y orden, y
+    «creada por X» en las listas. En órdenes anteriores aparece «sin
+    registro».
+  - El PDF conserva el nombre del vendedor: es dato comercial para el
+    cliente.
+- **Pruebas**:
+  - API: unitarias 39/39 (PDF con y sin forma de pago); e2e 155/155.
+  - Casos cubiertos: forma de pago obligatoria y válida, condiciones ≤ 300,
+    copia a la orden, autor oculto para SALES y visible para ADMIN en detalle
+    y listados, ADMIN que convierte la cotización de un vendedor, y bloqueo
+    de conversión sin forma de pago.
+  - Navegador, base de pruebas con datos temporales (sufijo 883BFD, borrados
+    por IDs):
+    - el vendedor no puede guardar sin forma de pago; ve la forma de pago y
+      no el autor;
+    - ADMIN ve «Creada por» en cotización, orden y listas;
+    - los PDF reales muestran la forma de pago.
+
+## Estado de pago de órdenes con abono o crédito (29/10/2026)
+
+- **Migración nueva** `20261029200000_order_payment_status`. Aplicada en
+  pruebas; **pendiente en desarrollo**. Contenido:
+  - enum `PaymentStatus` (PENDING, PAID);
+  - en `sales_orders`: `paymentStatus`, `paymentStatusAt` y
+    `paymentStatusById` (FK users);
+  - las órdenes existentes con abono o crédito quedan PENDING, sin autor ni
+    fecha;
+  - CHECK: el estado existe solo y siempre en órdenes PARTIAL o CREDIT.
+    Contado (efectivo o transferencia) queda en NULL.
+- **Reglas**:
+  - Al convertir una cotización con abono o crédito, la orden empieza
+    «Pago pendiente».
+  - `PATCH /sales-orders/:id/payment-status {status}` (ADMIN, SALES). El
+    vendedor solo puede cambiar sus órdenes; otro vendedor recibe 404 y
+    bodega, 403.
+  - El cambio es reversible, idempotente si el estado no cambia, bloquea la
+    orden y queda auditado (`PAYMENT_STATUS_CHANGED` con de → a).
+  - En contado responde 409.
+  - Quién registró el estado (`paymentStatusBy`) llega solo a ADMIN.
+- **Pantalla**:
+  - La orden muestra la insignia «Pago pendiente» o «Pagada», la fecha y el
+    botón «Marcar como pagada» o «Volver a pendiente». ADMIN ve además «por
+    X».
+  - La lista de órdenes muestra la misma insignia.
+  - El PDF no cambia.
+- **Pruebas**:
+  - API: e2e 155/155. Casos: pendiente inicial, permisos, valor inválido,
+    pagada por el dueño, vuelta a pendiente por ADMIN, idempotencia,
+    auditoría, contado 409, y el CHECK de la base aun fuera del API.
+  - Navegador (sufijo ABEF31, datos borrados): el vendedor marca pagada y no
+    ve el autor; contado sin estado; insignias en la lista; ADMIN ve «por
+    Sergio…» y vuelve a pendiente.
+
+## Paquetes abiertos y perfiles sueltos (30/10/2026)
+
+**Modelo.** Un paquete abierto sigue siendo la misma fila `bundles`: su
+`quantity` pasa a ser perfiles **sueltos** de su ubicación. Así:
+- el total no cambia ni se cuenta dos veces;
+- se conservan EPC, historial y lote (procedencia);
+- no hace falta un chip nuevo;
+- sus reservas quedan en la misma fila: pasan a sueltos sin liberarse.
+
+**Migración nueva** `20261030120000_open_bundles_loose_profiles`. Aplicada en
+la base de pruebas; **pendiente en desarrollo**. Contenido:
+- tipo de movimiento `OPENING` (saldo antes = después = cantidad; no es
+  salida);
+- columnas `bundles.openedAt` y `openedById` (FK), con CHECK de que van
+  juntas;
+- trigger `bundle_opened_is_final`: no se puede reabrir ni deshacer;
+- CHECK `inventory_movements_balance_consistent` recreado con OPENING. Se
+  compara `type::text`, porque el valor nuevo del enum no se puede usar en la
+  misma transacción.
+- Los paquetes existentes quedan cerrados.
+
+**API.**
+- `POST /inventory/bundles/:id/open {operationKey, reason?}`:
+  - roles ADMIN y WAREHOUSE, iguales a salida y traslado;
+  - idempotente por clave; otra apertura → 409; vacío → 409.
+- **Sueltos primero**:
+  - `USE_ORDER` (abiertos por fecha de apertura, luego cerrados FIFO) en
+    `ReservationsService.plan`, al confirmar órdenes y en despachos
+    parciales;
+  - `rebalance` del despacho reescrito: primero sueltos propios y libres de
+    la ubicación, después cerrados propios y libres;
+  - todos los paquetes implicados se bloquean en una sola sentencia,
+    ordenados por id, y el cambio ocurre en la misma transacción.
+- **Despacho**:
+  - la creación aplica «sueltos primero»;
+  - `POST /dispatches/:id/loose/refresh` lo reaplica (por ejemplo, tras
+    abrir un paquete);
+  - `POST /dispatches/:id/loose/prepare {lines:[{dispatchLineId, quantity}]}`
+    prepara los sueltos asignados sin leer chips. Recibe la cantidad que
+    mostró la pantalla: si cambió, 409 y no prepara nada; repetirlo no cambia
+    nada; queda auditado (`LOOSE_PREPARED`);
+  - el detalle informa por renglón `loose {assigned, prepared, toTake,
+    missing, places}` y los cerrados reservados (`suggested`, con
+    `needsOpening`).
+- **Lectura**:
+  - leer un paquete abierto → `OPENED`; no prepara nada;
+  - leer un cerrado cuando los sueltos cubren el renglón → `LOOSE_FIRST`;
+  - si los sueltos cubren solo una parte, el cerrado cubre únicamente el
+    faltante.
+- **Confirmación**:
+  - descuenta automáticamente y es idempotente, como antes;
+  - un paquete cerrado que sale en parte se abre ahí (OPENING más EXIT) y su
+    resto queda suelto.
+- **Corregido** (fallo previo que «sueltos primero» hizo visible):
+  - `freeFor` no contaba las reservas de órdenes aún sin despacho
+    (`NOT { dispatchLineId }` no incluye NULL);
+  - podía planear material ya comprometido; el trigger diferido lo frenaba
+    con un 500.
+- **Resumen**: `bundles` cuenta solo paquetes cerrados; `looseProfiles`
+  aparte; `profiles` es el total una sola vez.
+
+**Web.**
+- **Despacho**: aviso grande (`LooseProfilesNotice`) bajo el título, antes
+  de los KPI, los renglones y la lectura.
+  - Caso A: «RETIRAR N PERFILES SUELTOS DEL ALMACÉN / NO ES NECESARIO ABRIR
+    OTRO PAQUETE».
+  - Caso B: «USAR PRIMERO N… / FALTAN M…», con dos pasos separados y el
+    paquete sugerido con «Abrir paquete» (con confirmación).
+  - Datos mostrados: referencia, color, origen y «En el almacén: …»
+    (pasillo/burro).
+  - Botón «Ya retiré los N sueltos».
+  - Al abrir el despacho, su ejecutor reaplica «sueltos primero».
+  - Las preparaciones de sueltos se muestran como «Sueltos del almacén».
+- **Detalle de paquete**: pestaña «Abrir paquete» (solo cerrado con
+  perfiles), aviso de paquete abierto e insignia «Abierto · sueltos».
+- **Listado**: insignia «Sueltos». **Resumen**: KPI «Perfiles sueltos» y
+  «+ N sueltos» por fila.
+
+**Pruebas.**
+- API: unitarias 39/39; e2e 163/163, dos corridas completas. La suite nueva
+  `loose-profiles.e2e-spec.ts` (8 pruebas) cubre:
+  1. abrir 30 da 30 sueltos con el mismo total;
+  2. reintento sin duplicar, segunda apertura rechazada (API y trigger) y
+     carrera de dos aperturas (20 rondas);
+  3. entregar 25 deja 5, y confirmar dos veces no descuenta de nuevo;
+  4. la siguiente orden de 5 usa esos 5 y no toca el paquete cerrado;
+  5. orden de 25 con 5 sueltos: faltan 20; al abrir el de 30 se entregan 25
+     y quedan 10;
+  6. otro color, origen desconocido o China y otro proveedor no se ofrecen;
+  7. dos despachos creados a la vez no comparten sueltos (20 rondas);
+  8. un cerrado que sale en parte se abre al confirmar.
+- Ajustes en suites existentes:
+  - totales del resumen con `looseProfiles`;
+  - el lector fijo responde `LOOSE_FIRST` cuando el renglón ya tiene
+    sueltos;
+  - la prueba de la outbox procesa lotes hasta atender su fila, porque fallaba
+    con suites paralelas que dejan avisos.
+- **Navegador** (sufijo 5BD291, datos borrados):
+  - caso A en escritorio y caso B en 375 px, sin desbordamiento;
+  - abrir desde el despacho, preparar 25 sin leer chips y confirmar: quedan
+    10 sueltos (historial ENTRY 30 → OPENING 30 → EXIT 20);
+  - resumen, listado y detalle muestran los sueltos;
+  - pestaña «Abrir paquete» probada.
+- Web: `tsc`, `oxlint`, build y Chafon 7/7.
+
+**Límites y decisiones.**
+- La salida manual parcial desde el inventario no abre el paquete (flujo
+  existente sin cambios); para usar parte de un paquete, lo correcto es
+  «Abrir paquete».
+- Los sueltos de varios paquetes abiertos del mismo lugar se consumen en
+  orden de apertura; el trabajador no elige lotes.
+- El traslado entre bodegas sigue siendo el existente: el aviso indica
+  trasladar el paquete al almacén del despacho y abrirlo allí.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

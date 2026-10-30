@@ -33,6 +33,15 @@ export function eligibleWhere(requirement: MaterialRequirement, inventoryLocatio
   };
 }
 
+// Order in which eligible stock is used: LOOSE profiles first (opened
+// bundles, oldest opening first), then closed bundles FIFO. Using the loose
+// profiles that already exist avoids opening another bundle.
+export const USE_ORDER: Prisma.BundleOrderByWithRelationInput[] = [
+  { openedAt: { sort: 'asc', nulls: 'last' } },
+  { createdAt: 'asc' },
+  { id: 'asc' },
+];
+
 // Reservations of bundles for sales order lines.
 //
 // Physical stock and commitments are kept apart: a reservation never changes
@@ -66,7 +75,7 @@ export class ReservationsService {
     return new Map(groups.map((group) => [group.bundleId, group._sum.quantity ?? 0]));
   }
 
-  // FIFO plan over locked candidates (oldest bundle first). `taken` holds
+  // Plan over locked candidates in USE_ORDER (loose first). `taken` holds
   // quantities planned in the same transaction for other lines. `locked`
   // limits the plan to the bundles the caller locked: one that became
   // eligible after the lock (new entry, transfer, classification) is not
@@ -82,7 +91,7 @@ export class ReservationsService {
     const bundles = await tx.bundle.findMany({
       where: { ...eligibleWhere(requirement, inventoryLocationId), ...(locked ? { id: { in: [...locked] } } : {}) },
       select: { id: true, quantity: true },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      orderBy: USE_ORDER,
     });
     const reserved = await this.reservedByBundle(tx, bundles.map((bundle) => bundle.id));
     const allocations: Allocation[] = [];

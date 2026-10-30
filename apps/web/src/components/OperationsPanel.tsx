@@ -8,7 +8,7 @@ import { useUnsavedWork } from '../pwa/workGuard'
 import { LocationSelectors } from './LocationSelectors'
 import { Field, Notice } from './ui'
 
-type Action = 'exit' | 'transfer' | 'adjustments'
+type Action = 'open' | 'exit' | 'transfer' | 'adjustments'
 
 const REPLAYED = 'La operación ya estaba registrada; no se modificó el inventario otra vez.'
 
@@ -112,6 +112,42 @@ function Confirm({
         </button>
       </div>
     </div>
+  )
+}
+
+// «Abrir paquete»: all its profiles become loose in the same place. The
+// total does not change; the bundle and its chip stay as antecedents.
+function OpenForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onDone: (message: string) => void; onRefresh: () => void }) {
+  const op = useOperation(bundle.id, onDone, onRefresh)
+  const [confirming, setConfirming] = useState(false)
+  useUnsavedWork(confirming || op.error ? 'Apertura de paquete sin confirmar' : null)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!confirming) return setConfirming(true)
+    const ok = await op.run('open', {}, (r) => `Paquete abierto: ${r.bundle.quantity} perfiles sueltos en ${r.bundle.inventoryLocation.name}.`)
+    if (ok) setConfirming(false)
+  }
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      {op.error ? <div className="field-wide"><Notice kind="error">{op.error}</Notice></div> : null}
+      <p className="field-wide field-hint">
+        Úsalo cuando necesites solo una parte de un paquete. Sus perfiles pasan a ser sueltos del almacén y los despachos los usan primero.
+        No es una salida: el total no cambia.
+      </p>
+      <div className="field-wide">
+        {confirming ? (
+          <Confirm pending={op.pending} confirmLabel="Abrir paquete" onBack={() => { setConfirming(false); op.reset() }}>
+            Los <strong>{bundle.quantity}</strong> perfiles del paquete <span className="mono">{bundle.epc}</span> pasarán a ser{' '}
+            <strong>sueltos</strong> en {bundle.inventoryLocation.name}. El paquete y su chip quedan como antecedente; no se puede volver a abrir
+            ni hace falta un chip nuevo.
+          </Confirm>
+        ) : (
+          <button type="submit" className="button">Revisar apertura</button>
+        )}
+      </div>
+    </form>
   )
 }
 
@@ -319,6 +355,8 @@ function AdjustmentForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; o
 export function OperationsPanel({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onDone: (message: string) => void; onRefresh: () => void }) {
   const { user } = useSession()
   const tabs: { id: Action; label: string }[] = []
+  // Closed bundles with profiles can be opened (once).
+  if (canOperate(user?.role) && !bundle.openedAt && bundle.quantity > 0) tabs.push({ id: 'open', label: 'Abrir paquete' })
   if (canOperate(user?.role)) {
     tabs.push({ id: 'exit', label: 'Salida' }, { id: 'transfer', label: 'Traslado' })
   }
@@ -347,6 +385,14 @@ export function OperationsPanel({ bundle, onDone, onRefresh }: { bundle: BundleD
         ))}
       </div>
       <div className="tab-panel">
+        {bundle.openedAt ? (
+          <Notice kind="info">
+            Paquete abierto el {new Date(bundle.openedAt).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
+            {bundle.openedBy ? ` por ${bundle.openedBy.name}` : ''}: sus {bundle.quantity} perfiles son sueltos del almacén. Los despachos los
+            usan primero; no hace falta registrar una salida manual.
+          </Notice>
+        ) : null}
+        {active === 'open' && !bundle.openedAt && !empty ? <OpenForm bundle={bundle} onDone={onDone} onRefresh={onRefresh} /> : null}
         {empty && active !== 'adjustments' ? (
           <Notice kind="info">El paquete está agotado: no admite salidas ni traslados.</Notice>
         ) : null}

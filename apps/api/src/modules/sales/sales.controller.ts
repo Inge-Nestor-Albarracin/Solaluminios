@@ -27,6 +27,7 @@ import {
   SaveCustomerDto,
   SaveQuoteDto,
   UpdateOrderLineDto,
+  UpdatePaymentStatusDto,
 } from './dto/sales.dto.js';
 import { SalesService } from './sales.service.js';
 
@@ -161,6 +162,12 @@ export class SalesController {
   @HttpCode(HttpStatus.OK)
   confirmOrder(@Param('id') id: string, @Body() dto: ConfirmOrderDto, @Req() request: AuthenticatedRequest) {
     return this.sales.confirmOrder(id, dto, sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Patch('sales-orders/:id/payment-status')
+  setPaymentStatus(@Param('id') id: string, @Body() dto: UpdatePaymentStatusDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.setPaymentStatus(id, dto.status, sessionUser(request));
   }
 
   @Roles('ADMIN', 'SALES')

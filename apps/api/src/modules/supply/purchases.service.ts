@@ -9,8 +9,8 @@ import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { audit, isUniqueViolation, setLockTimeout, type Tx } from '../../shared/db.js';
 import { ZERO, dec, sum, unitCost } from '../../shared/money.js';
 import type { SafeUser } from '../auth/auth.types.js';
-import { computePurchase, computeTaxIncludedLine } from './costing.js';
-import type { LinkLotsDto, SavePurchaseDto } from './dto/supply.dto.js';
+import { computePurchase, computeTaxOnNetLine } from './costing.js';
+import type { LinkLotsDto, PurchaseQueryDto, SavePurchaseDto } from './dto/supply.dto.js';
 
 const purchaseInclude = {
   supplier: { select: { id: true, code: true, name: true } },
@@ -32,15 +32,35 @@ const purchaseInclude = {
 // built on each line. A confirmed document is frozen: later corrections are
 // new documents or audited lot links.
 //
-// Lines are saved with the current rule (grossIncludesTax): gross value WITH
-// purchase VAT, percentage discount, profiles → cost per profile. Documents
-// recorded with the earlier definition keep their stored amounts.
+// Lines are saved with the current rule (taxOnNet), in the order of the
+// invoice: gross value WITHOUT purchase VAT, percentage discount, VAT on the
+// discounted base, profiles → cost per profile (VAT included). Lines recorded
+// with earlier rules (grossIncludesTax, or the first itemised definition)
+// keep their stored amounts.
 @Injectable()
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  // Filters combine freely (AND); with none, the latest documents.
+  async list(query: PurchaseQueryDto) {
+    const day = (value: string, field: string) => {
+      const date = new Date(`${value}T00:00:00.000Z`);
+      if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new BadRequestException(`${field}: la fecha no existe`);
+      return date;
+    };
+    const from = query.dateFrom ? day(query.dateFrom, 'Desde') : undefined;
+    const to = query.dateTo ? day(query.dateTo, 'Hasta') : undefined;
+    if (from && to && from > to) throw new BadRequestException('La fecha «desde» es posterior a la fecha «hasta»');
+    const lineFilter: Prisma.PurchaseLineWhereInput = {
+      ...(query.referenceId ? { referenceId: query.referenceId } : {}),
+      ...(query.familyId ? { reference: { familyId: query.familyId } } : {}),
+    };
     return this.prisma.purchase.findMany({
+      where: {
+        ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+        ...(from || to ? { documentDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+        ...(Object.keys(lineFilter).length > 0 ? { lines: { some: lineFilter } } : {}),
+      },
       include: { supplier: { select: { id: true, code: true, name: true } }, _count: { select: { lines: true } } },
       orderBy: [{ documentDate: 'desc' }, { createdAt: 'desc' }],
       take: 200,
@@ -78,13 +98,15 @@ export class PurchasesService {
             throw new BadRequestException(`El proveedor ${supplier.name} no está habilitado para material de origen ${line.origin}`);
           }
         }
-        const costing = dto.lines.map((line) => computeTaxIncludedLine(dec(line.grossAmount), dec(line.discountPercent), line.quantity));
         dto.lines.forEach((line, index) => {
           if (dec(line.discountPercent).greaterThan(100)) throw new BadRequestException(`Renglón ${index + 1}: el descuento no puede superar 100 %`);
+          if (dec(line.taxRatePercent).greaterThan(100)) throw new BadRequestException(`Renglón ${index + 1}: el IVA no puede superar 100 %`);
         });
+        const costing = dto.lines.map((line) => computeTaxOnNetLine(dec(line.grossAmount), dec(line.discountPercent), dec(line.taxRatePercent), line.quantity));
         const grossTotal = sum(dto.lines.map((line) => dec(line.grossAmount)));
         const discountTotal = sum(costing.map((line) => line.discountAmount));
-        const netTotal = sum(costing.map((line) => line.costAmount));
+        const netTotal = sum(costing.map((line) => line.netAmount));
+        const taxTotal = sum(costing.map((line) => line.taxAmount));
         const header = {
           supplierId: dto.supplierId,
           documentNumber: dto.documentNumber,
@@ -100,11 +122,11 @@ export class PurchasesService {
           grossTotal,
           lineDiscountTotal: discountTotal,
           globalDiscountTotal: ZERO,
+          // Without VAT, after the discount.
           netTotal,
-          // Purchase VAT is inside the gross values; it is not separated.
-          taxTotal: ZERO,
+          taxTotal,
           chargesTotal: ZERO,
-          documentTotal: netTotal,
+          documentTotal: netTotal.plus(taxTotal),
         };
         let purchaseId = id;
         if (purchaseId) {
@@ -128,18 +150,20 @@ export class PurchasesService {
               unitName: 'perfil',
               profilesPerUnit: dec(1),
               quantity: dec(line.quantity),
-              // Gross value per profile, VAT included (informative).
+              // Gross value per profile, without VAT (informative).
               unitPrice: unitCost(dec(line.grossAmount).dividedBy(line.quantity)),
               lineDiscountType: discountPercent.isZero() ? 'NONE' : 'PERCENT',
               lineDiscountValue: discountPercent,
-              taxRatePercent: null,
-              taxRecoverable: null,
-              grossIncludesTax: true,
+              taxRatePercent: dec(line.taxRatePercent),
+              // VAT is part of the cost (not treated as recoverable).
+              taxRecoverable: false,
+              grossIncludesTax: false,
+              taxOnNet: true,
               grossAmount: dec(line.grossAmount),
               lineDiscountAmount: computed.discountAmount,
               globalDiscountAmount: ZERO,
-              netAmount: computed.costAmount,
-              taxAmount: ZERO,
+              netAmount: computed.netAmount,
+              taxAmount: computed.taxAmount,
               chargesAmount: ZERO,
               costAmount: computed.costAmount,
               costAmountCop: computed.costAmount,
@@ -180,7 +204,7 @@ export class PurchasesService {
 
   private issuesOf(purchase: Prisma.PurchaseGetPayload<{ include: typeof purchaseInclude }>): string[] {
     if (purchase.status !== 'DRAFT') return [];
-    if (purchase.lines.every((line) => line.grossIncludesTax)) {
+    if (purchase.lines.every((line) => line.taxOnNet || line.grossIncludesTax)) {
       const issues = purchase.lines.length === 0 ? ['La compra no tiene renglones'] : [];
       for (const line of purchase.lines) {
         if (!line.unitCostCop) issues.push(`Renglón ${line.lineNo}: el costo resultante es cero`);

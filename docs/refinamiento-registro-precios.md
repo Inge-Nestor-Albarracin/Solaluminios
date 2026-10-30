@@ -114,7 +114,21 @@ En ninguno de los dos casos el precio quedaba ligado a una compra concreta.
 
 ## 5. Fórmulas e IVA
 
-Compra (`computeTaxIncludedLine`, decimales de Prisma):
+**Actualizado el 29/10/2026.** Las compras nuevas usan el orden de la factura
+(`computeTaxOnNetLine`): el descuento se aplica antes del IVA.
+
+```text
+descuento        = valor bruto SIN IVA × descuento % / 100    → centavos
+base             = valor bruto − descuento
+IVA de compra    = base × IVA % / 100                         → centavos (tarifa explícita, puede ser 0)
+total            = base + IVA
+costo por perfil = total ÷ perfiles                           → 6 decimales (el IVA de compra sigue dentro del costo)
+```
+
+La regla siguiente se conserva para los renglones ya registrados con ella
+(`grossIncludesTax`).
+
+Compra anterior (`computeTaxIncludedLine`, decimales de Prisma):
 
 ```text
 descuento        = valor bruto (IVA incluido) × descuento % / 100     → redondeo a centavos
