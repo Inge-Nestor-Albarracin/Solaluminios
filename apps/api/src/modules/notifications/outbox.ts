@@ -9,7 +9,10 @@ export type NotificationKind =
   | 'dispatch-cancelled'
   | 'dispatch-incident'
   | 'dispatch-confirmed'
-  | 'dispatch-overdue';
+  | 'dispatch-overdue'
+  // Global discount of a quote: to the chosen administrator / to the seller.
+  | 'discount-requested'
+  | 'discount-resolved';
 
 export interface OutboxItem {
   userId: string;

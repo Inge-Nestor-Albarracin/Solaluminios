@@ -13,12 +13,14 @@ export function TaskCard({
   showAssignee,
   onCompleted,
   onOpenDispatch,
+  onOpenQuote,
 }: {
   task: Task
   now: number
   showAssignee: boolean
   onCompleted: () => void
   onOpenDispatch?: (dispatchId: string) => void
+  onOpenQuote?: (quoteId: string) => void
 }) {
   const { request, user } = useSession()
   const [confirming, setConfirming] = useState(false)
@@ -28,8 +30,9 @@ export function TaskCard({
 
   // The list refreshes every minute; meanwhile a task past its deadline is
   // shown as expired and can no longer be completed.
-  const isDispatch = task.kind === 'DISPATCH'
-  // Dispatch tasks never become "incomplete": they stay pending, overdue.
+  // Dispatch and discount approval tasks are completed by their own flow and
+  // never become "incomplete": they stay pending, overdue.
+  const isDispatch = task.kind === 'DISPATCH' || task.kind === 'DISCOUNT_APPROVAL'
   const expiredLocally = !isDispatch && task.status === 'pending' && new Date(task.dueAt).getTime() <= now
   const status = expiredLocally ? 'incomplete' : task.status
   const overdue = isDispatch && status === 'pending' && new Date(task.dueAt).getTime() <= now
@@ -82,7 +85,15 @@ export function TaskCard({
         {error ? <p className="field-error">{error}</p> : null}
       </div>
 
-      {isDispatch && task.dispatchId && onOpenDispatch ? (
+      {task.kind === 'DISCOUNT_APPROVAL' && task.discountRequest && onOpenQuote ? (
+        <div className="task-actions">
+          <button type="button" className="button" onClick={() => onOpenQuote(task.discountRequest!.quote.id)}>
+            {status === 'pending' ? 'Revisar y responder' : `Ver ${task.discountRequest.quote.number}`}
+          </button>
+        </div>
+      ) : null}
+
+      {task.kind === 'DISPATCH' && task.dispatchId && onOpenDispatch ? (
         <div className="task-actions">
           <button type="button" className="button" onClick={() => onOpenDispatch(task.dispatchId!)}>
             {status === 'pending' ? 'Abrir despacho' : 'Ver despacho'}

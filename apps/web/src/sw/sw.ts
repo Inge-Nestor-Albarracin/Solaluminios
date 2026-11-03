@@ -54,6 +54,8 @@ const MESSAGES: Record<string, { body: string; view: View }> = {
   'dispatch-incident': { body: 'Hay una incidencia en un despacho. Revísala en la aplicación.', view: 'dispatches' },
   'dispatch-confirmed': { body: 'Se confirmó la salida de un despacho de tu orden.', view: 'sales' },
   'dispatch-overdue': { body: 'Un despacho está atrasado. Revísalo en la aplicación.', view: 'dispatches' },
+  'discount-requested': { body: 'Te pidieron autorizar un descuento. Revísalo en Tareas.', view: 'tasks' },
+  'discount-resolved': { body: 'Respondieron tu solicitud de descuento. Revisa la cotización.', view: 'sales' },
 }
 const FALLBACK = { body: 'Tienes un aviso nuevo en Solualuminios.', view: 'home' as View }
 const ALLOWED_VIEWS = new Set<View>(['home', 'tasks', 'sales', 'dispatches'])

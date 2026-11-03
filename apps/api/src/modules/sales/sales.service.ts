@@ -5,18 +5,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { MaterialOrigin, PaymentMethod, PaymentStatus, Prisma, SalesOrderStatus } from '../../generated/prisma/client.js';
+import type { MaterialOrigin, PaymentMethod, PaymentStatus, Prisma, QuoteStatus, SalesOrderStatus } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { RetryableException } from '../../infrastructure/http/retryable.js';
 import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
-import { Decimal, dec, sum } from '../../shared/money.js';
+import { Decimal, dec } from '../../shared/money.js';
 import type { SafeUser } from '../auth/auth.types.js';
 import { cancelOpenDispatches } from '../dispatch/dispatch-cancel.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
+import { enqueue } from '../notifications/outbox.js';
 import type {
   ConfirmOrderDto,
   ConvertQuoteDto,
   CustomerQueryDto,
+  DiscountRequestDto,
   ListQueryDto,
   QuoteLineDto,
   SalePriceQueryDto,
@@ -24,7 +26,14 @@ import type {
   SaveQuoteDto,
   UpdateOrderLineDto,
 } from './dto/sales.dto.js';
-import { lineAmounts } from './pricing.js';
+import {
+  GLOBAL_DISCOUNT_MIN,
+  SELLER_GLOBAL_DISCOUNT_LIMIT,
+  documentTotals,
+  lineAmounts,
+  withGlobalDiscount,
+  type LineAmounts,
+} from './pricing.js';
 import { renderSalesPdf } from './sales-pdf.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
 
@@ -86,6 +95,15 @@ function forViewer<T extends object>(document: T, user: SafeUser): T {
 const COLLECTED_LATER: readonly PaymentMethod[] = ['PARTIAL', 'CREDIT'];
 
 const authorSelect = { select: { id: true, name: true } } as const;
+
+// Time the chosen administrator has to answer a discount request. After it the
+// task stays pending, flagged as overdue (it is never lost).
+const DISCOUNT_ANSWER_HOURS = 24;
+const DISCOUNT_STATUS = { PENDING: 'pendiente', APPROVED: 'aprobada', REJECTED: 'rechazada', CANCELLED: 'cancelada' } as const;
+// «2,5» for messages and task titles.
+const percentText = (value: Decimal) => Number(value.toString()).toLocaleString('es-CO', { maximumFractionDigits: 2 });
+const moneyText = (value: Decimal) =>
+  new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 2 }).format(Number(value.toString()));
 const ORDER_STATUS = {
   DRAFT: 'Por confirmar',
   PENDING_SUPPLY: 'Pendiente de abastecimiento',
@@ -203,15 +221,64 @@ export class SalesService {
         customer: true,
         order: { select: { id: true, number: true } },
         createdBy: { select: { id: true, name: true } },
+        discountRequests: {
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 10,
+          include: { requestedBy: authorSelect, approver: authorSelect },
+        },
       },
     });
     // Same answer for "does not exist" and "not yours".
     if (!quote) throw new NotFoundException('La cotización no existe');
-    if (user.role === 'ADMIN') return quote;
+    const limit = user.role === 'ADMIN' ? new Decimal(100) : await this.sellerLimit(this.prisma, quote.id);
+    // The open request shows what the quote would become if approved.
+    const discountRequests = quote.discountRequests.map((request) => ({
+      ...request,
+      projected: request.status === 'PENDING' ? documentTotals(withGlobalDiscount(quote.lines, request.requestedPercent)) : null,
+    }));
+    const withRequests = { ...quote, discountRequests, globalDiscountLimit: limit.toString() };
+    if (user.role === 'ADMIN') return withRequests;
     return {
-      ...quote,
+      ...withRequests,
       lines: quote.lines.map(({ pricingMethod: _method, pricingPercent: _percent, costBasis: _cost, costLotId: _lot, priceReason: _reason, ...line }) => line),
     };
+  }
+
+  // Highest global discount SALES may apply to this quote by itself: its own
+  // limit, or the largest one an administrator approved for it.
+  private async sellerLimit(client: Tx | PrismaService, quoteId: string | null) {
+    if (!quoteId) return SELLER_GLOBAL_DISCOUNT_LIMIT;
+    const approved = await client.quoteDiscountRequest.aggregate({ where: { quoteId, status: 'APPROVED' }, _max: { requestedPercent: true } });
+    const max = approved._max.requestedPercent;
+    return max && max.greaterThan(SELLER_GLOBAL_DISCOUNT_LIMIT) ? max : SELLER_GLOBAL_DISCOUNT_LIMIT;
+  }
+
+  // Validates the global discount of a save: 0, or 0.1–100 %; SALES only up
+  // to its limit for this quote.
+  private async globalDiscount(tx: Tx, quoteId: string | null, value: string | undefined, user: SafeUser) {
+    const percent = dec(value ?? '0');
+    if (percent.isZero()) return percent;
+    if (percent.lessThan(GLOBAL_DISCOUNT_MIN) || percent.greaterThan(100)) {
+      throw new BadRequestException('El descuento global va de 0,1 % a 100 % (0 = sin descuento global)');
+    }
+    if (user.role === 'ADMIN') return percent;
+    const limit = await this.sellerLimit(tx, quoteId);
+    if (percent.greaterThan(limit)) {
+      throw new ForbiddenException(
+        `Puedes aplicar hasta ${percentText(limit)} % de descuento global. Para ${percentText(percent)} % envía una solicitud de autorización a un administrador.`,
+      );
+    }
+    return percent;
+  }
+
+  // Locks the quote row; SALES only reaches its own quotes (404 otherwise).
+  private async lockQuote(tx: Tx, id: string, user: SafeUser) {
+    const rows = await tx.$queryRaw<{ status: QuoteStatus; createdById: string }[]>`
+      SELECT status, "createdById" FROM "quotes" WHERE id = ${id} FOR UPDATE`;
+    if (rows.length === 0 || (user.role !== 'ADMIN' && rows[0].createdById !== user.id)) {
+      throw new NotFoundException('La cotización no existe');
+    }
+    return rows[0];
   }
 
   async createQuote(dto: SaveQuoteDto, user: SafeUser) {
@@ -229,7 +296,7 @@ export class SalesService {
           createdById: user.id,
         },
       });
-      await this.writeQuoteLines(tx, quote.id, dto.lines);
+      await this.writeQuoteLines(tx, quote.id, dto.lines, await this.globalDiscount(tx, null, dto.globalDiscountPercent, user));
       return quote.id;
     });
     return this.getQuote(id, user);
@@ -239,12 +306,9 @@ export class SalesService {
   // quotes are never recalculated silently afterwards.
   async updateQuote(id: string, dto: SaveQuoteDto, user: SafeUser) {
     await this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{ status: string; createdById: string }[]>`
-        SELECT status, "createdById" FROM "quotes" WHERE id = ${id} FOR UPDATE`;
-      if (rows.length === 0 || (user.role !== 'ADMIN' && rows[0].createdById !== user.id)) {
-        throw new NotFoundException('La cotización no existe');
-      }
-      if (rows[0].status !== 'DRAFT') throw new ConflictException('Solo se puede modificar una cotización en borrador');
+      const locked = await this.lockQuote(tx, id, user);
+      if (locked.status !== 'DRAFT') throw new ConflictException('Solo se puede modificar una cotización en borrador');
+      const globalDiscount = await this.globalDiscount(tx, id, dto.globalDiscountPercent, user);
       const customer = await this.requireCustomer(tx, dto.customerId);
       await tx.quoteLine.deleteMany({ where: { quoteId: id } });
       await tx.quote.update({
@@ -258,17 +322,20 @@ export class SalesService {
           paymentTerms: dto.paymentTerms || null,
         },
       });
-      await this.writeQuoteLines(tx, id, dto.lines);
+      await this.writeQuoteLines(tx, id, dto.lines, globalDiscount);
     });
     return this.getQuote(id, user);
   }
 
+  // Also withdraws an open discount request (and its administrator's task).
   async cancelQuote(id: string, user: SafeUser) {
-    const { count } = await this.prisma.quote.updateMany({
-      where: { id, status: 'DRAFT', ...this.quoteScope(user) },
-      data: { status: 'CANCELLED' },
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockQuote(tx, id, user);
+      if (locked.status !== 'DRAFT') throw new ConflictException('La cotización no existe o ya no está en borrador');
+      await tx.quote.update({ where: { id }, data: { status: 'CANCELLED' } });
+      const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, status: 'PENDING' } });
+      if (pending) await this.closeDiscountRequest(tx, pending.id, 'CANCELLED', null, user);
     });
-    if (count === 0) throw new ConflictException('La cotización no existe o ya no está en borrador');
     return this.getQuote(id, user);
   }
 
@@ -279,8 +346,9 @@ export class SalesService {
     return customer;
   }
 
-  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[]) {
-    const totals = { subtotal: [] as Decimal[], discount: [] as Decimal[], tax: [] as Decimal[], total: [] as Decimal[] };
+  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[], globalDiscountPercent: Decimal) {
+    const rows: Omit<Prisma.QuoteLineUncheckedCreateInput, keyof LineAmounts>[] = [];
+    const bases: (LineAmounts & { taxRatePercent: Decimal })[] = [];
     for (const [index, line] of lines.entries()) {
       const reference = await tx.reference.findUnique({ where: { id: line.referenceId } });
       if (!reference?.active) throw new BadRequestException(`Renglón ${index + 1}: la referencia no existe o está inactiva`);
@@ -307,39 +375,173 @@ export class SalesService {
         );
       }
       const unitPrice = price.unitPrice;
-      const amounts = lineAmounts(line.quantity, unitPrice, discountPercent, taxRatePercent);
-      totals.subtotal.push(amounts.lineSubtotal);
-      totals.discount.push(amounts.discountAmount);
-      totals.tax.push(amounts.taxAmount);
-      totals.total.push(amounts.lineTotal);
-      await tx.quoteLine.create({
-        data: {
-          quoteId,
-          lineNo: index + 1,
-          referenceId: line.referenceId,
-          finishId: line.finishId,
-          origin: line.origin,
-          supplierId: line.supplierId ?? null,
-          quantity: line.quantity,
-          pricingMethod: 'MARKUP_ON_COST',
-          pricingPercent: price.markupPercent,
-          costBasis: price.unitCost,
-          salePriceId: price.id,
-          unitPrice,
-          discountPercent,
-          taxRatePercent,
-          ...amounts,
-          referenceCode: reference.code,
-          referenceDescription: reference.description,
-          finishCode: finish.code,
-          finishDescription: finish.description,
-          supplierName,
-        },
+      bases.push({ ...lineAmounts(line.quantity, unitPrice, discountPercent, taxRatePercent), taxRatePercent });
+      rows.push({
+        quoteId,
+        lineNo: index + 1,
+        referenceId: line.referenceId,
+        finishId: line.finishId,
+        origin: line.origin,
+        supplierId: line.supplierId ?? null,
+        quantity: line.quantity,
+        pricingMethod: 'MARKUP_ON_COST',
+        pricingPercent: price.markupPercent,
+        costBasis: price.unitCost,
+        salePriceId: price.id,
+        unitPrice,
+        discountPercent,
+        taxRatePercent,
+        referenceCode: reference.code,
+        referenceDescription: reference.description,
+        finishCode: finish.code,
+        finishDescription: finish.description,
+        supplierName,
       });
     }
-    await tx.quote.update({
-      where: { id: quoteId },
-      data: { subtotal: sum(totals.subtotal), discountTotal: sum(totals.discount), taxTotal: sum(totals.tax), total: sum(totals.total) },
+    // The global discount needs every line: it is split over them by base.
+    const amounts = withGlobalDiscount(bases, globalDiscountPercent);
+    for (const [index, row] of rows.entries()) await tx.quoteLine.create({ data: { ...row, ...amounts[index] } });
+    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts), globalDiscountPercent } });
+  }
+
+  // Applies a global discount to the saved lines (prices and line discounts
+  // stay as saved; only the global share, VAT and totals change).
+  private async reapplyGlobalDiscount(tx: Tx, quoteId: string, globalDiscountPercent: Decimal) {
+    const lines = await tx.quoteLine.findMany({ where: { quoteId }, orderBy: { lineNo: 'asc' } });
+    const amounts = withGlobalDiscount(lines, globalDiscountPercent);
+    for (const [index, line] of lines.entries()) {
+      const { globalDiscountAmount, taxAmount, lineTotal } = amounts[index];
+      await tx.quoteLine.update({ where: { id: line.id }, data: { globalDiscountAmount, taxAmount, lineTotal } });
+    }
+    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts), globalDiscountPercent } });
+  }
+
+  // --- Global discount requests -------------------------------------------------
+
+  // Administrators a seller may ask (active ADMIN users).
+  discountApprovers() {
+    return this.prisma.user.findMany({ where: { role: 'ADMIN', active: true }, select: { id: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] });
+  }
+
+  // SALES asks the administrator it chooses for a global discount above its
+  // limit. It becomes a task of that administrator; the quote keeps its
+  // current discount until the request is approved. One open request per
+  // quote: repeating the same request (double click, lost answer) is a no-op.
+  async requestDiscount(quoteId: string, dto: DiscountRequestDto, user: SafeUser) {
+    if (user.role === 'ADMIN') {
+      throw new BadRequestException('Como administrador aplicas el descuento global directamente al guardar la cotización');
+    }
+    const percent = dec(dto.percent);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const locked = await this.lockQuote(tx, quoteId, user);
+        if (locked.status !== 'DRAFT') throw new ConflictException('Solo se pide descuento para una cotización vigente (borrador)');
+        const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId, status: 'PENDING' } });
+        if (pending) {
+          if (pending.requestedPercent.equals(percent) && pending.approverId === dto.approverId) return;
+          throw new ConflictException('Esta cotización ya tiene una solicitud de descuento pendiente; cancélala para enviar otra');
+        }
+        if (percent.greaterThan(100)) throw new BadRequestException('El descuento global no puede superar 100 %');
+        const limit = await this.sellerLimit(tx, quoteId);
+        if (!percent.greaterThan(limit)) {
+          throw new BadRequestException(`Hasta ${percentText(limit)} % aplicas el descuento global tú mismo; la solicitud es para un descuento mayor`);
+        }
+        const approver = await tx.user.findUnique({ where: { id: dto.approverId }, select: { role: true, active: true } });
+        if (!approver || approver.role !== 'ADMIN' || !approver.active) {
+          throw new BadRequestException('Elige un administrador activo para autorizar el descuento');
+        }
+        const quote = await tx.quote.findUniqueOrThrow({ where: { id: quoteId }, select: { number: true, customerName: true, total: true } });
+        const request = await tx.quoteDiscountRequest.create({
+          data: { quoteId, requestedPercent: percent, reason: dto.reason || null, requestedById: user.id, approverId: dto.approverId },
+        });
+        const now = new Date();
+        await tx.task.create({
+          data: {
+            title: `Autorizar descuento global de ${percentText(percent)} % · ${quote.number}`,
+            description:
+              `${user.name} pide un descuento global de ${percentText(percent)} % en la cotización ${quote.number} ` +
+              `para ${quote.customerName} (total actual ${moneyText(quote.total)}).${dto.reason ? ` Motivo: ${dto.reason}` : ''}`,
+            dueAt: new Date(now.getTime() + DISCOUNT_ANSWER_HOURS * 3_600_000),
+            createdAt: now,
+            assigneeId: dto.approverId,
+            createdById: user.id,
+            kind: 'DISCOUNT_APPROVAL',
+            discountRequestId: request.id,
+          },
+        });
+        await enqueue(tx, [{ userId: dto.approverId, kind: 'discount-requested', dedupeKey: `discount-requested:${request.id}` }]);
+        await audit(tx, {
+          entity: 'Quote',
+          entityId: quoteId,
+          action: 'DISCOUNT_REQUESTED',
+          userId: user.id,
+          reason: dto.reason || undefined,
+          data: { requestId: request.id, percent: percent.toString(), approverId: dto.approverId },
+        });
+      });
+    } catch (error) {
+      // Only one open request per quote (unique index), even if two arrive at once.
+      if (isUniqueViolation(error)) throw new ConflictException('Esta cotización ya tiene una solicitud de descuento pendiente');
+      throw error;
+    }
+    return this.getQuote(quoteId, user);
+  }
+
+  // Only the administrator the seller chose answers. Approving applies the
+  // discount to the quote at once. Repeating the same answer is a no-op.
+  async resolveDiscount(quoteId: string, requestId: string, decision: 'APPROVED' | 'REJECTED', resolution: string | undefined, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockQuote(tx, quoteId, user);
+      const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId } });
+      if (!request) throw new NotFoundException('La solicitud de descuento no existe');
+      if (request.approverId !== user.id) {
+        throw new ForbiddenException('Solo el administrador elegido por el vendedor responde esta solicitud');
+      }
+      if (request.status === decision) return;
+      if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
+      if (locked.status !== 'DRAFT') throw new ConflictException('La cotización ya no está vigente');
+      await this.closeDiscountRequest(tx, request.id, decision, decision === 'REJECTED' ? resolution || null : null, user);
+      if (decision === 'APPROVED') await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent);
+      await enqueue(tx, [{ userId: request.requestedById, kind: 'discount-resolved', dedupeKey: `discount-resolved:${request.id}` }]);
+    });
+    return this.getQuote(quoteId, user);
+  }
+
+  // The seller (or an administrator) withdraws an open request.
+  async cancelDiscountRequest(quoteId: string, requestId: string, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockQuote(tx, quoteId, user);
+      const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId } });
+      if (!request) throw new NotFoundException('La solicitud de descuento no existe');
+      if (request.status === 'CANCELLED') return;
+      if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
+      await this.closeDiscountRequest(tx, request.id, 'CANCELLED', null, user);
+    });
+    return this.getQuote(quoteId, user);
+  }
+
+  // Closes a PENDING request (the quote is locked by the caller) and its task:
+  // answered → task completed; cancelled → task cancelled.
+  private async closeDiscountRequest(
+    tx: Tx,
+    requestId: string,
+    status: 'APPROVED' | 'REJECTED' | 'CANCELLED',
+    resolution: string | null,
+    user: SafeUser,
+  ) {
+    const now = new Date();
+    const request = await tx.quoteDiscountRequest.update({ where: { id: requestId }, data: { status, resolvedAt: now, resolution } });
+    await tx.task.updateMany({
+      where: { discountRequestId: requestId, completedAt: null, cancelledAt: null },
+      data: status === 'CANCELLED' ? { cancelledAt: now } : { completedAt: now },
+    });
+    await audit(tx, {
+      entity: 'Quote',
+      entityId: request.quoteId,
+      action: `DISCOUNT_${status}`,
+      userId: user.id,
+      reason: resolution ?? undefined,
+      data: { requestId, percent: request.requestedPercent.toString() },
     });
   }
 
@@ -364,6 +566,10 @@ export class SalesService {
         const existing = await tx.salesOrder.findUnique({ where: { quoteId: id }, select: { number: true } });
         if (existing) throw new ConflictException(`La cotización ya se convirtió en la orden ${existing.number}`);
         if (rows[0].status !== 'DRAFT') throw new ConflictException('Solo se convierte una cotización vigente (borrador)');
+        // The order must carry the discount the administrator decides on.
+        if (await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, status: 'PENDING' }, select: { id: true } })) {
+          throw new ConflictException('Hay una solicitud de descuento global pendiente: espera la respuesta del administrador o cancélala antes de convertir');
+        }
         const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
         // Quotes saved before the payment method existed must choose one first.
         if (!quote.paymentMethod) throw new ConflictException('Indica la forma de pago y guarda la cotización antes de convertirla en orden');
@@ -376,6 +582,8 @@ export class SalesService {
             currency: quote.currency,
             subtotal: quote.subtotal,
             discountTotal: quote.discountTotal,
+            globalDiscountPercent: quote.globalDiscountPercent,
+            globalDiscountAmount: quote.globalDiscountAmount,
             taxTotal: quote.taxTotal,
             total: quote.total,
             notes: quote.notes,
@@ -400,6 +608,7 @@ export class SalesService {
                 taxRatePercent: line.taxRatePercent,
                 lineSubtotal: line.lineSubtotal,
                 discountAmount: line.discountAmount,
+                globalDiscountAmount: line.globalDiscountAmount,
                 taxAmount: line.taxAmount,
                 lineTotal: line.lineTotal,
                 referenceCode: line.referenceCode,
@@ -632,6 +841,8 @@ export class SalesService {
       lines: quote.lines,
       subtotal: quote.subtotal,
       discountTotal: quote.discountTotal,
+      globalDiscountPercent: quote.globalDiscountPercent,
+      globalDiscountAmount: quote.globalDiscountAmount,
       taxTotal: quote.taxTotal,
       total: quote.total,
       notes: quote.notes,
@@ -654,6 +865,8 @@ export class SalesService {
       lines: order.lines,
       subtotal: order.subtotal,
       discountTotal: order.discountTotal,
+      globalDiscountPercent: order.globalDiscountPercent,
+      globalDiscountAmount: order.globalDiscountAmount,
       taxTotal: order.taxTotal,
       total: order.total,
       notes: order.notes,

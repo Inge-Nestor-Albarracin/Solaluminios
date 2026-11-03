@@ -10,6 +10,7 @@ import {
   PAYMENT_STATUS_LABEL,
   formatMoney,
   paymentLabel,
+  totalsParts,
   type PaymentStatus,
   type SalesOrder,
   type Shortage,
@@ -201,7 +202,7 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
           </table>
         </div>
         <p className="quote-totals">
-          Subtotal {formatMoney(data.subtotal)} · Descuentos {formatMoney(data.discountTotal)} · IVA {formatMoney(data.taxTotal)} · <strong>Total {formatMoney(data.total)}</strong>
+          {totalsParts(data)} · <strong>Total {formatMoney(data.total)}</strong>
         </p>
       </section>
 

@@ -23,6 +23,8 @@ import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 const DECIMAL_MESSAGE = 'debe ser un número decimal escrito como texto';
+const GLOBAL_DISCOUNT_PATTERN = /^\d{1,3}(\.\d{1,2})?$/;
+const GLOBAL_DISCOUNT_MESSAGE = 'El descuento global es un porcentaje con hasta 2 decimales, p. ej. "2.5"';
 
 export class SaveCustomerDto {
   @Transform(trim)
@@ -167,12 +169,46 @@ export class SaveQuoteDto {
   @MaxLength(300)
   paymentTerms?: string;
 
+  // Discount on the whole quote, after line discounts and before VAT: 0 or
+  // 0.1–100 % with up to 2 decimals. SALES: up to 3 % (or what an
+  // administrator approved for this quote). Omitted = 0.
+  @IsOptional()
+  @Matches(GLOBAL_DISCOUNT_PATTERN, { message: GLOBAL_DISCOUNT_MESSAGE })
+  globalDiscountPercent?: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'La cotización necesita al menos un renglón' })
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => QuoteLineDto)
   lines!: QuoteLineDto[];
+}
+
+// A seller asks the administrator they choose to authorise a global
+// discount above their own limit.
+export class DiscountRequestDto {
+  @Matches(GLOBAL_DISCOUNT_PATTERN, { message: GLOBAL_DISCOUNT_MESSAGE })
+  percent!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Elige el administrador que autorizará el descuento' })
+  @MaxLength(50)
+  approverId!: string;
+
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class ResolveDiscountDto {
+  // Optional explanation when the administrator rejects the request.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  resolution?: string;
 }
 
 export class ListQueryDto extends PaginationQueryDto {

@@ -321,7 +321,7 @@ function Workspace() {
           <BundlesView key={remountKey} navigate={navigate} initialCatalog={view.catalog} />
         ) : null}
         {view.name === 'summary' ? <SummaryView navigate={navigate} /> : null}
-        {view.name === 'tasks' ? <TasksView onChanged={reloadTaskSummary} onOpenDispatch={(id) => navigate({ name: 'dispatch', id })} /> : null}
+        {view.name === 'tasks' ? <TasksView onChanged={reloadTaskSummary} onOpenDispatch={(id) => navigate({ name: 'dispatch', id })} onOpenQuote={(id) => navigate({ name: 'quote', id })} /> : null}
         {view.name === 'receive' && operator ? <ReceiveView navigate={navigate} /> : null}
         {view.name === 'sales' && canSell(user?.role) ? <SalesView key={view.tab ?? 'quotes'} navigate={navigate} initialTab={view.tab} /> : null}
         {view.name === 'quote' ? <QuoteView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}

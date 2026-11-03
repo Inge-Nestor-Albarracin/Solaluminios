@@ -46,6 +46,16 @@ describe('sales PDF', () => {
     expect(visibleText(await renderSalesPdf({ ...data, payment: null })).includes('FORMA DE PAGO')).toBe(false);
   });
 
+  it('prints the global discount apart from the line discounts, only when there is one', async () => {
+    const text = visibleText(
+      await renderSalesPdf({ ...data, subtotal: '300118.00', globalDiscountPercent: '5', globalDiscountAmount: '15005.90', taxTotal: '54171.30', total: '339283.40' }),
+    );
+    for (const word of ['Descuentos por renglón', 'Descuento global (5 %)', 'ya incluye el descuento global de 5 %']) expect(text.includes(word), word).toBe(true);
+    const plain = visibleText(await renderSalesPdf(data));
+    expect(plain.includes('Descuento global')).toBe(false);
+    expect(plain.includes('Descuentos')).toBe(true);
+  });
+
   it('shows the company, NIT and line, never the origin of the material', async () => {
     const pdf = await renderSalesPdf(data);
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');

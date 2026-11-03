@@ -21,11 +21,18 @@ export interface Task {
   status: TaskStatus
   assignee: TaskPerson
   createdBy: TaskPerson
-  // DISPATCH tasks are completed by confirming their dispatch and stay
-  // pending (overdue) after the deadline.
-  kind?: 'GENERAL' | 'DISPATCH'
+  // DISPATCH tasks are completed by confirming their dispatch, and
+  // DISCOUNT_APPROVAL tasks by answering the request from the quote; both
+  // stay pending (overdue) after the deadline.
+  kind?: 'GENERAL' | 'DISPATCH' | 'DISCOUNT_APPROVAL'
   dispatchId?: string | null
   dispatch?: { id: string; number: string; status: 'OPEN' | 'CONFIRMED' | 'CANCELLED' } | null
+  discountRequest?: {
+    id: string
+    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
+    requestedPercent: string
+    quote: { id: string; number: string }
+  } | null
   overdue?: boolean
 }
 

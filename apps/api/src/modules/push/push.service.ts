@@ -44,6 +44,8 @@ const MESSAGES: Record<PushKind, PushMessageOptions> = {
   'dispatch-incident': { ttlSeconds: 4 * 3600, urgency: 'high', topic: 'dispatch-incident' },
   'dispatch-confirmed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'dispatch-confirmed' },
   'dispatch-overdue': { ttlSeconds: 12 * 3600, urgency: 'normal', topic: 'dispatch-overdue' },
+  'discount-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-requested' },
+  'discount-resolved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-resolved' },
 };
 
 export interface DeliveryReport {

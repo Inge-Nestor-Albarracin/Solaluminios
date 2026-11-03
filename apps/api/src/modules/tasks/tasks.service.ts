@@ -29,18 +29,21 @@ const taskInclude = {
   createdBy: personSelect,
   // Dispatch tasks: link only; requirements come from the dispatch itself.
   dispatch: { select: { id: true, number: true, status: true } },
+  // Discount approval tasks: the request and its quote (no prices here).
+  discountRequest: { select: { id: true, status: true, requestedPercent: true, quote: { select: { id: true, number: true } } } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed
 // before its deadline leaves the pending list and becomes "incomplete". It is
 // never deleted, so it stays in the incomplete history.
 //
-// DISPATCH tasks are different: they complete only when their dispatch is
-// confirmed, stay "pending" (flagged overdue) after the deadline instead of
-// becoming incomplete, and leave every list when cancelled with the dispatch.
+// DISPATCH and DISCOUNT_APPROVAL tasks are different: they complete only
+// through their own flow (confirming the dispatch / answering the discount
+// request), stay "pending" (flagged overdue) after the deadline instead of
+// becoming incomplete, and leave every list when cancelled.
 export function taskStatus(task: Pick<Task, 'completedAt' | 'dueAt'> & Partial<Pick<Task, 'kind' | 'cancelledAt'>>, now: Date): TaskStatus {
   if (task.completedAt) return 'completed';
-  if (task.kind === 'DISPATCH') return 'pending';
+  if (task.kind && task.kind !== 'GENERAL') return 'pending';
   return task.dueAt.getTime() <= now.getTime() ? 'incomplete' : 'pending';
 }
 
@@ -54,7 +57,7 @@ function statusWhere(status: TaskStatus, now: Date): Prisma.TaskWhereInput {
       return {
         completedAt: null,
         cancelledAt: null,
-        OR: [{ kind: 'DISPATCH' }, { dueAt: { gt: now } }],
+        OR: [{ kind: { not: 'GENERAL' } }, { dueAt: { gt: now } }],
       };
   }
 }
@@ -202,6 +205,11 @@ export class TasksService {
         'Las tareas de despacho se completan al confirmar la salida del despacho, no desde aquí',
       );
     }
+    if (task.kind === 'DISCOUNT_APPROVAL') {
+      throw new ConflictException(
+        'Las solicitudes de descuento se completan al aprobarlas o rechazarlas desde la cotización',
+      );
+    }
     if (task.assigneeId !== user.id) {
       throw new ForbiddenException('Solo la persona asignada puede completar la tarea');
     }
@@ -230,7 +238,7 @@ function withStatus<T extends Pick<Task, 'completedAt' | 'dueAt'> & Partial<Pick
   return {
     ...task,
     status: taskStatus(task, now),
-    overdue: task.kind === 'DISPATCH' && !task.completedAt && task.dueAt.getTime() <= now.getTime(),
+    overdue: task.kind !== undefined && task.kind !== 'GENERAL' && !task.completedAt && task.dueAt.getTime() <= now.getTime(),
   };
 }
 

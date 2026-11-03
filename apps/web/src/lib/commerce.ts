@@ -70,12 +70,42 @@ export interface QuoteLine {
   taxRatePercent: string
   lineSubtotal: string
   discountAmount: string
+  // Share of the document's global discount (VAT and lineTotal come after it).
+  globalDiscountAmount: string
   taxAmount: string
   lineTotal: string
   referenceCode: string
   referenceDescription: string | null
   finishCode: string
   finishDescription: string | null
+}
+
+// Global discount of a quote: SALES applies up to this percentage by itself
+// (the API enforces it and returns the limit of each quote, which grows to
+// what an administrator approved).
+export const SELLER_GLOBAL_DISCOUNT_LIMIT = 3
+
+export type DiscountRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
+
+export const DISCOUNT_REQUEST_STATUS_LABEL: Record<DiscountRequestStatus, string> = {
+  PENDING: 'Pendiente de autorización',
+  APPROVED: 'Aprobada',
+  REJECTED: 'Rechazada',
+  CANCELLED: 'Cancelada',
+}
+
+export interface DiscountRequest {
+  id: string
+  requestedPercent: string
+  reason: string | null
+  status: DiscountRequestStatus
+  resolution: string | null
+  createdAt: string
+  resolvedAt: string | null
+  requestedBy: { id: string; name: string }
+  approver: { id: string; name: string }
+  // PENDING only: the quote's totals if it is approved.
+  projected: { globalDiscountAmount: string; taxTotal: string; total: string } | null
 }
 
 export interface Quote {
@@ -87,7 +117,13 @@ export interface Quote {
   validUntil: string | null
   notes: string | null
   subtotal: string
+  // Line discounts; the global discount has its own fields.
   discountTotal: string
+  globalDiscountPercent: string
+  globalDiscountAmount: string
+  // Highest global discount the viewer may apply without asking.
+  globalDiscountLimit: string
+  discountRequests: DiscountRequest[]
   taxTotal: string
   total: string
   createdAt: string
@@ -175,6 +211,8 @@ export interface SalesOrder {
   convertedBy?: { id: string; name: string } | null
   subtotal: string
   discountTotal: string
+  globalDiscountPercent: string
+  globalDiscountAmount: string
   taxTotal: string
   total: string
   createdAt: string
@@ -303,6 +341,23 @@ export function formatUnitCost(value: string | number | null | undefined): strin
   if (value === null || value === undefined || value === '') return '—'
   const number = Number(value)
   return Number.isFinite(number) ? COP_UNIT_COST.format(number) : String(value)
+}
+
+// «5 %», «2,5 %».
+export function formatPercent(value: string | number): string {
+  return `${Number(value).toLocaleString('es-CO', { maximumFractionDigits: 2 })} %`
+}
+
+// Totals line of a quote or order: subtotal, line discounts, global discount
+// (only when there is one), VAT and total.
+export function totalsParts(document: { subtotal: string; discountTotal: string; globalDiscountPercent: string; globalDiscountAmount: string; taxTotal: string }) {
+  const global = Number(document.globalDiscountAmount) > 0
+  return [
+    `Subtotal ${formatMoney(document.subtotal)}`,
+    `${global ? 'Descuentos por renglón' : 'Descuentos'} ${formatMoney(document.discountTotal)}`,
+    ...(global ? [`Descuento global ${formatPercent(document.globalDiscountPercent)} −${formatMoney(document.globalDiscountAmount)}`] : []),
+    `IVA ${formatMoney(document.taxTotal)}`,
+  ].join(' · ')
 }
 
 export function materialLabel(line: { referenceCode: string; finishCode: string; finishDescription?: string | null }) {

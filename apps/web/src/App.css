@@ -3868,6 +3868,26 @@ button.doc-row:focus-visible {
   color: var(--ink);
 }
 
+/* Global discount requests of a quote: an open one stands out. */
+.discount-requests.has-pending {
+  border-color: var(--warning-border);
+  border-left-width: 4px;
+}
+
+.discount-request p {
+  margin: 0 0 8px;
+}
+
+.discount-percent {
+  font-size: 1.25em;
+}
+
+.discount-history {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
 /* Payment state of an abono / credit order. */
 .badge-paid {
   margin-left: 10px;

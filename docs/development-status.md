@@ -1678,6 +1678,107 @@ la base de pruebas; **pendiente en desarrollo**. Contenido:
 - El traslado entre bodegas sigue siendo el existente: el aviso indica
   trasladar el paquete al almacén del despacho y abrirlo allí.
 
+## Descuento global de cotizaciones y autorización (30/10/2026)
+
+**Objetivo.** Descuento sobre toda la cotización, conservando el descuento por
+renglón. El vendedor aplica solo de 0,1 % a 3 %; para más envía una solicitud
+a un administrador que él elige, que la recibe como tarea. Si la aprueba, el
+descuento se aplica.
+
+**Cálculo** (`sales/pricing.ts`, pruebas en `pricing.spec.ts`).
+- Orden: subtotal → descuento del renglón → descuento global → IVA.
+- Global = base (subtotal − descuentos de renglón) × %, redondeado al centavo.
+  Se reparte entre renglones en proporción a su base (`allocate`, suma exacta),
+  y el IVA de cada renglón se calcula sobre lo que queda (las tasas pueden
+  diferir).
+- Cada renglón guarda su parte (`globalDiscountAmount`); su `taxAmount` y
+  `lineTotal` ya la incluyen. Documento: `discountTotal` = descuentos de
+  renglón; `globalDiscountPercent` / `globalDiscountAmount` aparte;
+  total = subtotal − descuentos de renglón − global + IVA = Σ totales de
+  renglón.
+- Aprobar recalcula desde los valores guardados de los renglones, sin volver a
+  leer precios. La orden copia los campos de la cotización y sus renglones.
+
+**Reglas.**
+- Valores válidos: 0 (sin descuento) o de 0,1 % a 100 %, hasta 2 decimales
+  (DTO y CHECK `quotes_global_discount` / `sales_orders_global_discount`).
+- SALES: hasta 3 % (`SELLER_GLOBAL_DISCOUNT_LIMIT`), o hasta el mayor
+  porcentaje aprobado para esa cotización. Más → 403 con indicación de
+  solicitar autorización. ADMIN aplica cualquier valor válido.
+- Solicitud (`POST /quotes/:id/discount-requests` {percent, approverId,
+  reason?}): solo SALES sobre su cotización vigente; el porcentaje debe superar
+  su límite; el aprobador debe ser ADMIN activo.
+  - Crea la tarea `DISCOUNT_APPROVAL` del administrador (vence en 24 h; después
+    queda pendiente como atrasada, igual que las de despacho) y el aviso push
+    `discount-requested` por la outbox.
+  - Una sola solicitud pendiente por cotización (índice único parcial). Repetir
+    la misma no crea otra; pedir otra distinta → 409 hasta cancelarla.
+  - La cotización conserva su descuento actual mientras tanto y **no se
+    convierte en orden** con una solicitud pendiente (409).
+- Respuesta: solo el administrador elegido aprueba o rechaza
+  (`.../:requestId/approve|reject`). Otro administrador → 403.
+  - Aprobar aplica el porcentaje y recalcula; rechazar acepta un motivo
+    opcional.
+  - Ambas completan la tarea y avisan al vendedor (`discount-resolved`).
+  - Repetir la misma respuesta no cambia nada; contradecirla → 409.
+- Cancelar (`.../:requestId/cancel`): el vendedor dueño o un ADMIN. Cancelar
+  la cotización también cancela su solicitud abierta. En ambos casos la tarea
+  queda cancelada y sale de pendientes.
+- `GET /sales/discount-approvers`: administradores activos (id y nombre).
+- Todo bajo bloqueo de la fila de la cotización; auditoría
+  `DISCOUNT_REQUESTED/APPROVED/REJECTED/CANCELLED`.
+
+**Migración** `20261030160000_quote_global_discount` (revisada; aplicada solo a
+la BD de pruebas):
+- columnas con valor 0 en quotes, sales_orders y sus renglones (los documentos
+  existentes no cambian);
+- tabla `quote_discount_requests` con CHECK de estado y longitudes, y sin
+  autoaprobación;
+- `TaskKind.DISCOUNT_APPROVAL`, `tasks.discountRequestId`, CHECK
+  `tasks_discount_request_link` y `tasks_completed_before_due` recreado
+  (comparando `kind::text`) para que estas tareas se respondan después del
+  vencimiento.
+
+**Web.**
+- Cotización:
+  - campo «Descuento global (%)» con el límite del usuario;
+  - vista previa de totales con la misma regla de reparto;
+  - si supera el límite: selector de administrador, motivo y botón «Guardar y
+    solicitar autorización»;
+  - bloque de la solicitud: proyección del total si se aprueba, botones
+    Aprobar/Rechazar para el elegido, Cancelar para los demás, e historial;
+  - convertir deshabilitado con solicitud pendiente.
+- Tarea: botón «Revisar y responder» que abre la cotización.
+- Orden y PDF: «Descuentos por renglón» y «Descuento global (x %)» aparte, con
+  nota de que los totales por renglón ya lo incluyen.
+- Service worker: textos de los dos avisos nuevos.
+
+**Pruebas.**
+- API unitarias 43/43; e2e 172/172.
+- Suite nueva `quote-discounts.e2e-spec.ts` (9 pruebas): límites por rol,
+  cálculo y copia a la orden, flujo completo de solicitud/tarea/aprobación,
+  rechazo, cancelación, validaciones y cuatro carreras de 10 rondas:
+  - aprobar contra cancelar;
+  - dos solicitudes a la vez;
+  - aprobar contra una edición del vendedor;
+  - aprobar contra convertir.
+- Navegador (sufijo B51FEF, datos borrados por ID): 2,5 % aplicado con la
+  vista previa igual al servidor; solicitud de 6 % a la administradora
+  elegida; tarea recibida; aprobación con el total proyectado; rechazo de 8 %
+  con motivo; sin desbordamiento a 375 px.
+- Web: `tsc`, `oxlint` y build.
+
+**Límites y decisiones.**
+- El límite de 3 % aplica al descuento global. El descuento por renglón se
+  mantiene como estaba, sin límite por rol. Un vendedor podría dar descuentos
+  altos por renglón; si eso no se quiere, hay que extender la regla.
+- Una aprobación vale para la cotización aunque después cambien sus
+  renglones.
+- El vendedor puede bajar el porcentaje aprobado; para pasarlo, pide otra
+  autorización.
+- La pantalla de la cotización no se refresca sola: el vendedor ve la
+  respuesta al volver a abrirla (o por el aviso push).
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

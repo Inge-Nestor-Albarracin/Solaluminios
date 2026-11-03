@@ -4,15 +4,20 @@ import { CatalogSelectors } from '../components/CatalogSelectors'
 import { DownloadPdfButton } from '../components/DownloadPdfButton'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
+  DISCOUNT_REQUEST_STATUS_LABEL,
   ORIGIN_LABEL,
   PAYMENT_METHOD_LABEL,
   PAYMENT_TERMS_HINT,
   PRICING_LABEL,
+  SELLER_GLOBAL_DISCOUNT_LIMIT,
   formatMoney,
+  formatPercent,
   formatUnitCost,
   paymentLabel,
+  totalsParts,
   type AvailabilityGroup,
   type Customer,
+  type DiscountRequest,
   type MaterialOrigin,
   type PaymentMethod,
   type Quote,
@@ -56,6 +61,8 @@ interface Amounts {
   discount: number
   tax: number
   total: number
+  // IVA rate of the line, to recompute its VAT after the global discount.
+  taxRate: number
 }
 
 // Preview with the server's rule (subtotal = qty × price; discount on the
@@ -69,7 +76,135 @@ function lineAmounts(line: LineDraft, unitPrice: string | null): Amounts | null 
   const cents = Math.round(Number(unitPrice) * 100) * quantity
   const discountCents = Math.round((cents * Number(discount)) / 100)
   const taxCents = Math.round(((cents - discountCents) * Number(tax)) / 100)
-  return { subtotal: cents / 100, discount: discountCents / 100, tax: taxCents / 100, total: (cents - discountCents + taxCents) / 100 }
+  return { subtotal: cents / 100, discount: discountCents / 100, tax: taxCents / 100, total: (cents - discountCents + taxCents) / 100, taxRate: Number(tax) }
+}
+
+// 0, or 0.1–100 with up to 2 decimals (the API's rule).
+const GLOBAL_DISCOUNT = /^\d{1,3}(\.\d{1,2})?$/
+function validGlobalDiscount(value: string) {
+  if (!GLOBAL_DISCOUNT.test(value)) return false
+  const number = Number(value)
+  return number === 0 || (number >= 0.1 && number <= 100)
+}
+
+// Document preview with the global discount, as the server applies it: base
+// (after line discounts) × % rounded to cents, split over the lines by base
+// (largest remainders), and the IVA of each line on what is left.
+function documentPreview(lines: Amounts[], globalPercent: number) {
+  const bases = lines.map((line) => Math.round((line.subtotal - line.discount) * 100))
+  const baseTotal = bases.reduce((total, base) => total + base, 0)
+  const globalCents = Math.round((baseTotal * globalPercent) / 100)
+  const shares = bases.map(() => 0)
+  if (baseTotal > 0 && globalCents > 0) {
+    const raw = bases.map((base) => (globalCents * base) / baseTotal)
+    raw.forEach((value, index) => (shares[index] = Math.floor(value)))
+    let remaining = globalCents - shares.reduce((total, share) => total + share, 0)
+    const order = raw.map((value, index) => ({ index, fraction: value - Math.floor(value) })).sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+    for (const { index } of order) {
+      if (remaining <= 0) break
+      shares[index] += 1
+      remaining -= 1
+    }
+  }
+  const taxCents = lines.reduce((total, line, index) => total + Math.round(((bases[index] - shares[index]) * line.taxRate) / 100), 0)
+  const cents = (value: number) => (value / 100).toFixed(2)
+  return {
+    subtotal: cents(lines.reduce((total, line) => total + Math.round(line.subtotal * 100), 0)),
+    discountTotal: cents(lines.reduce((total, line) => total + Math.round(line.discount * 100), 0)),
+    globalDiscountPercent: String(globalPercent),
+    globalDiscountAmount: cents(globalCents),
+    taxTotal: cents(taxCents),
+    total: cents(baseTotal - globalCents + taxCents),
+  }
+}
+
+// Open or answered requests for a global discount above the seller's limit.
+// The administrator the seller chose approves or rejects here; the seller
+// (or any administrator) can withdraw an open one.
+function DiscountRequests({ quote, onChanged }: { quote: Quote; onChanged: () => void }) {
+  const { request, user } = useSession()
+  const [rejecting, setRejecting] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pending = quote.discountRequests.find((r) => r.status === 'PENDING')
+  const answered = quote.discountRequests.filter((r) => r.status !== 'PENDING').slice(0, 3)
+  if (!pending && answered.length === 0) return null
+
+  const act = async (target: DiscountRequest, action: 'approve' | 'reject' | 'cancel') => {
+    setBusy(true)
+    setError(null)
+    try {
+      await request(`/quotes/${encodeURIComponent(quote.id)}/discount-requests/${encodeURIComponent(target.id)}/${action}`, {
+        method: 'POST',
+        body: action === 'reject' && rejecting?.trim() ? { resolution: rejecting.trim() } : {},
+      })
+      setRejecting(null)
+      onChanged()
+    } catch (err) {
+      setError(describeError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className={`card discount-requests${pending ? ' has-pending' : ''}`}>
+      <h2 className="subtitle">{pending ? 'Descuento global por autorizar' : 'Solicitudes de descuento global'}</h2>
+      {pending ? (
+        <div className="discount-request">
+          <p>
+            <strong>{pending.requestedBy.name}</strong> pidió a <strong>{pending.approver.name}</strong> un descuento global de{' '}
+            <strong className="discount-percent">{formatPercent(pending.requestedPercent)}</strong> · {formatDateTime(pending.createdAt)}
+          </p>
+          {pending.reason ? <p className="cell-sub">Motivo: {pending.reason}</p> : null}
+          {pending.projected ? (
+            <p>
+              Si se aprueba: descuento global −{formatMoney(pending.projected.globalDiscountAmount)} · IVA {formatMoney(pending.projected.taxTotal)} ·{' '}
+              <strong>Total {formatMoney(pending.projected.total)}</strong> (hoy {formatMoney(quote.total)})
+            </p>
+          ) : null}
+          {user?.id === pending.approver.id ? (
+            rejecting !== null ? (
+              <div className="form-grid">
+                <Field label="Motivo del rechazo (opcional)">
+                  <input value={rejecting} maxLength={500} onChange={(e) => setRejecting(e.target.value)} />
+                </Field>
+                <div className="actions">
+                  <button type="button" className="button button-danger" disabled={busy} onClick={() => void act(pending, 'reject')}>Rechazar solicitud</button>
+                  <button type="button" className="text-button" disabled={busy} onClick={() => setRejecting(null)}>Volver</button>
+                </div>
+              </div>
+            ) : (
+              <div className="actions">
+                <button type="button" className="button" disabled={busy} onClick={() => void act(pending, 'approve')}>
+                  Aprobar {formatPercent(pending.requestedPercent)}
+                </button>
+                <button type="button" className="button button-secondary" disabled={busy} onClick={() => setRejecting('')}>Rechazar</button>
+              </div>
+            )
+          ) : (
+            <div className="actions">
+              <span className="cell-sub">Solo {pending.approver.name} puede aprobarla o rechazarla. Mientras tanto la cotización no se convierte en orden.</span>
+              <button type="button" className="text-button danger" disabled={busy} onClick={() => void act(pending, 'cancel')}>Cancelar solicitud</button>
+            </div>
+          )}
+        </div>
+      ) : null}
+      {answered.length > 0 ? (
+        <ul className="discount-history">
+          {answered.map((r) => (
+            <li key={r.id}>
+              {formatPercent(r.requestedPercent)} · <strong>{DISCOUNT_REQUEST_STATUS_LABEL[r.status]}</strong>
+              {r.status === 'CANCELLED' ? '' : ` por ${r.approver.name}`}
+              {r.resolvedAt ? ` · ${formatDateTime(r.resolvedAt)}` : ''}
+              {r.resolution ? ` · «${r.resolution}»` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {error ? <Notice kind="error">{error}</Notice> : null}
+    </section>
+  )
 }
 
 function LineEditor({
@@ -169,7 +304,11 @@ export function QuoteView({ id, navigate }: { id?: string; navigate: Navigate })
   // The editor starts from the saved quote (remounted when it changes).
   return (
     <QuoteEditor
-      key={existing.data ? `${existing.data.id}:${existing.data.status}:${existing.data.total}:${existing.data.lines.length}` : 'new'}
+      key={
+        existing.data
+          ? `${existing.data.id}:${existing.data.status}:${existing.data.total}:${existing.data.lines.length}:${existing.data.globalDiscountPercent}:${existing.data.discountRequests[0]?.id ?? ''}:${existing.data.discountRequests[0]?.status ?? ''}`
+          : 'new'
+      }
       id={id}
       quote={existing.data}
       reload={existing.reload}
@@ -203,6 +342,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
         }))
       : [newLine()],
   )
+  // Global discount of the whole quote (after line discounts, before IVA).
+  const [globalDiscount, setGlobalDiscount] = useState(quote ? String(Number(quote.globalDiscountPercent)) : '0')
+  const [approverId, setApproverId] = useState('')
+  const [discountReason, setDiscountReason] = useState('')
   // Configured sale price per line key, reported by each line editor.
   const [prices, setPrices] = useState<Record<string, string | null>>({})
   const [dirty, setDirty] = useState(false)
@@ -213,12 +356,19 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   useUnsavedWork(dirty ? 'Cotización con cambios sin guardar' : null)
 
   const editable = !id || quote?.status === 'DRAFT'
+  const globalValue = decimal(globalDiscount || '0')
+  const globalValid = validGlobalDiscount(globalValue)
+  // What this user applies without asking (SALES: 3 %, or what was approved).
+  const globalLimit = isAdmin ? 100 : quote ? Number(quote.globalDiscountLimit) : SELLER_GLOBAL_DISCOUNT_LIMIT
+  const needsApproval = !isAdmin && globalValid && Number(globalValue) > globalLimit
+  const pendingRequest = quote?.discountRequests.find((r) => r.status === 'PENDING') ?? null
+  // Asking: the quote keeps the discount it already has until approval.
+  const appliedGlobal = quote ? String(Number(quote.globalDiscountPercent)) : '0'
+  const willRequest = needsApproval && !pendingRequest
+  const approvers = useLoad<{ id: string; name: string }[]>(willRequest ? '/sales/discount-approvers' : null)
   const draftAmounts = lines.map((line) => lineAmounts(line, prices[line.key] ?? null))
   const draftTotals = draftAmounts.every((amounts) => amounts !== null)
-    ? (draftAmounts as Amounts[]).reduce<Amounts>(
-        (total, a) => ({ subtotal: total.subtotal + a.subtotal, discount: total.discount + a.discount, tax: total.tax + a.tax, total: total.total + a.total }),
-        { subtotal: 0, discount: 0, tax: 0, total: 0 },
-      )
+    ? documentPreview(draftAmounts as Amounts[], globalValid ? Number(needsApproval ? appliedGlobal : globalValue) : 0)
     : null
   const update = (index: number, line: LineDraft) => {
     setDirty(true)
@@ -243,6 +393,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     ...(notes.trim() ? { notes: notes.trim() } : {}),
     paymentMethod,
     ...(paymentTerms.trim() ? { paymentTerms: paymentTerms.trim() } : {}),
+    globalDiscountPercent: needsApproval ? appliedGlobal : globalValue,
     lines: lines.map((line) => ({
       referenceId: line.catalog.referenceId,
       finishId: line.catalog.finishId,
@@ -260,6 +411,16 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     try {
       const { data } = await request<Quote>(id ? `/quotes/${encodeURIComponent(id)}` : '/quotes', { method: id ? 'PATCH' : 'POST', body: payload() })
       setDirty(false)
+      if (willRequest) {
+        try {
+          await request(`/quotes/${encodeURIComponent(data.id)}/discount-requests`, {
+            method: 'POST',
+            body: { percent: globalValue, approverId, ...(discountReason.trim() ? { reason: discountReason.trim() } : {}) },
+          })
+        } catch (err) {
+          setError(`La cotización se guardó, pero la solicitud de descuento no se envió: ${describeError(err)}`)
+        }
+      }
       if (!id) navigate({ name: 'quote', id: data.id })
       else reload()
     } catch (err) {
@@ -319,6 +480,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           ) : null}
         </p>
       ) : null}
+      {quote ? <DiscountRequests quote={quote} onChanged={reload} /> : null}
       {quote && quote.status !== 'DRAFT' ? (
         <Notice kind="info">
           {quote.status === 'CONVERTED' && quote.order ? (
@@ -401,10 +563,52 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           <button type="button" className="button button-secondary" onClick={() => { setDirty(true); setLines((current) => [...current, newLine()]) }}>
             + Agregar renglón
           </button>
+          <section className="card">
+            <div className="form-grid">
+              <Field
+                label="Descuento global (%)"
+                hint={
+                  isAdmin
+                    ? 'Sobre toda la cotización: después de los descuentos por renglón y antes del IVA.'
+                    : `Sobre toda la cotización, antes del IVA. Hasta ${formatPercent(globalLimit)} lo aplicas tú; más requiere autorización de un administrador.`
+                }
+              >
+                <input inputMode="decimal" value={globalDiscount} onChange={(e) => { setGlobalDiscount(e.target.value); setDirty(true) }} />
+              </Field>
+              {willRequest ? (
+                <>
+                  <Field label="Administrador que autoriza">
+                    <select value={approverId} onChange={(e) => setApproverId(e.target.value)}>
+                      <option value="">Elige…</option>
+                      {(approvers.data ?? []).map((admin) => (
+                        <option key={admin.id} value={admin.id}>{admin.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Motivo para el administrador (opcional)">
+                    <input value={discountReason} maxLength={500} onChange={(e) => setDiscountReason(e.target.value)} />
+                  </Field>
+                </>
+              ) : null}
+            </div>
+            {!globalValid ? <p className="field-error">Usa 0 o un porcentaje entre 0,1 y 100, con hasta 2 decimales.</p> : null}
+            {willRequest ? (
+              <Notice kind="warning">
+                Más de {formatPercent(globalLimit)} necesita autorización. La cotización se guarda con {formatPercent(appliedGlobal)} de descuento global y la
+                solicitud de {formatPercent(globalValue)} le llega como tarea al administrador que elijas. Si la aprueba, el descuento se aplica solo.
+              </Notice>
+            ) : null}
+            {needsApproval && pendingRequest ? (
+              <Notice kind="warning">
+                Ya hay una solicitud pendiente de {formatPercent(pendingRequest.requestedPercent)}. Espera la respuesta o cancélala para pedir otro porcentaje;
+                al guardar se conserva {formatPercent(appliedGlobal)}.
+              </Notice>
+            ) : null}
+            {approvers.error ? <p className="field-error">{approvers.error}</p> : null}
+          </section>
           {draftTotals ? (
             <p className="quote-totals">
-              Subtotal sin IVA {formatMoney(draftTotals.subtotal)} · Descuentos {formatMoney(draftTotals.discount)} · IVA{' '}
-              {formatMoney(draftTotals.tax)} · <strong>Total {formatMoney(draftTotals.total)}</strong>
+              {totalsParts(draftTotals)} · <strong>Total {formatMoney(draftTotals.total)}</strong>
             </p>
           ) : null}
         </>
@@ -442,8 +646,11 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
             </table>
           </div>
           <p className="quote-totals">
-            Subtotal {formatMoney(quote.subtotal)} · Descuentos {formatMoney(quote.discountTotal)} · IVA {formatMoney(quote.taxTotal)} · <strong>Total {formatMoney(quote.total)}</strong>
+            {totalsParts(quote)} · <strong>Total {formatMoney(quote.total)}</strong>
           </p>
+          {Number(quote.globalDiscountAmount) > 0 ? (
+            <p className="cell-sub">El total de cada renglón ya incluye su parte del descuento global de {formatPercent(quote.globalDiscountPercent)}.</p>
+          ) : null}
         </section>
       ) : null}
 
@@ -453,15 +660,21 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           <button
             type="button"
             className="button"
-            disabled={busy || !customerId || !paymentMethod}
-            title={!paymentMethod ? 'Elige la forma de pago' : undefined}
+            disabled={busy || !customerId || !paymentMethod || !globalValid || (willRequest && !approverId)}
+            title={!paymentMethod ? 'Elige la forma de pago' : willRequest && !approverId ? 'Elige el administrador que autorizará el descuento' : undefined}
             onClick={() => void save()}
           >
-            {busy ? 'Guardando…' : id ? 'Guardar cambios' : 'Guardar cotización'}
+            {busy ? 'Guardando…' : willRequest ? 'Guardar y solicitar autorización' : id ? 'Guardar cambios' : 'Guardar cotización'}
           </button>
           {id && quote?.status === 'DRAFT' ? (
             <>
-              <button type="button" className="button button-secondary" disabled={busy || dirty} title={dirty ? 'Guarda los cambios antes de convertir' : undefined} onClick={() => void convert()}>
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={busy || dirty || pendingRequest !== null}
+                title={dirty ? 'Guarda los cambios antes de convertir' : pendingRequest ? 'Hay una solicitud de descuento pendiente de autorización' : undefined}
+                onClick={() => void convert()}
+              >
                 Convertir en orden de venta
               </button>
               <button type="button" className="text-button danger" disabled={busy} onClick={() => void cancel()}>Cancelar cotización</button>

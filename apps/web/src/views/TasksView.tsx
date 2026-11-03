@@ -22,7 +22,15 @@ interface AdminUser extends TaskPerson {
   active: boolean
 }
 
-export function TasksView({ onChanged, onOpenDispatch }: { onChanged: () => void; onOpenDispatch?: (dispatchId: string) => void }) {
+export function TasksView({
+  onChanged,
+  onOpenDispatch,
+  onOpenQuote,
+}: {
+  onChanged: () => void
+  onOpenDispatch?: (dispatchId: string) => void
+  onOpenQuote?: (quoteId: string) => void
+}) {
   const { user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
   const [status, setStatus] = useState<TaskStatus>('pending')
@@ -157,12 +165,12 @@ export function TasksView({ onChanged, onOpenDispatch }: { onChanged: () => void
                     <span>{group.tasks.length}</span>
                   </h2>
                   {group.tasks.map((task) => (
-                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} />
+                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} />
                   ))}
                 </div>
               ))
             : items.map((task) => (
-                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} />
+                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} />
               ))}
 
           {tasks.data && tasks.data.totalPages > 1 ? (

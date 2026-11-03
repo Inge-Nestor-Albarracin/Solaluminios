@@ -21,8 +21,10 @@ import {
   ConfirmOrderDto,
   ConvertQuoteDto,
   CustomerQueryDto,
+  DiscountRequestDto,
   ListQueryDto,
   ReasonDto,
+  ResolveDiscountDto,
   SalePriceQueryDto,
   SaveCustomerDto,
   SaveQuoteDto,
@@ -126,6 +128,42 @@ export class SalesController {
   @HttpCode(HttpStatus.OK)
   convertQuote(@Param('id') id: string, @Body() dto: ConvertQuoteDto, @Req() request: AuthenticatedRequest) {
     return this.sales.convertQuote(id, dto, sessionUser(request));
+  }
+
+  // Global discount above the seller's limit: request to an administrator the
+  // seller chooses, answered by that administrator only.
+  @Roles('ADMIN', 'SALES')
+  @Get('sales/discount-approvers')
+  discountApprovers() {
+    return this.sales.discountApprovers();
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Post('quotes/:id/discount-requests')
+  @HttpCode(HttpStatus.OK)
+  requestDiscount(@Param('id') id: string, @Body() dto: DiscountRequestDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.requestDiscount(id, dto, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('quotes/:id/discount-requests/:requestId/approve')
+  @HttpCode(HttpStatus.OK)
+  approveDiscount(@Param('id') id: string, @Param('requestId') requestId: string, @Req() request: AuthenticatedRequest) {
+    return this.sales.resolveDiscount(id, requestId, 'APPROVED', undefined, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('quotes/:id/discount-requests/:requestId/reject')
+  @HttpCode(HttpStatus.OK)
+  rejectDiscount(@Param('id') id: string, @Param('requestId') requestId: string, @Body() dto: ResolveDiscountDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.resolveDiscount(id, requestId, 'REJECTED', dto.resolution, sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Post('quotes/:id/discount-requests/:requestId/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelDiscountRequest(@Param('id') id: string, @Param('requestId') requestId: string, @Req() request: AuthenticatedRequest) {
+    return this.sales.cancelDiscountRequest(id, requestId, sessionUser(request));
   }
 
   @Roles('ADMIN', 'SALES')

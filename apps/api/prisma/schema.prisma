@@ -203,6 +203,8 @@ model User {
   salePricesCreated        SalePrice[]              @relation("SalePriceCreator")
   customersCreated         Customer[]               @relation("CustomerCreator")
   quotesCreated            Quote[]                  @relation("QuoteCreator")
+  discountsRequested       QuoteDiscountRequest[]   @relation("DiscountRequester")
+  discountsToApprove       QuoteDiscountRequest[]   @relation("DiscountApprover")
   ordersCreated            SalesOrder[]             @relation("OrderCreator")
   ordersConverted          SalesOrder[]             @relation("OrderConverter")
   orderPaymentStatuses     SalesOrder[]             @relation("OrderPaymentStatus")
@@ -314,28 +316,34 @@ model InventoryMovement {
 // DISPATCH tasks are linked to a dispatch: they are completed only by
 // confirming the dispatch (never by the generic "complete" route), stay
 // pending while overdue and are cancelled with their dispatch.
+// DISPATCH and DISCOUNT_APPROVAL tasks are completed by their own flow
+// (confirming the dispatch / answering the discount request), never by hand.
 enum TaskKind {
   GENERAL
   DISPATCH
+  DISCOUNT_APPROVAL
 }
 
 model Task {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  dueAt       DateTime  @db.Timestamptz(3)
-  assigneeId  String
-  createdById String
-  completedAt DateTime? @db.Timestamptz(3)
-  kind        TaskKind  @default(GENERAL)
-  dispatchId  String?   @unique
-  cancelledAt DateTime? @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  id                String    @id @default(cuid())
+  title             String
+  description       String?
+  dueAt             DateTime  @db.Timestamptz(3)
+  assigneeId        String
+  createdById       String
+  completedAt       DateTime? @db.Timestamptz(3)
+  kind              TaskKind  @default(GENERAL)
+  dispatchId        String?   @unique
+  // DISCOUNT_APPROVAL tasks only (CHECK): the request the admin answers.
+  discountRequestId String?   @unique
+  cancelledAt       DateTime? @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
 
-  assignee  User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-  createdBy User      @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  dispatch  Dispatch? @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  assignee        User                  @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy       User                  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  dispatch        Dispatch?             @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  discountRequest QuoteDiscountRequest? @relation(fields: [discountRequestId], references: [id], onDelete: Restrict)
 
   @@index([assigneeId, completedAt, dueAt])
   @@index([createdById])
@@ -713,33 +721,78 @@ enum PaymentStatus {
 // Quotes never reserve or move stock. Lines keep a copy of the conditions
 // used (labels, cost basis, method, percent, taxes).
 model Quote {
-  id            String         @id @default(cuid())
-  number        String         @unique
-  customerId    String
-  customerName  String
-  status        QuoteStatus    @default(DRAFT)
-  validUntil    DateTime?      @db.Date
-  currency      String         @default("COP") @db.Char(3)
-  notes         String?
+  id                    String         @id @default(cuid())
+  number                String         @unique
+  customerId            String
+  customerName          String
+  status                QuoteStatus    @default(DRAFT)
+  validUntil            DateTime?      @db.Date
+  currency              String         @default("COP") @db.Char(3)
+  notes                 String?
   // Required on every save from now on; null only on quotes saved before.
-  paymentMethod PaymentMethod?
+  paymentMethod         PaymentMethod?
   // Free details agreed with the customer (advance amount, credit days…).
-  paymentTerms  String?
-  subtotal      Decimal        @default(0) @db.Decimal(18, 2)
-  discountTotal Decimal        @default(0) @db.Decimal(18, 2)
-  taxTotal      Decimal        @default(0) @db.Decimal(18, 2)
-  total         Decimal        @default(0) @db.Decimal(18, 2)
-  createdById   String
-  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
+  paymentTerms          String?
+  subtotal              Decimal        @default(0) @db.Decimal(18, 2)
+  // Line discounts only; the global discount has its own fields.
+  discountTotal         Decimal        @default(0) @db.Decimal(18, 2)
+  // Discount on the whole quote, after line discounts and before VAT
+  // (0, or 0.1–100 %). SALES applies up to 3 % alone; more needs an
+  // approved QuoteDiscountRequest.
+  globalDiscountPercent Decimal        @default(0) @db.Decimal(9, 4)
+  globalDiscountAmount  Decimal        @default(0) @db.Decimal(18, 2)
+  taxTotal              Decimal        @default(0) @db.Decimal(18, 2)
+  // = subtotal − discountTotal − globalDiscountAmount + taxTotal = Σ lineTotal.
+  total                 Decimal        @default(0) @db.Decimal(18, 2)
+  createdById           String
+  createdAt             DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
 
-  customer  Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  createdBy User        @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  lines     QuoteLine[]
-  order     SalesOrder?
+  customer         Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdBy        User                   @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  lines            QuoteLine[]
+  order            SalesOrder?
+  discountRequests QuoteDiscountRequest[]
 
   @@index([createdById, createdAt])
   @@map("quotes")
+}
+
+//   PENDING   waiting for the chosen administrator (one per quote at most)
+//   APPROVED  applied to the quote when approved
+//   REJECTED  answered no (optional reason)
+//   CANCELLED withdrawn by the seller, or the quote was cancelled
+enum QuoteDiscountRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// A seller asks an administrator THEY choose to authorise a global discount
+// above their own limit. It becomes a task of that administrator.
+model QuoteDiscountRequest {
+  id               String                     @id @default(cuid())
+  quoteId          String
+  requestedPercent Decimal                    @db.Decimal(9, 4)
+  reason           String?
+  status           QuoteDiscountRequestStatus @default(PENDING)
+  requestedById    String
+  approverId       String
+  resolvedAt       DateTime?                  @db.Timestamptz(3)
+  // Rejection reason of the administrator (optional).
+  resolution       String?
+  createdAt        DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime                   @updatedAt @db.Timestamptz(3)
+
+  quote       Quote @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  requestedBy User  @relation("DiscountRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  approver    User  @relation("DiscountApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  task        Task?
+
+  @@index([quoteId, createdAt])
+  @@index([approverId, status])
+  @@map("quote_discount_requests")
 }
 
 model QuoteLine {
@@ -761,6 +814,9 @@ model QuoteLine {
   taxRatePercent       Decimal        @db.Decimal(9, 4)
   lineSubtotal         Decimal        @db.Decimal(18, 2)
   discountAmount       Decimal        @db.Decimal(18, 2)
+  // Share of the quote's global discount (on the base after the line
+  // discount); VAT and the line total are computed after it.
+  globalDiscountAmount Decimal        @default(0) @db.Decimal(18, 2)
   taxAmount            Decimal        @db.Decimal(18, 2)
   lineTotal            Decimal        @db.Decimal(18, 2)
   referenceCode        String
@@ -798,38 +854,41 @@ enum SalesOrderStatus {
 }
 
 model SalesOrder {
-  id                  String           @id @default(cuid())
-  number              String           @unique
-  quoteId             String?          @unique
-  customerId          String
-  customerName        String
-  inventoryLocationId String?
-  status              SalesOrderStatus @default(DRAFT)
-  currency            String           @default("COP") @db.Char(3)
-  subtotal            Decimal          @db.Decimal(18, 2)
-  discountTotal       Decimal          @db.Decimal(18, 2)
-  taxTotal            Decimal          @db.Decimal(18, 2)
-  total               Decimal          @db.Decimal(18, 2)
-  notes               String?
+  id                    String           @id @default(cuid())
+  number                String           @unique
+  quoteId               String?          @unique
+  customerId            String
+  customerName          String
+  inventoryLocationId   String?
+  status                SalesOrderStatus @default(DRAFT)
+  currency              String           @default("COP") @db.Char(3)
+  subtotal              Decimal          @db.Decimal(18, 2)
+  discountTotal         Decimal          @db.Decimal(18, 2)
+  // Copied from the quote (see Quote).
+  globalDiscountPercent Decimal          @default(0) @db.Decimal(9, 4)
+  globalDiscountAmount  Decimal          @default(0) @db.Decimal(18, 2)
+  taxTotal              Decimal          @db.Decimal(18, 2)
+  total                 Decimal          @db.Decimal(18, 2)
+  notes                 String?
   // Copied from the quote when it is converted.
-  paymentMethod       PaymentMethod?
-  paymentTerms        String?
+  paymentMethod         PaymentMethod?
+  paymentTerms          String?
   // Only for PARTIAL / CREDIT (CHECK): starts PENDING; the owner or ADMIN
   // marks it PAID (and back), each change audited.
-  paymentStatus       PaymentStatus?
-  paymentStatusAt     DateTime?        @db.Timestamptz(3)
-  paymentStatusById   String?
-  convertOperationKey String           @unique
+  paymentStatus         PaymentStatus?
+  paymentStatusAt       DateTime?        @db.Timestamptz(3)
+  paymentStatusById     String?
+  convertOperationKey   String           @unique
   // Owner (seller of the quote): decides who may see and act on the order.
-  createdById         String
+  createdById           String
   // Who converted the quote into this order (null on orders made before).
-  convertedById       String?
-  confirmedAt         DateTime?        @db.Timestamptz(3)
-  completedAt         DateTime?        @db.Timestamptz(3)
-  cancelledAt         DateTime?        @db.Timestamptz(3)
-  cancelReason        String?
-  createdAt           DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime         @updatedAt @db.Timestamptz(3)
+  convertedById         String?
+  confirmedAt           DateTime?        @db.Timestamptz(3)
+  completedAt           DateTime?        @db.Timestamptz(3)
+  cancelledAt           DateTime?        @db.Timestamptz(3)
+  cancelReason          String?
+  createdAt             DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @db.Timestamptz(3)
 
   quote             Quote?             @relation(fields: [quoteId], references: [id], onDelete: Restrict)
   customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -859,6 +918,7 @@ model SalesOrderLine {
   taxRatePercent       Decimal        @db.Decimal(9, 4)
   lineSubtotal         Decimal        @db.Decimal(18, 2)
   discountAmount       Decimal        @db.Decimal(18, 2)
+  globalDiscountAmount Decimal        @default(0) @db.Decimal(18, 2)
   taxAmount            Decimal        @db.Decimal(18, 2)
   lineTotal            Decimal        @db.Decimal(18, 2)
   referenceCode        String

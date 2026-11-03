@@ -37,7 +37,10 @@ export interface SalesPdfData {
   customer: { name: string; taxId: string | null; address: string | null; phone: string | null; email: string | null };
   lines: SalesPdfLine[];
   subtotal: Amount;
+  // Line discounts; the global discount (after them, before VAT) apart.
   discountTotal: Amount;
+  globalDiscountPercent?: Amount;
+  globalDiscountAmount?: Amount;
   taxTotal: Amount;
   total: Amount;
   notes: string | null;
@@ -173,14 +176,22 @@ export function renderSalesPdf(data: SalesPdfData): Promise<Buffer> {
   });
 
   // --- Totals ------------------------------------------------------------------
-  if (y + 96 > BOTTOM) {
+  const global = data.globalDiscountAmount && Number(data.globalDiscountAmount.toString()) > 0 ? data.globalDiscountAmount : null;
+  if (y + (global ? 128 : 96) > BOTTOM) {
     doc.addPage();
     y = 40;
+  }
+  if (global) {
+    // Line totals already carry their share of the global discount.
+    doc.font('Helvetica').fontSize(7.5).fillColor(MUTED);
+    doc.text(`El total de cada renglón ya incluye el descuento global de ${percent(data.globalDiscountPercent ?? 0)}.`, LEFT, y + 4, { width: WIDTH });
+    y += 12;
   }
   y += 12;
   const totals: [string, string][] = [
     ['Subtotal sin IVA', money(data.subtotal)],
-    ['Descuentos', money(data.discountTotal)],
+    [global ? 'Descuentos por renglón' : 'Descuentos', money(data.discountTotal)],
+    ...(global ? [[`Descuento global (${percent(data.globalDiscountPercent ?? 0)})`, `− ${money(global)}`] as [string, string]] : []),
     ['IVA', money(data.taxTotal)],
   ];
   const labelX = LEFT + WIDTH - 230;
