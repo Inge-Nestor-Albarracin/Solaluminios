@@ -17,12 +17,15 @@ import type { Response } from 'express';
 import { Roles } from '../auth/auth.metadata.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import {
+  ApprovePriceDto,
   AvailabilityQueryDto,
   ConfirmOrderDto,
   ConvertQuoteDto,
   CustomerQueryDto,
   DiscountRequestDto,
   ListQueryDto,
+  OrderListQueryDto,
+  PriceRequestDto,
   ReasonDto,
   ResolveDiscountDto,
   SalePriceQueryDto,
@@ -166,10 +169,47 @@ export class SalesController {
     return this.sales.cancelDiscountRequest(id, requestId, sessionUser(request));
   }
 
+  // Manual prices: always possible on a line, authorised by the administrator
+  // the seller chooses (who may correct them) before printing or converting.
+  @Roles('ADMIN', 'SALES')
+  @Post('quotes/:id/price-requests')
+  @HttpCode(HttpStatus.OK)
+  requestPrice(@Param('id') id: string, @Body() dto: PriceRequestDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.requestPrice(id, dto, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('quotes/:id/price-requests/:requestId/approve')
+  @HttpCode(HttpStatus.OK)
+  approvePrice(@Param('id') id: string, @Param('requestId') requestId: string, @Body() dto: ApprovePriceDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.resolvePrice(id, requestId, 'APPROVED', dto, sessionUser(request));
+  }
+
+  @Roles('ADMIN')
+  @Post('quotes/:id/price-requests/:requestId/reject')
+  @HttpCode(HttpStatus.OK)
+  rejectPrice(@Param('id') id: string, @Param('requestId') requestId: string, @Body() dto: ResolveDiscountDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.resolvePrice(id, requestId, 'REJECTED', { resolution: dto.resolution }, sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Post('quotes/:id/price-requests/:requestId/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelPriceRequest(@Param('id') id: string, @Param('requestId') requestId: string, @Req() request: AuthenticatedRequest) {
+    return this.sales.cancelDiscountRequest(id, requestId, sessionUser(request), 'MANUAL_PRICE');
+  }
+
   @Roles('ADMIN', 'SALES')
   @Get('sales-orders')
-  listOrders(@Query() query: ListQueryDto, @Req() request: AuthenticatedRequest) {
+  listOrders(@Query() query: OrderListQueryDto, @Req() request: AuthenticatedRequest) {
     return this.sales.listOrders(query, sessionUser(request));
+  }
+
+  // Sales per seller for commissions (declared before sales-orders/:id).
+  @Roles('ADMIN')
+  @Get('sales-orders/summary')
+  ordersSummary(@Query() query: OrderListQueryDto) {
+    return this.sales.ordersSummary(query);
   }
 
   @Roles('ADMIN', 'SALES')

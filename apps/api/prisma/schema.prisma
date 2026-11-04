@@ -205,6 +205,8 @@ model User {
   quotesCreated            Quote[]                  @relation("QuoteCreator")
   discountsRequested       QuoteDiscountRequest[]   @relation("DiscountRequester")
   discountsToApprove       QuoteDiscountRequest[]   @relation("DiscountApprover")
+  quoteLinePricesApproved  QuoteLine[]              @relation("QuoteLinePriceApprover")
+  orderLinePricesApproved  SalesOrderLine[]         @relation("OrderLinePriceApprover")
   ordersCreated            SalesOrder[]             @relation("OrderCreator")
   ordersConverted          SalesOrder[]             @relation("OrderConverter")
   orderPaymentStatuses     SalesOrder[]             @relation("OrderPaymentStatus")
@@ -769,12 +771,28 @@ enum QuoteDiscountRequestStatus {
   CANCELLED
 }
 
-// A seller asks an administrator THEY choose to authorise a global discount
-// above their own limit. It becomes a task of that administrator.
+//   GLOBAL_DISCOUNT  a global discount above the seller's limit
+//   MANUAL_PRICE     the manual prices of the quote's lines
+enum QuoteRequestKind {
+  GLOBAL_DISCOUNT
+  MANUAL_PRICE
+}
+
+// A seller asks an administrator THEY choose to authorise something on a
+// quote: a global discount above their own limit, or its manual prices. It
+// becomes a task of that administrator (task kind DISCOUNT_APPROVAL for both).
+// At most one PENDING request of each kind per quote.
 model QuoteDiscountRequest {
   id               String                     @id @default(cuid())
   quoteId          String
-  requestedPercent Decimal                    @db.Decimal(9, 4)
+  kind             QuoteRequestKind           @default(GLOBAL_DISCOUNT)
+  // GLOBAL_DISCOUNT only (CHECK).
+  requestedPercent Decimal?                   @db.Decimal(9, 4)
+  // MANUAL_PRICE: snapshot of the manual lines as requested and, once
+  // approved, the prices the administrator set (audit trail).
+  details          Json?
+  // A newer request of the same kind that replaced this one (CANCELLED).
+  replacedById     String?
   reason           String?
   status           QuoteDiscountRequestStatus @default(PENDING)
   requestedById    String
@@ -785,9 +803,11 @@ model QuoteDiscountRequest {
   createdAt        DateTime                   @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime                   @updatedAt @db.Timestamptz(3)
 
-  quote       Quote @relation(fields: [quoteId], references: [id], onDelete: Restrict)
-  requestedBy User  @relation("DiscountRequester", fields: [requestedById], references: [id], onDelete: Restrict)
-  approver    User  @relation("DiscountApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  quote       Quote                  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  requestedBy User                   @relation("DiscountRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  approver    User                   @relation("DiscountApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  replacedBy  QuoteDiscountRequest?  @relation("RequestReplacement", fields: [replacedById], references: [id], onDelete: Restrict)
+  replaces    QuoteDiscountRequest[] @relation("RequestReplacement")
   task        Task?
 
   @@index([quoteId, createdAt])
@@ -808,7 +828,15 @@ model QuoteLine {
   pricingPercent       Decimal?       @db.Decimal(9, 4)
   costBasis            Decimal?       @db.Decimal(18, 6)
   costLotId            String?
+  // MANUAL: why the price was set by hand (required, CHECK).
   priceReason          String?
+  // MANUAL: purchase cost per profile estimated by the seller (optional),
+  // shown to the administrator with the margin.
+  estimatedUnitCost    Decimal?       @db.Decimal(18, 6)
+  // MANUAL: who authorised the current price (null = not authorised yet;
+  // the quote can neither be printed for the customer nor converted).
+  manualApprovedById   String?
+  manualApprovedAt     DateTime?      @db.Timestamptz(3)
   unitPrice            Decimal        @db.Decimal(18, 2)
   discountPercent      Decimal        @default(0) @db.Decimal(9, 4)
   taxRatePercent       Decimal        @db.Decimal(9, 4)
@@ -828,11 +856,12 @@ model QuoteLine {
   // before prices were linked to purchases.
   salePriceId          String?
 
-  quote     Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  reference Reference  @relation(fields: [referenceId], references: [id], onDelete: Restrict)
-  finish    Finish     @relation(fields: [finishId], references: [id], onDelete: Restrict)
-  supplier  Supplier?  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  salePrice SalePrice? @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
+  quote            Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  reference        Reference  @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish           Finish     @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier         Supplier?  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  salePrice        SalePrice? @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
+  manualApprovedBy User?      @relation("QuoteLinePriceApprover", fields: [manualApprovedById], references: [id], onDelete: Restrict)
 
   @@unique([quoteId, lineNo])
   @@map("quote_lines")
@@ -928,14 +957,19 @@ model SalesOrderLine {
   supplierName         String?
   // Copied from the quote line: the sale price (and purchase line) used.
   salePriceId          String?
+  // Copied from a manual-price quote line: its reason and who authorised it.
+  manualPrice          Boolean        @default(false)
+  priceReason          String?
+  manualApprovedById   String?
 
-  salesOrder    SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
-  reference     Reference          @relation(fields: [referenceId], references: [id], onDelete: Restrict)
-  finish        Finish             @relation(fields: [finishId], references: [id], onDelete: Restrict)
-  supplier      Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  salePrice     SalePrice?         @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
-  reservations  StockReservation[]
-  dispatchLines DispatchLine[]
+  salesOrder       SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  reference        Reference          @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish           Finish             @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier         Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  salePrice        SalePrice?         @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
+  manualApprovedBy User?              @relation("OrderLinePriceApprover", fields: [manualApprovedById], references: [id], onDelete: Restrict)
+  reservations     StockReservation[]
+  dispatchLines    DispatchLine[]
 
   @@unique([salesOrderId, lineNo])
   @@map("sales_order_lines")

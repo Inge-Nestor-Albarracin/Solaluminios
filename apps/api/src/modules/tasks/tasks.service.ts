@@ -30,7 +30,7 @@ const taskInclude = {
   // Dispatch tasks: link only; requirements come from the dispatch itself.
   dispatch: { select: { id: true, number: true, status: true } },
   // Discount approval tasks: the request and its quote (no prices here).
-  discountRequest: { select: { id: true, status: true, requestedPercent: true, quote: { select: { id: true, number: true } } } },
+  discountRequest: { select: { id: true, kind: true, status: true, requestedPercent: true, quote: { select: { id: true, number: true } } } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed

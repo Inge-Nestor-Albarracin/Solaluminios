@@ -1779,6 +1779,185 @@ la BD de pruebas):
 - La pantalla de la cotización no se refresca sola: el vendedor ve la
   respuesta al volver a abrirla (o por el aviso push).
 
+## Precio manual en cotizaciones con autorización (04/11/2026)
+
+**Objetivo.** Que ventas pueda poner un precio manual en cualquier renglón (haya
+o no precio habilitado o inventario), con una justificación, y que un
+administrador elegido lo autorice (pudiendo corregirlo) antes de imprimir o
+convertir la cotización. Con aviso visible de la solicitud en curso,
+advertencia antes de perder su avance y auditoría completa. Ventas solo cotiza
+referencias existentes; solo ADMIN crea referencias (ya era así: las
+escrituras del catálogo sin `@Roles` son solo ADMIN en `RolesGuard`; ahora lo
+cubre una prueba).
+
+**Reglas.**
+- **Renglón manual** (`QuoteLineDto`): `manualUnitPrice` (> 0, máximo 2
+  decimales), `priceReason` (obligatoria, mínimo 10 caracteres) y
+  `estimatedUnitCost` (opcional, > 0). Se guarda con
+  `pricingMethod = MANUAL` (ya existía en el esquema y su CHECK exige motivo).
+  Sin precio manual, un color sin precio habilitado se rechaza indicando que se
+  puede usar precio manual.
+- **Autorización por renglón** (`manualApprovedById/At`):
+  - ADMIN: queda autorizado al guardar (auditoría `MANUAL_PRICE_APPLIED`).
+  - SALES: queda sin autorizar hasta que el administrador elegido lo apruebe.
+  - Al editar la cotización se conserva solo en renglones iguales: referencia,
+    color, origen, proveedor, cantidad, precio, descuento, justificación y
+    costo. Si cambia algo se pierde (auditoría `MANUAL_PRICE_APPROVAL_LOST`
+    con antes y después).
+- **Sin autorizar**: SALES no descarga el PDF (409) y nadie convierte (409).
+  Una solicitud pendiente de cualquier tipo también bloquea la conversión.
+- **Solicitud** (`POST /quotes/:id/price-requests` {approverId, reason?,
+  replace?}):
+  - Cubre todos los renglones manuales sin autorizar. Guarda en `details` una
+    instantánea de cada uno: precio propuesto, precio habilitado si existe,
+    costo estimado, margen y justificación.
+  - Crea una tarea del administrador (mismo tipo `DISCOUNT_APPROVAL`, título
+    «Autorizar precio manual») y el aviso push `price-requested`.
+  - Una pendiente por cotización y tipo. Repetir la misma no cambia nada; otra
+    distinta exige `replace` (si no, 409 «se pierde su avance»). Con `replace`
+    la anterior queda CANCELLED con `replacedById` y su tarea cancelada.
+  - Editar la cotización de forma que la solicitud quede desactualizada exige
+    `replacePendingPriceRequest`. Sin él, 409 y no se guarda nada; con él, la
+    solicitud se cancela con nota en la auditoría. Las ediciones que no tocan
+    los renglones manuales no la afectan.
+- **Respuesta** (`.../:requestId/approve` {lines?: [{lineNo, unitPrice}]} y
+  `/reject` {resolution?}):
+  - Solo el administrador elegido responde; puede corregir cualquier precio al
+    aprobar.
+  - Aprobar recalcula renglones y totales (con descuento global si hay), marca
+    los renglones como autorizados, guarda el precio aprobado en `details` y
+    avisa al vendedor (`price-resolved`).
+  - Repetir la misma respuesta no cambia nada; contradecirla da 409.
+- **Cancelar**: `.../:requestId/cancel`, por el vendedor dueño o un ADMIN.
+  Cancelar la cotización cancela sus solicitudes abiertas de ambos tipos.
+- **Orden**: copia `manualPrice`, `priceReason` y `manualApprovedById`
+  (CHECK `sales_order_lines_manual_price`).
+
+**Auditoría** (entidad Quote), con usuario de la sesión, fecha y datos:
+
+| Acción | Contenido |
+|---|---|
+| `MANUAL_PRICE_REQUESTED` | aprobador, solicitud reemplazada y renglones |
+| `MANUAL_PRICE_CANCELLED` | motivo: editada, reemplazada, retirada o cotización cancelada |
+| `MANUAL_PRICE_APPROVED` | precio propuesto vs. aprobado, si hubo corrección |
+| `MANUAL_PRICE_REJECTED` | motivo |
+| `MANUAL_PRICE_APPROVAL_LOST` | renglones antes y después |
+| `MANUAL_PRICE_APPLIED` | precios puestos por ADMIN |
+| `CONVERTED` | orden creada y los precios manuales que lleva |
+
+**Migración** `20261104120000_quote_manual_price` (revisada; aplicada solo a la
+BD de pruebas):
+- Enum `QuoteRequestKind` (GLOBAL_DISCOUNT, MANUAL_PRICE).
+- En `quote_discount_requests`: `kind`, `details`, `replacedById`, y
+  `requestedPercent` pasa a ser opcional.
+- CHECK `quote_discount_requests_values` recreado por tipo.
+- Índice de pendiente única por (cotización, tipo).
+- Columnas de autorización y costo estimado en `quote_lines`, con su CHECK.
+- Campos de precio manual en `sales_order_lines`, con su CHECK.
+- Los renglones MANUAL que ya existieran quedan autorizados por el creador de
+  su cotización (eran precios de ADMIN según las reglas anteriores).
+
+**Web (cotización).**
+- Casilla «Precio manual» en cada renglón, con:
+  - precio (precargado con el habilitado si existe);
+  - costo estimado;
+  - «¿Por qué el precio es manual?», con ejemplos;
+  - margen estimado y estado «✓ Autorizado por X» o «Sin autorizar».
+- Selector «Administrador que autoriza», compartido con el descuento global, y
+  botón «Guardar y solicitar autorización».
+- Aviso «PRECIO MANUAL EN SOLICITUD · pendiente de autorización de X», con la
+  tabla propuesto / habilitado / costo / margen / justificación.
+- El administrador elegido corrige los precios en la misma tabla y aprueba o
+  rechaza; los demás pueden cancelar.
+- Antes de perder una solicitud en curso aparece la confirmación «Sí, cancelar
+  la solicitud y guardar».
+- Historial de solicitudes, incluidas las correcciones («$11.500 → $11.800»).
+- Sin PDF ni conversión mientras haya precios sin autorizar.
+- Orden: «Precio manual autorizado por X» en el renglón.
+- Service worker: textos de los dos avisos nuevos.
+
+**Pruebas.**
+- API unitarias 43/43; e2e 184/184.
+- Suite nueva `quote-manual-price.e2e-spec.ts` (13 pruebas):
+  - catálogo solo ADMIN y referencia inexistente rechazada;
+  - validaciones;
+  - bloqueo de PDF y conversión;
+  - flujo con tarea, aviso, corrección, auditoría y orden;
+  - pérdida de autorización al editar;
+  - reemplazo con consentimiento;
+  - rechazo, retiro y cancelación de la cotización;
+  - precios de ADMIN;
+  - convivencia con el descuento global;
+  - tres carreras de 10 rondas: aprobar contra editar, dos reemplazos a la vez
+    y aprobar contra convertir.
+- Navegador (sufijo F478DA, datos borrados por ID):
+  - solicitud desde la pantalla del vendedor;
+  - edición con confirmación de pérdida;
+  - tarea de la administradora y aprobación corrigiendo de 11.500 a 11.800;
+  - auditoría verificada en la base;
+  - sin desbordamiento a 375 px.
+- Web: `tsc`, `oxlint` y build.
+
+**Límites y decisiones.**
+- Una solicitud cubre todos los precios manuales sin autorizar de la
+  cotización; se aprueban juntos (con corrección por renglón).
+- ADMIN puede descargar el PDF de una cotización con precios sin autorizar
+  (vista previa); SALES no.
+- El tipo de tarea sigue llamándose `DISCOUNT_APPROVAL` para ambos tipos de
+  solicitud; el título la distingue.
+
+## Ventas por vendedor y estado de pago (04/11/2026)
+
+**Objetivo.** Que el administrador vea quién vendió qué y si está pagado, para
+liquidar comisiones. Decisiones del usuario:
+- El contado (efectivo o transferencia) queda como estaba, sin estado de pago.
+- Se agrega una lista con filtros y totales.
+
+**Vendedor.** Es el dueño de la orden (`createdById`, quien hizo la
+cotización), aunque otra persona la haya convertido.
+- Antes la lista mostraba «creada por» con quien la convirtió. Ahora muestra
+  «vendedor X» y, si es distinto, «convertida por Y»; el detalle igual.
+- Solo ADMIN lo ve, como antes.
+
+**API.**
+- `GET /sales-orders` acepta `sellerId`, `dateFrom` y `dateTo` (día de
+  creación en Bogotá, ambos incluidos), y
+  `payment=PAID|PENDING|NONE` (NONE = contado), además de `status`.
+- Los filtros se combinan con AND. Para SALES el alcance propio se combina
+  también con AND: la prueba nueva encontró que el filtro por vendedor lo
+  pisaba y el vendedor recibía sus órdenes aunque pidiera las de otro.
+- `GET /sales-orders/summary` (solo ADMIN, mismos filtros): una fila por
+  vendedor, con:
+  - órdenes, base sin IVA después de descuentos (base de comisión) y total con
+    IVA;
+  - esos mismos valores separados en pagado, pendiente y contado.
+
+  Sin filtro de estado no cuenta las órdenes canceladas.
+
+**Web.** En «Órdenes de venta» (ADMIN):
+- Filtros: vendedor, desde, hasta, pago y estado.
+- Tabla «Ventas por vendedor»: vendido, pagado, pago pendiente y contado, cada
+  celda con la base sin IVA y el total con IVA. Clic en un vendedor lo filtra.
+- Cada orden muestra al vendedor y una insignia «Pagada», «Pago pendiente» o
+  «Contado».
+
+**Pruebas.**
+- API unitarias 43/43; e2e 188/188.
+- Suite nueva `sales-commissions.e2e-spec.ts` (4 pruebas):
+  - el vendedor es el dueño aunque convierta ADMIN;
+  - filtros combinados y fechas inválidas;
+  - resumen con montos exactos y sin canceladas;
+  - SALES solo ve lo suyo y no accede al resumen.
+- Navegador (sufijo 328EF0, datos borrados por ID): resumen, filtro por
+  vendedor y por pago, sin desbordamiento a 375 px.
+- Web: `tsc`, `oxlint` y build.
+
+**Límites.**
+- La comisión no se calcula: no hay porcentajes definidos. El resumen da la base
+  y el total para liquidarla.
+- Una orden de contado no indica si realmente se cobró; si hace falta, hay que
+  extender el estado de pago al contado.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

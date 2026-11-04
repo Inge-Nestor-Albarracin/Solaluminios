@@ -168,8 +168,8 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
         ) : null}
         {isAdmin && data.createdBy ? (
           <span>
-            Creada por <strong>{data.convertedBy?.name ?? 'sin registro (orden anterior)'}</strong> · {formatDateTime(data.createdAt)}
-            {data.convertedBy && data.convertedBy.id !== data.createdBy.id ? <> · vendedor <strong>{data.createdBy.name}</strong></> : null}
+            Vendedor <strong>{data.createdBy.name}</strong> · {formatDateTime(data.createdAt)}
+            {data.convertedBy && data.convertedBy.id !== data.createdBy.id ? <> · convertida por {data.convertedBy.name}</> : null}
           </span>
         ) : null}
       </p>
@@ -189,7 +189,14 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
               {data.lines.map((line) => (
                 <tr key={line.id}>
                   <td data-label="#">{line.lineNo}</td>
-                  <td data-label="Material">{line.referenceCode} · {line.finishDescription ?? line.finishCode}</td>
+                  <td data-label="Material">
+                    {line.referenceCode} · {line.finishDescription ?? line.finishCode}
+                    {line.manualPrice ? (
+                      <span className="cell-sub" title={line.priceReason ?? undefined}>
+                        {' '}Precio manual{line.manualApprovedBy ? ` autorizado por ${line.manualApprovedBy.name}` : ''}
+                      </span>
+                    ) : null}
+                  </td>
                   <td data-label="Origen">{ORIGIN_LABEL[line.origin]}{line.supplierName ? ` · solo ${line.supplierName}` : ''}</td>
                   <td className="num" data-label="Pedido">{line.quantity}</td>
                   <td className="num" data-label="Reservado">{line.reservedQuantity}</td>

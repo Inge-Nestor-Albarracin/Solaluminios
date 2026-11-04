@@ -64,7 +64,14 @@ export interface QuoteLine {
   pricingMethod?: PricingMethod
   pricingPercent?: string | null
   costBasis?: string | null
+  // Manual price: set by hand, explained, and authorised by an administrator
+  // (manualApprovedBy null = not authorised: no PDF for the customer and no
+  // conversion). The seller sees its own reason and estimated cost.
+  manualPrice: boolean
   priceReason: string | null
+  estimatedUnitCost: string | null
+  manualApprovedAt: string | null
+  manualApprovedBy: { id: string; name: string } | null
   unitPrice: string
   discountPercent: string
   taxRatePercent: string
@@ -87,6 +94,22 @@ export const SELLER_GLOBAL_DISCOUNT_LIMIT = 3
 
 export type DiscountRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
 
+// Manual line as requested (and, once approved, the price the administrator set).
+export interface ManualPriceItem {
+  lineNo: number
+  referenceCode: string
+  referenceDescription: string | null
+  finishCode: string
+  finishDescription: string | null
+  quantity: number
+  discountPercent: string
+  proposedUnitPrice: string
+  enabledUnitPrice: string | null
+  estimatedUnitCost: string | null
+  priceReason: string
+  approvedUnitPrice?: string
+}
+
 export const DISCOUNT_REQUEST_STATUS_LABEL: Record<DiscountRequestStatus, string> = {
   PENDING: 'Pendiente de autorización',
   APPROVED: 'Aprobada',
@@ -94,9 +117,16 @@ export const DISCOUNT_REQUEST_STATUS_LABEL: Record<DiscountRequestStatus, string
   CANCELLED: 'Cancelada',
 }
 
+// Requests of a quote to an administrator: a global discount above the
+// seller's limit, or the quote's manual prices.
 export interface DiscountRequest {
   id: string
-  requestedPercent: string
+  kind: 'GLOBAL_DISCOUNT' | 'MANUAL_PRICE'
+  // GLOBAL_DISCOUNT only.
+  requestedPercent: string | null
+  // MANUAL_PRICE only.
+  details: { lines: ManualPriceItem[] } | null
+  replacedById: string | null
   reason: string | null
   status: DiscountRequestStatus
   resolution: string | null
@@ -145,7 +175,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   CANCELLED: 'Cancelada',
 }
 
-export interface OrderLine extends Omit<QuoteLine, 'pricingMethod' | 'pricingPercent' | 'costBasis' | 'priceReason'> {
+export interface OrderLine extends Omit<QuoteLine, 'pricingMethod' | 'pricingPercent' | 'costBasis' | 'estimatedUnitCost' | 'manualApprovedAt'> {
   reservedQuantity: number
   authorisedQuantity: number
   dispatchedQuantity: number

@@ -3,8 +3,10 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -131,8 +133,28 @@ export class QuoteLineDto {
   @Max(1000000)
   quantity!: number;
 
-  // No price, cost or profit fields: the line takes the sale price enabled by
-  // ADMIN for its reference, finish and origin (any extra field is rejected).
+  // No cost or profit fields: the line takes the sale price enabled by ADMIN
+  // for its reference, finish and origin, unless the seller sets a manual
+  // price, which needs an administrator's authorisation (any extra field is
+  // rejected).
+
+  // Manual sale price per profile before VAT (always allowed, with or without
+  // an enabled price or stock).
+  @IsOptional()
+  @Matches(DECIMAL_PATTERN, { message: `manualUnitPrice ${DECIMAL_MESSAGE}` })
+  manualUnitPrice?: string;
+
+  // Manual price only: why (required with a manual price).
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  priceReason?: string;
+
+  // Manual price only: estimated purchase cost per profile (optional).
+  @IsOptional()
+  @Matches(DECIMAL_PATTERN, { message: `estimatedUnitCost ${DECIMAL_MESSAGE}` })
+  estimatedUnitCost?: string;
 
   @Matches(DECIMAL_PATTERN, { message: `discountPercent ${DECIMAL_MESSAGE}` })
   discountPercent!: string;
@@ -176,6 +198,12 @@ export class SaveQuoteDto {
   @Matches(GLOBAL_DISCOUNT_PATTERN, { message: GLOBAL_DISCOUNT_MESSAGE })
   globalDiscountPercent?: string;
 
+  // Consent to cancel an open manual-price request that this save makes out
+  // of date (its progress is lost). Without it such a save is refused (409).
+  @IsOptional()
+  @IsBoolean()
+  replacePendingPriceRequest?: boolean;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'La cotización necesita al menos un renglón' })
   @ArrayMaxSize(100)
@@ -202,6 +230,45 @@ export class DiscountRequestDto {
   reason?: string;
 }
 
+// A seller asks the administrator they choose to authorise the manual prices
+// of the quote. `replace` cancels an open request (its progress is lost).
+export class PriceRequestDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Elige el administrador que autorizará el precio manual' })
+  @MaxLength(50)
+  approverId!: string;
+
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  replace?: boolean;
+}
+
+export class ApprovedPriceLineDto {
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  lineNo!: number;
+
+  @Matches(DECIMAL_PATTERN, { message: `unitPrice ${DECIMAL_MESSAGE}` })
+  unitPrice!: string;
+}
+
+// The administrator may correct any requested price when approving.
+export class ApprovePriceDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => ApprovedPriceLineDto)
+  lines?: ApprovedPriceLineDto[];
+}
+
 export class ResolveDiscountDto {
   // Optional explanation when the administrator rejects the request.
   @Transform(trim)
@@ -216,6 +283,29 @@ export class ListQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(30)
   status?: string;
+}
+
+// Orders by seller (the owner of the order), creation day (Bogotá, both ends
+// included) and payment state, for commissions. Filters combine freely.
+// payment: PAID / PENDING (abono and credit orders) or NONE (cash and
+// transfer orders, whose payment is not followed).
+export class OrderListQueryDto extends ListQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  sellerId?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateFrom debe tener el formato AAAA-MM-DD' })
+  dateFrom?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateTo debe tener el formato AAAA-MM-DD' })
+  dateTo?: string;
+
+  @IsOptional()
+  @IsIn(['PAID', 'PENDING', 'NONE'], { message: 'payment debe ser PAID, PENDING o NONE' })
+  payment?: 'PAID' | 'PENDING' | 'NONE';
 }
 
 export class ConvertQuoteDto {

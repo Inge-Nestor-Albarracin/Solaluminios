@@ -19,6 +19,7 @@ import {
   type Customer,
   type DiscountRequest,
   type MaterialOrigin,
+  type QuoteLine,
   type PaymentMethod,
   type Quote,
   type Supplier,
@@ -39,6 +40,11 @@ interface LineDraft {
   quantity: string
   discountPercent: string
   taxRatePercent: string
+  // Manual price (always possible; authorised by an administrator).
+  manual: boolean
+  manualPrice: string
+  priceReason: string
+  estimatedCost: string
 }
 
 // China preselected for new lines (agreed default), visible and editable.
@@ -51,10 +57,71 @@ const newLine = (): LineDraft => ({
   quantity: '',
   discountPercent: '0',
   taxRatePercent: '19',
+  manual: false,
+  manualPrice: '',
+  priceReason: '',
+  estimatedCost: '',
 })
 
 const decimal = (value: string) => value.trim().replace(',', '.')
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/
+// Manual price: pesos with up to 2 decimals (the API's rule).
+const MANUAL_PRICE = /^\d{1,12}(\.\d{1,2})?$/
+// Minimum explanation of a manual price (the API's rule).
+const PRICE_REASON_MIN = 10
+
+// Price used by the line: the manual one or the enabled one.
+function linePrice(line: LineDraft, enabled: string | null): string | null {
+  if (!line.manual) return enabled
+  const price = decimal(line.manualPrice)
+  return MANUAL_PRICE.test(price) && Number(price) > 0 ? price : null
+}
+
+// What an administrator authorised on a manual line (same fields as the
+// API): if any changes, the authorisation is lost.
+function manualKey(line: { referenceId: string; finishId: string; origin: string; supplierId: string | null; quantity: number; unitPrice: string; discountPercent: string; priceReason: string; estimatedCost: string }) {
+  return JSON.stringify([
+    line.referenceId,
+    line.finishId,
+    line.origin,
+    line.supplierId || null,
+    line.quantity,
+    Number(line.unitPrice).toFixed(2),
+    Number(line.discountPercent || '0').toFixed(4),
+    line.priceReason.trim(),
+    line.estimatedCost ? Number(line.estimatedCost).toFixed(6) : '',
+  ])
+}
+const draftKey = (line: LineDraft) =>
+  manualKey({
+    referenceId: line.catalog.referenceId,
+    finishId: line.catalog.finishId,
+    origin: line.origin,
+    supplierId: line.supplierId,
+    quantity: Number(line.quantity),
+    unitPrice: decimal(line.manualPrice),
+    discountPercent: decimal(line.discountPercent || '0'),
+    priceReason: line.priceReason,
+    estimatedCost: decimal(line.estimatedCost),
+  })
+const savedKey = (line: QuoteLine) =>
+  manualKey({
+    referenceId: line.referenceId,
+    finishId: line.finishId,
+    origin: line.origin,
+    supplierId: line.supplierId,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    discountPercent: line.discountPercent,
+    priceReason: line.priceReason ?? '',
+    estimatedCost: line.estimatedUnitCost ?? '',
+  })
+
+// Margin over the estimated cost, e.g. «25 %».
+function marginText(price: string | null, cost: string | null) {
+  if (!price || !cost || !(Number(price) > 0) || !(Number(cost) > 0)) return null
+  return formatPercent(Math.round(((Number(price) - Number(cost)) / Number(price)) * 10000) / 100)
+}
 
 interface Amounts {
   subtotal: number
@@ -118,27 +185,56 @@ function documentPreview(lines: Amounts[], globalPercent: number) {
   }
 }
 
-// Open or answered requests for a global discount above the seller's limit.
-// The administrator the seller chose approves or rejects here; the seller
-// (or any administrator) can withdraw an open one.
+const REQUEST_PATH = { GLOBAL_DISCOUNT: 'discount-requests', MANUAL_PRICE: 'price-requests' } as const
+
+// Open or answered requests of the quote to an administrator: global discount
+// above the seller's limit and manual prices. The administrator the seller
+// chose answers here (and may correct manual prices); the seller (or any
+// administrator) can withdraw an open one.
 function DiscountRequests({ quote, onChanged }: { quote: Quote; onChanged: () => void }) {
-  const { request, user } = useSession()
-  const [rejecting, setRejecting] = useState<string | null>(null)
+  const pending = quote.discountRequests.filter((r) => r.status === 'PENDING')
+  const answered = quote.discountRequests.filter((r) => r.status !== 'PENDING').slice(0, 5)
+  if (pending.length === 0 && answered.length === 0) return null
+  return (
+    <section className={`card discount-requests${pending.length > 0 ? ' has-pending' : ''}`}>
+      {pending.map((r) =>
+        r.kind === 'MANUAL_PRICE' ? <ManualPriceRequest key={r.id} quote={quote} pending={r} onChanged={onChanged} /> : <GlobalDiscountRequest key={r.id} quote={quote} pending={r} onChanged={onChanged} />,
+      )}
+      {answered.length > 0 ? (
+        <>
+          <h2 className="subtitle">Historial de solicitudes</h2>
+          <ul className="discount-history">
+            {answered.map((r) => (
+              <li key={r.id}>
+                {r.kind === 'MANUAL_PRICE' ? 'Precio manual' : `Descuento global ${formatPercent(r.requestedPercent ?? 0)}`} · <strong>{DISCOUNT_REQUEST_STATUS_LABEL[r.status]}</strong>
+                {r.status === 'CANCELLED' ? (r.replacedById ? ' (reemplazada por otra)' : '') : ` por ${r.approver.name}`}
+                {r.resolvedAt ? ` · ${formatDateTime(r.resolvedAt)}` : ''}
+                {r.kind === 'MANUAL_PRICE' && r.status === 'APPROVED'
+                  ? (r.details?.lines ?? [])
+                      .filter((item) => item.approvedUnitPrice && Number(item.approvedUnitPrice) !== Number(item.proposedUnitPrice))
+                      .map((item) => ` · renglón ${item.lineNo}: ${formatMoney(item.proposedUnitPrice)} → ${formatMoney(item.approvedUnitPrice)}`)
+                      .join('')
+                  : ''}
+                {r.resolution ? ` · «${r.resolution}»` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+// Shared actions of an open request: answer (chosen administrator) or withdraw.
+function useRequestActions(quote: Quote, target: DiscountRequest, onChanged: () => void) {
+  const { request } = useSession()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const pending = quote.discountRequests.find((r) => r.status === 'PENDING')
-  const answered = quote.discountRequests.filter((r) => r.status !== 'PENDING').slice(0, 3)
-  if (!pending && answered.length === 0) return null
-
-  const act = async (target: DiscountRequest, action: 'approve' | 'reject' | 'cancel') => {
+  const act = async (action: 'approve' | 'reject' | 'cancel', body: object = {}) => {
     setBusy(true)
     setError(null)
     try {
-      await request(`/quotes/${encodeURIComponent(quote.id)}/discount-requests/${encodeURIComponent(target.id)}/${action}`, {
-        method: 'POST',
-        body: action === 'reject' && rejecting?.trim() ? { resolution: rejecting.trim() } : {},
-      })
-      setRejecting(null)
+      await request(`/quotes/${encodeURIComponent(quote.id)}/${REQUEST_PATH[target.kind]}/${encodeURIComponent(target.id)}/${action}`, { method: 'POST', body })
       onChanged()
     } catch (err) {
       setError(describeError(err))
@@ -146,15 +242,116 @@ function DiscountRequests({ quote, onChanged }: { quote: Quote; onChanged: () =>
       setBusy(false)
     }
   }
+  return { busy, error, act }
+}
+
+function ManualPriceRequest({ quote, pending, onChanged }: { quote: Quote; pending: DiscountRequest; onChanged: () => void }) {
+  const { user } = useSession()
+  const { busy, error, act } = useRequestActions(quote, pending, onChanged)
+  const items = pending.details?.lines ?? []
+  // Prices the administrator approves (prefilled with the proposed ones).
+  const [prices, setPrices] = useState<Record<number, string>>(() => Object.fromEntries(items.map((item) => [item.lineNo, String(Number(item.proposedUnitPrice))])))
+  const [rejecting, setRejecting] = useState<string | null>(null)
+  const approver = user?.id === pending.approver.id
+  const valid = items.every((item) => MANUAL_PRICE.test(decimal(prices[item.lineNo] ?? '')) && Number(decimal(prices[item.lineNo] ?? '')) > 0)
+  const approve = () =>
+    void act('approve', {
+      lines: items
+        .filter((item) => Number(decimal(prices[item.lineNo])) !== Number(item.proposedUnitPrice))
+        .map((item) => ({ lineNo: item.lineNo, unitPrice: decimal(prices[item.lineNo]) })),
+    })
 
   return (
-    <section className={`card discount-requests${pending ? ' has-pending' : ''}`}>
-      <h2 className="subtitle">{pending ? 'Descuento global por autorizar' : 'Solicitudes de descuento global'}</h2>
+    <div className="discount-request manual-request">
+      <p className="manual-request-banner">PRECIO MANUAL EN SOLICITUD · pendiente de autorización de {pending.approver.name}</p>
+      <p>
+        Pedida por <strong>{pending.requestedBy.name}</strong> · {formatDateTime(pending.createdAt)}
+      </p>
+      <p className="cell-sub">
+        Mientras tanto la cotización no se convierte en orden ni se descarga en PDF. Si se cambia un precio manual o se envía otra solicitud, esta se cancela y
+        se pierde su avance.
+      </p>
+      {pending.reason ? <p className="cell-sub">Nota: {pending.reason}</p> : null}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Material</th><th className="num">Perfiles</th><th className="num">Propuesto</th><th className="num">Habilitado</th><th className="num">Costo est.</th><th className="num">Margen</th><th>Justificación</th>
+              {approver ? <th className="num">Precio aprobado</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.lineNo}>
+                <td data-label="#">{item.lineNo}</td>
+                <td data-label="Material">{item.referenceCode} · {item.finishDescription ?? item.finishCode}</td>
+                <td className="num" data-label="Perfiles">{item.quantity}</td>
+                <td className="num" data-label="Propuesto">{formatMoney(item.proposedUnitPrice)}</td>
+                <td className="num" data-label="Habilitado">{item.enabledUnitPrice ? formatMoney(item.enabledUnitPrice) : 'Sin precio'}</td>
+                <td className="num" data-label="Costo est.">{item.estimatedUnitCost ? formatUnitCost(item.estimatedUnitCost) : '—'}</td>
+                <td className="num" data-label="Margen">{marginText(approver ? decimal(prices[item.lineNo] ?? '') : item.proposedUnitPrice, item.estimatedUnitCost) ?? '—'}</td>
+                <td data-label="Justificación">{item.priceReason}</td>
+                {approver ? (
+                  <td className="num" data-label="Precio aprobado">
+                    <input
+                      inputMode="decimal"
+                      aria-label={`Precio aprobado del renglón ${item.lineNo}`}
+                      value={prices[item.lineNo] ?? ''}
+                      onChange={(e) => setPrices({ ...prices, [item.lineNo]: e.target.value })}
+                    />
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {approver ? (
+        rejecting !== null ? (
+          <div className="form-grid">
+            <Field label="Motivo del rechazo (opcional)">
+              <input value={rejecting} maxLength={500} onChange={(e) => setRejecting(e.target.value)} />
+            </Field>
+            <div className="actions">
+              <button type="button" className="button button-danger" disabled={busy} onClick={() => void act('reject', rejecting.trim() ? { resolution: rejecting.trim() } : {})}>
+                Rechazar solicitud
+              </button>
+              <button type="button" className="text-button" disabled={busy} onClick={() => setRejecting(null)}>Volver</button>
+            </div>
+          </div>
+        ) : (
+          <div className="actions">
+            <button type="button" className="button" disabled={busy || !valid} onClick={approve}>
+              Aprobar precios
+            </button>
+            <button type="button" className="button button-secondary" disabled={busy} onClick={() => setRejecting('')}>Rechazar</button>
+            <span className="cell-sub">Puedes corregir el precio antes de aprobar; queda registrado.</span>
+          </div>
+        )
+      ) : (
+        <div className="actions">
+          <span className="cell-sub">Solo {pending.approver.name} puede aprobarla, corregirla o rechazarla.</span>
+          <button type="button" className="text-button danger" disabled={busy} onClick={() => void act('cancel')}>Cancelar solicitud</button>
+        </div>
+      )}
+      {error ? <Notice kind="error">{error}</Notice> : null}
+    </div>
+  )
+}
+
+function GlobalDiscountRequest({ quote, pending, onChanged }: { quote: Quote; pending: DiscountRequest; onChanged: () => void }) {
+  const { user } = useSession()
+  const { busy, error, act } = useRequestActions(quote, pending, onChanged)
+  const [rejecting, setRejecting] = useState<string | null>(null)
+  const percent = pending.requestedPercent ?? '0'
+  return (
+    <>
+      <h2 className="subtitle">Descuento global por autorizar</h2>
       {pending ? (
         <div className="discount-request">
           <p>
             <strong>{pending.requestedBy.name}</strong> pidió a <strong>{pending.approver.name}</strong> un descuento global de{' '}
-            <strong className="discount-percent">{formatPercent(pending.requestedPercent)}</strong> · {formatDateTime(pending.createdAt)}
+            <strong className="discount-percent">{formatPercent(percent)}</strong> · {formatDateTime(pending.createdAt)}
           </p>
           {pending.reason ? <p className="cell-sub">Motivo: {pending.reason}</p> : null}
           {pending.projected ? (
@@ -170,14 +367,16 @@ function DiscountRequests({ quote, onChanged }: { quote: Quote; onChanged: () =>
                   <input value={rejecting} maxLength={500} onChange={(e) => setRejecting(e.target.value)} />
                 </Field>
                 <div className="actions">
-                  <button type="button" className="button button-danger" disabled={busy} onClick={() => void act(pending, 'reject')}>Rechazar solicitud</button>
+                  <button type="button" className="button button-danger" disabled={busy} onClick={() => void act('reject', rejecting.trim() ? { resolution: rejecting.trim() } : {})}>
+                    Rechazar solicitud
+                  </button>
                   <button type="button" className="text-button" disabled={busy} onClick={() => setRejecting(null)}>Volver</button>
                 </div>
               </div>
             ) : (
               <div className="actions">
-                <button type="button" className="button" disabled={busy} onClick={() => void act(pending, 'approve')}>
-                  Aprobar {formatPercent(pending.requestedPercent)}
+                <button type="button" className="button" disabled={busy} onClick={() => void act('approve')}>
+                  Aprobar {formatPercent(percent)}
                 </button>
                 <button type="button" className="button button-secondary" disabled={busy} onClick={() => setRejecting('')}>Rechazar</button>
               </div>
@@ -185,25 +384,13 @@ function DiscountRequests({ quote, onChanged }: { quote: Quote; onChanged: () =>
           ) : (
             <div className="actions">
               <span className="cell-sub">Solo {pending.approver.name} puede aprobarla o rechazarla. Mientras tanto la cotización no se convierte en orden.</span>
-              <button type="button" className="text-button danger" disabled={busy} onClick={() => void act(pending, 'cancel')}>Cancelar solicitud</button>
+              <button type="button" className="text-button danger" disabled={busy} onClick={() => void act('cancel')}>Cancelar solicitud</button>
             </div>
           )}
         </div>
       ) : null}
-      {answered.length > 0 ? (
-        <ul className="discount-history">
-          {answered.map((r) => (
-            <li key={r.id}>
-              {formatPercent(r.requestedPercent)} · <strong>{DISCOUNT_REQUEST_STATUS_LABEL[r.status]}</strong>
-              {r.status === 'CANCELLED' ? '' : ` por ${r.approver.name}`}
-              {r.resolvedAt ? ` · ${formatDateTime(r.resolvedAt)}` : ''}
-              {r.resolution ? ` · «${r.resolution}»` : ''}
-            </li>
-          ))}
-        </ul>
-      ) : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
-    </section>
+    </>
   )
 }
 
@@ -212,6 +399,8 @@ function LineEditor({
   index,
   suppliers,
   unitPrice,
+  enabledPrice,
+  authorisedBy,
   onChange,
   onPrice,
   onRemove,
@@ -219,7 +408,11 @@ function LineEditor({
   line: LineDraft
   index: number
   suppliers: Supplier[]
+  // Price used by the line (manual or enabled) and the enabled one.
   unitPrice: string | null
+  enabledPrice: string | null
+  // Manual line: who authorised exactly this price (null = to authorise).
+  authorisedBy: string | null
   onChange: (line: LineDraft) => void
   onPrice: (unitPrice: string | null) => void
   onRemove: (() => void) | null
@@ -259,8 +452,8 @@ function LineEditor({
         <Field label="Perfiles">
           <input type="number" inputMode="numeric" min={1} value={line.quantity} onChange={(e) => set({ quantity: e.target.value })} />
         </Field>
-        <Field label="Precio de venta sin IVA" hint="Antes de añadir el IVA de venta; lo fija administración.">
-          <input readOnly value={unitPrice ? `${formatMoney(unitPrice)} / perfil` : '—'} />
+        <Field label="Precio habilitado sin IVA" hint="Lo fija administración; si no hay, o el caso lo pide, usa precio manual.">
+          <input readOnly value={enabledPrice ? `${formatMoney(enabledPrice)} / perfil` : 'Sin precio habilitado'} />
         </Field>
         <Field label="Descuento (%)">
           <input inputMode="decimal" value={line.discountPercent} onChange={(e) => set({ discountPercent: e.target.value })} />
@@ -269,6 +462,40 @@ function LineEditor({
           <input inputMode="decimal" value={line.taxRatePercent} onChange={(e) => set({ taxRatePercent: e.target.value })} />
         </Field>
       </div>
+      <label className="check manual-toggle">
+        <input
+          type="checkbox"
+          checked={line.manual}
+          onChange={(e) => set({ manual: e.target.checked, ...(e.target.checked && !line.manualPrice && enabledPrice ? { manualPrice: String(Number(enabledPrice)) } : {}) })}
+        />{' '}
+        Precio manual (requiere autorización de un administrador)
+      </label>
+      {line.manual ? (
+        <div className="manual-price">
+          <div className="form-grid">
+            <Field label="Precio manual sin IVA (por perfil)">
+              <input inputMode="decimal" value={line.manualPrice} onChange={(e) => set({ manualPrice: e.target.value })} />
+            </Field>
+            <Field label="Costo de compra estimado (opcional)" hint="Por perfil; el administrador ve el margen.">
+              <input inputMode="decimal" value={line.estimatedCost} onChange={(e) => set({ estimatedCost: e.target.value })} />
+            </Field>
+          </div>
+          <Field
+            label="¿Por qué el precio es manual?"
+            hint="Obligatorio. Ej.: «No hay disponibilidad aquí; Aluminios XYZ nos lo deja a $9.000; vendiendo a $12.000 ganamos 25 %» o «Cliente especial con precio acordado»."
+          >
+            <textarea rows={3} maxLength={1000} value={line.priceReason} onChange={(e) => set({ priceReason: e.target.value })} />
+          </Field>
+          {line.manualPrice && !linePrice(line, null) ? <p className="field-error">Escribe un precio mayor que cero, con máximo 2 decimales.</p> : null}
+          {line.priceReason.trim().length > 0 && line.priceReason.trim().length < PRICE_REASON_MIN ? (
+            <p className="field-error">Explica un poco más (mínimo {PRICE_REASON_MIN} caracteres).</p>
+          ) : null}
+          <p className={authorisedBy ? 'manual-status manual-ok' : 'manual-status'}>
+            {authorisedBy ? `✓ Precio autorizado por ${authorisedBy}` : 'Sin autorizar: al guardar se envía la solicitud al administrador que elijas.'}
+            {marginText(linePrice(line, null), decimal(line.estimatedCost)) ? ` · Margen estimado ${marginText(linePrice(line, null), decimal(line.estimatedCost))}` : ''}
+          </p>
+        </div>
+      ) : null}
       <div className="quote-line-info">
         {availability.data ? (
           <span>
@@ -289,7 +516,7 @@ function LineEditor({
             <strong>Total {formatMoney(amounts.total)}</strong>
           </span>
         ) : null}
-        {price.data && !price.data.available ? <span className="field-error">{price.data.message}</span> : null}
+        {price.data && !price.data.available && !line.manual ? <span className="field-error">{price.data.message} También puedes usar precio manual.</span> : null}
         {price.error ? <span className="field-error">{price.error}</span> : null}
         {onRemove ? <button type="button" className="text-button danger" onClick={onRemove}>Quitar renglón</button> : null}
       </div>
@@ -339,13 +566,21 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           quantity: String(line.quantity),
           discountPercent: line.discountPercent,
           taxRatePercent: line.taxRatePercent,
+          manual: line.manualPrice,
+          manualPrice: line.manualPrice ? String(Number(line.unitPrice)) : '',
+          priceReason: line.priceReason ?? '',
+          estimatedCost: line.estimatedUnitCost ? String(Number(line.estimatedUnitCost)) : '',
         }))
       : [newLine()],
   )
   // Global discount of the whole quote (after line discounts, before IVA).
   const [globalDiscount, setGlobalDiscount] = useState(quote ? String(Number(quote.globalDiscountPercent)) : '0')
-  const [approverId, setApproverId] = useState('')
+  const pendingPrice = quote?.discountRequests.find((r) => r.kind === 'MANUAL_PRICE' && r.status === 'PENDING') ?? null
+  const [approverId, setApproverId] = useState(pendingPrice?.approver.id ?? '')
   const [discountReason, setDiscountReason] = useState('')
+  // The API refused a save that cancels an open manual-price request: the
+  // user confirms losing its progress.
+  const [confirmReplace, setConfirmReplace] = useState(false)
   // Configured sale price per line key, reported by each line editor.
   const [prices, setPrices] = useState<Record<string, string | null>>({})
   const [dirty, setDirty] = useState(false)
@@ -361,12 +596,41 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   // What this user applies without asking (SALES: 3 %, or what was approved).
   const globalLimit = isAdmin ? 100 : quote ? Number(quote.globalDiscountLimit) : SELLER_GLOBAL_DISCOUNT_LIMIT
   const needsApproval = !isAdmin && globalValid && Number(globalValue) > globalLimit
+  const pendingDiscount = quote?.discountRequests.find((r) => r.kind === 'GLOBAL_DISCOUNT' && r.status === 'PENDING') ?? null
   const pendingRequest = quote?.discountRequests.find((r) => r.status === 'PENDING') ?? null
   // Asking: the quote keeps the discount it already has until approval.
   const appliedGlobal = quote ? String(Number(quote.globalDiscountPercent)) : '0'
-  const willRequest = needsApproval && !pendingRequest
-  const approvers = useLoad<{ id: string; name: string }[]>(willRequest ? '/sales/discount-approvers' : null)
-  const draftAmounts = lines.map((line) => lineAmounts(line, prices[line.key] ?? null))
+  const willRequest = needsApproval && !pendingDiscount
+  // Who authorised each manual draft line exactly as it is (same rule as the API).
+  const authorisedBy = (() => {
+    const pool = new Map<string, string[]>()
+    for (const saved of quote?.lines ?? []) {
+      if (!saved.manualPrice || !saved.manualApprovedBy) continue
+      const key = savedKey(saved)
+      pool.set(key, [...(pool.get(key) ?? []), saved.manualApprovedBy.name])
+    }
+    return Object.fromEntries(lines.map((line) => [line.key, line.manual ? (pool.get(draftKey(line))?.shift() ?? (isAdmin ? user?.name ?? null : null)) : null]))
+  })()
+  const manualToAuthorise = !isAdmin && lines.some((line) => line.manual && !authorisedBy[line.key])
+  const manualValid = lines.every((line) => !line.manual || (linePrice(line, null) !== null && line.priceReason.trim().length >= PRICE_REASON_MIN && (!line.estimatedCost.trim() || (DECIMAL.test(decimal(line.estimatedCost)) && Number(decimal(line.estimatedCost)) > 0))))
+  // Unauthorised manual lines as drafted vs. as saved (what an open request
+  // covers): a difference means a new request (and losing the open one).
+  const draftUnauthorised = lines
+    .map((line, index) => (line.manual && !authorisedBy[line.key] ? `${index + 1}:${draftKey(line)}` : null))
+    .filter(Boolean)
+    .join('|')
+  const savedUnauthorised = (quote?.lines ?? [])
+    .filter((line) => line.manualPrice && !line.manualApprovedBy)
+    .map((line) => `${line.lineNo}:${savedKey(line)}`)
+    .join('|')
+  const manualChanged = draftUnauthorised !== savedUnauthorised
+  // Unauthorised manual prices are sent for authorisation on save, unless the
+  // open request still covers them as they are.
+  const willRequestPrice = manualToAuthorise && (!pendingPrice || manualChanged)
+  const needsApprover = willRequest || willRequestPrice
+  const approvers = useLoad<{ id: string; name: string }[]>(needsApprover ? '/sales/discount-approvers' : null)
+  const unauthorisedSaved = (quote?.lines ?? []).some((line) => line.manualPrice && !line.manualApprovedBy)
+  const draftAmounts = lines.map((line) => lineAmounts(line, linePrice(line, prices[line.key] ?? null)))
   const draftTotals = draftAmounts.every((amounts) => amounts !== null)
     ? documentPreview(draftAmounts as Amounts[], globalValid ? Number(needsApproval ? appliedGlobal : globalValue) : 0)
     : null
@@ -402,15 +666,34 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       quantity: Number(line.quantity),
       discountPercent: decimal(line.discountPercent || '0'),
       taxRatePercent: decimal(line.taxRatePercent),
+      ...(line.manual
+        ? {
+            manualUnitPrice: decimal(line.manualPrice),
+            priceReason: line.priceReason.trim(),
+            ...(line.estimatedCost.trim() ? { estimatedUnitCost: decimal(line.estimatedCost) } : {}),
+          }
+        : {}),
     })),
   })
 
-  const save = async () => {
+  const save = async (replace = false) => {
     setBusy(true)
     setError(null)
+    setConfirmReplace(false)
     try {
-      const { data } = await request<Quote>(id ? `/quotes/${encodeURIComponent(id)}` : '/quotes', { method: id ? 'PATCH' : 'POST', body: payload() })
+      const { data } = await request<Quote>(id ? `/quotes/${encodeURIComponent(id)}` : '/quotes', {
+        method: id ? 'PATCH' : 'POST',
+        body: { ...payload(), ...(replace ? { replacePendingPriceRequest: true } : {}) },
+      })
       setDirty(false)
+      const stillPending = data.discountRequests.some((r) => r.kind === 'MANUAL_PRICE' && r.status === 'PENDING')
+      if (!isAdmin && data.lines.some((line) => line.manualPrice && !line.manualApprovedBy) && !stillPending) {
+        try {
+          await request(`/quotes/${encodeURIComponent(data.id)}/price-requests`, { method: 'POST', body: { approverId } })
+        } catch (err) {
+          setError(`La cotización se guardó, pero la solicitud de precio manual no se envió: ${describeError(err)}`)
+        }
+      }
       if (willRequest) {
         try {
           await request(`/quotes/${encodeURIComponent(data.id)}/discount-requests`, {
@@ -424,7 +707,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       if (!id) navigate({ name: 'quote', id: data.id })
       else reload()
     } catch (err) {
-      setError(describeError(err))
+      // An open manual-price request would be lost: ask first.
+      if (err instanceof ApiError && err.status === 409 && /se pierde su avance/.test(describeError(err))) setConfirmReplace(true)
+      else setError(describeError(err))
     } finally {
       setBusy(false)
     }
@@ -465,7 +750,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
         description="Elige referencia, acabado, cantidad y origen: el precio de venta lo habilita administración. Guardar una cotización no reserva ni descuenta inventario. Los precios se calculan en el servidor y se conservan con sus condiciones."
         actions={
           <>
-            {quote ? <DownloadPdfButton path={`/quotes/${encodeURIComponent(quote.id)}/pdf`} fallbackName={quote.number} /> : null}
+            {quote && (isAdmin || !unauthorisedSaved) ? <DownloadPdfButton path={`/quotes/${encodeURIComponent(quote.id)}/pdf`} fallbackName={quote.number} /> : null}
             <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales' })}>
               Volver a ventas
             </button>
@@ -479,6 +764,11 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
             <span>Creada por <strong>{quote.createdBy.name}</strong> · {formatDateTime(quote.createdAt)}</span>
           ) : null}
         </p>
+      ) : null}
+      {quote && unauthorisedSaved && !pendingPrice && quote.status === 'DRAFT' ? (
+        <Notice kind="warning">
+          La cotización tiene precios manuales sin autorizar: no se descarga en PDF ni se convierte en orden hasta que un administrador los apruebe.
+        </Notice>
       ) : null}
       {quote ? <DiscountRequests quote={quote} onChanged={reload} /> : null}
       {quote && quote.status !== 'DRAFT' ? (
@@ -554,7 +844,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
               line={line}
               index={index}
               suppliers={suppliers.data ?? []}
-              unitPrice={prices[line.key] ?? null}
+              unitPrice={linePrice(line, prices[line.key] ?? null)}
+              enabledPrice={prices[line.key] ?? null}
+              authorisedBy={authorisedBy[line.key]}
               onChange={(next) => update(index, next)}
               onPrice={(price) => setPrices((current) => (current[line.key] === price ? current : { ...current, [line.key]: price }))}
               onRemove={lines.length > 1 ? () => { setDirty(true); setLines((current) => current.filter((_, i) => i !== index)) } : null}
@@ -576,19 +868,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                 <input inputMode="decimal" value={globalDiscount} onChange={(e) => { setGlobalDiscount(e.target.value); setDirty(true) }} />
               </Field>
               {willRequest ? (
-                <>
-                  <Field label="Administrador que autoriza">
-                    <select value={approverId} onChange={(e) => setApproverId(e.target.value)}>
-                      <option value="">Elige…</option>
-                      {(approvers.data ?? []).map((admin) => (
-                        <option key={admin.id} value={admin.id}>{admin.name}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Motivo para el administrador (opcional)">
-                    <input value={discountReason} maxLength={500} onChange={(e) => setDiscountReason(e.target.value)} />
-                  </Field>
-                </>
+                <Field label="Motivo del descuento para el administrador (opcional)">
+                  <input value={discountReason} maxLength={500} onChange={(e) => setDiscountReason(e.target.value)} />
+                </Field>
               ) : null}
             </div>
             {!globalValid ? <p className="field-error">Usa 0 o un porcentaje entre 0,1 y 100, con hasta 2 decimales.</p> : null}
@@ -598,14 +880,35 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                 solicitud de {formatPercent(globalValue)} le llega como tarea al administrador que elijas. Si la aprueba, el descuento se aplica solo.
               </Notice>
             ) : null}
-            {needsApproval && pendingRequest ? (
+            {needsApproval && pendingDiscount ? (
               <Notice kind="warning">
-                Ya hay una solicitud pendiente de {formatPercent(pendingRequest.requestedPercent)}. Espera la respuesta o cancélala para pedir otro porcentaje;
+                Ya hay una solicitud pendiente de {formatPercent(pendingDiscount?.requestedPercent ?? 0)}. Espera la respuesta o cancélala para pedir otro porcentaje;
                 al guardar se conserva {formatPercent(appliedGlobal)}.
               </Notice>
             ) : null}
-            {approvers.error ? <p className="field-error">{approvers.error}</p> : null}
           </section>
+          {needsApprover ? (
+            <section className="card">
+              <div className="form-grid">
+                <Field label="Administrador que autoriza" hint="Recibe la solicitud como tarea; solo esa persona puede responderla.">
+                  <select value={approverId} onChange={(e) => setApproverId(e.target.value)}>
+                    <option value="">Elige…</option>
+                    {(approvers.data ?? []).map((admin) => (
+                      <option key={admin.id} value={admin.id}>{admin.name}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              {willRequestPrice ? (
+                <Notice kind="warning">
+                  {pendingPrice
+                    ? 'Cambiaste un precio manual que está en solicitud: al guardar se cancela la solicitud en curso (se pierde su avance) y se envía una nueva.'
+                    : 'Hay precios manuales sin autorizar: al guardar, la solicitud le llega como tarea al administrador que elijas. Hasta que la apruebe no hay PDF ni orden de venta.'}
+                </Notice>
+              ) : null}
+              {approvers.error ? <p className="field-error">{approvers.error}</p> : null}
+            </section>
+          ) : null}
           {draftTotals ? (
             <p className="quote-totals">
               {totalsParts(draftTotals)} · <strong>Total {formatMoney(draftTotals.total)}</strong>
@@ -632,9 +935,19 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                     <td data-label="Origen">{ORIGIN_LABEL[line.origin]}{line.supplierName ? ` · ${line.supplierName}` : ''}</td>
                     <td className="num" data-label="Perfiles">{line.quantity}</td>
                     <td data-label="Precio">
-                      {line.pricingMethod ? PRICING_LABEL[line.pricingMethod] : 'Precio configurado'}
-                      {line.pricingPercent ? ` ${Number(line.pricingPercent)} %` : ''}
-                      {line.costBasis ? <span className="cell-sub"> costo base {formatUnitCost(line.costBasis)}</span> : null}
+                      {line.manualPrice ? (
+                        <>
+                          Precio manual {line.manualApprovedBy ? `· autorizado por ${line.manualApprovedBy.name}` : '· sin autorizar'}
+                          {line.priceReason ? <span className="cell-sub"> {line.priceReason}</span> : null}
+                          {line.estimatedUnitCost ? <span className="cell-sub"> costo estimado {formatUnitCost(line.estimatedUnitCost)}</span> : null}
+                        </>
+                      ) : (
+                        <>
+                          {line.pricingMethod ? PRICING_LABEL[line.pricingMethod] : 'Precio configurado'}
+                          {line.pricingPercent ? ` ${Number(line.pricingPercent)} %` : ''}
+                          {line.costBasis ? <span className="cell-sub"> costo base {formatUnitCost(line.costBasis)}</span> : null}
+                        </>
+                      )}
                     </td>
                     <td className="num" data-label="Unitario">{formatMoney(line.unitPrice)}</td>
                     <td className="num" data-label="Desc.">{formatMoney(line.discountAmount)}</td>
@@ -655,24 +968,52 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       ) : null}
 
       {error ? <Notice kind="error">{error}</Notice> : null}
+      {confirmReplace ? (
+        <Notice kind="warning">
+          <strong>La cotización tiene una solicitud de precio manual en curso.</strong> Si guardas estos cambios, esa solicitud se cancela y se pierde su avance
+          {willRequestPrice ? '; se enviará una nueva al administrador elegido' : ''}.
+          <span className="actions">
+            <button type="button" className="button button-danger" disabled={busy || (willRequestPrice && !approverId)} onClick={() => void save(true)}>
+              Sí, cancelar la solicitud y guardar
+            </button>
+            <button type="button" className="text-button" disabled={busy} onClick={() => setConfirmReplace(false)}>Volver</button>
+          </span>
+        </Notice>
+      ) : null}
       {editable ? (
         <div className="actions">
           <button
             type="button"
             className="button"
-            disabled={busy || !customerId || !paymentMethod || !globalValid || (willRequest && !approverId)}
-            title={!paymentMethod ? 'Elige la forma de pago' : willRequest && !approverId ? 'Elige el administrador que autorizará el descuento' : undefined}
+            disabled={busy || !customerId || !paymentMethod || !globalValid || !manualValid || (needsApprover && !approverId)}
+            title={
+              !paymentMethod
+                ? 'Elige la forma de pago'
+                : !manualValid
+                  ? 'Completa el precio manual y su justificación'
+                  : needsApprover && !approverId
+                    ? 'Elige el administrador que autoriza'
+                    : undefined
+            }
             onClick={() => void save()}
           >
-            {busy ? 'Guardando…' : willRequest ? 'Guardar y solicitar autorización' : id ? 'Guardar cambios' : 'Guardar cotización'}
+            {busy ? 'Guardando…' : needsApprover ? 'Guardar y solicitar autorización' : id ? 'Guardar cambios' : 'Guardar cotización'}
           </button>
           {id && quote?.status === 'DRAFT' ? (
             <>
               <button
                 type="button"
                 className="button button-secondary"
-                disabled={busy || dirty || pendingRequest !== null}
-                title={dirty ? 'Guarda los cambios antes de convertir' : pendingRequest ? 'Hay una solicitud de descuento pendiente de autorización' : undefined}
+                disabled={busy || dirty || pendingRequest !== null || unauthorisedSaved}
+                title={
+                  dirty
+                    ? 'Guarda los cambios antes de convertir'
+                    : pendingRequest
+                      ? 'Hay una solicitud pendiente de autorización'
+                      : unauthorisedSaved
+                        ? 'Hay precios manuales sin autorizar'
+                        : undefined
+                }
                 onClick={() => void convert()}
               >
                 Convertir en orden de venta

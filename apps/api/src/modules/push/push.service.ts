@@ -46,6 +46,8 @@ const MESSAGES: Record<PushKind, PushMessageOptions> = {
   'dispatch-overdue': { ttlSeconds: 12 * 3600, urgency: 'normal', topic: 'dispatch-overdue' },
   'discount-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-requested' },
   'discount-resolved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-resolved' },
+  'price-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-requested' },
+  'price-resolved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-resolved' },
 };
 
 export interface DeliveryReport {

@@ -5,21 +5,34 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { MaterialOrigin, PaymentMethod, PaymentStatus, Prisma, QuoteStatus, SalesOrderStatus } from '../../generated/prisma/client.js';
+import type {
+  MaterialOrigin,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  QuoteDiscountRequest,
+  QuoteLine,
+  QuoteRequestKind,
+  QuoteStatus,
+  SalesOrderStatus,
+} from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { RetryableException } from '../../infrastructure/http/retryable.js';
 import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
-import { Decimal, dec } from '../../shared/money.js';
+import { Decimal, ZERO, dec } from '../../shared/money.js';
 import type { SafeUser } from '../auth/auth.types.js';
 import { cancelOpenDispatches } from '../dispatch/dispatch-cancel.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
 import { enqueue } from '../notifications/outbox.js';
 import type {
   ConfirmOrderDto,
+  ApprovePriceDto,
   ConvertQuoteDto,
   CustomerQueryDto,
   DiscountRequestDto,
   ListQueryDto,
+  OrderListQueryDto,
+  PriceRequestDto,
   QuoteLineDto,
   SalePriceQueryDto,
   SaveCustomerDto,
@@ -48,6 +61,7 @@ const orderInclude = {
     orderBy: { lineNo: 'asc' },
     include: {
       supplier: { select: { id: true, code: true, name: true } },
+      manualApprovedBy: { select: { id: true, name: true } },
       reservations: { where: { status: 'ACTIVE' }, select: { quantity: true, dispatchLineId: true } },
       dispatchLines: { select: { quantity: true, dispatchedQuantity: true, dispatch: { select: { status: true } } } },
     },
@@ -100,6 +114,73 @@ const authorSelect = { select: { id: true, name: true } } as const;
 // task stays pending, flagged as overdue (it is never lost).
 const DISCOUNT_ANSWER_HOURS = 24;
 const DISCOUNT_STATUS = { PENDING: 'pendiente', APPROVED: 'aprobada', REJECTED: 'rechazada', CANCELLED: 'cancelada' } as const;
+// Audit action prefix of each request kind (DISCOUNT_APPROVED, MANUAL_PRICE_REJECTED…).
+const REQUEST_AUDIT: Record<QuoteRequestKind, string> = { GLOBAL_DISCOUNT: 'DISCOUNT', MANUAL_PRICE: 'MANUAL_PRICE' };
+// A manual price must be explained (who, why, supplier, expected margin…).
+const PRICE_REASON_MIN = 10;
+const PRICE_REQUEST_REPLACE =
+  'Ya hay una solicitud de precio manual en curso. Si continúas, la anterior se cancela y se pierde su avance; confirma para continuar.';
+
+// What an administrator authorises on a manual line: if any of it changes,
+// the authorisation is lost and must be requested again.
+function manualKey(line: {
+  referenceId: string;
+  finishId: string;
+  origin: MaterialOrigin;
+  supplierId: string | null;
+  quantity: number;
+  unitPrice: Decimal;
+  discountPercent: Decimal;
+  priceReason: string | null;
+  estimatedUnitCost: Decimal | null;
+}) {
+  return JSON.stringify([
+    line.referenceId,
+    line.finishId,
+    line.origin,
+    line.supplierId ?? null,
+    line.quantity,
+    dec(line.unitPrice).toFixed(2),
+    dec(line.discountPercent).toFixed(4),
+    line.priceReason ?? '',
+    line.estimatedUnitCost ? dec(line.estimatedUnitCost).toFixed(6) : '',
+  ]);
+}
+
+// Identity of a set of manual lines waiting for authorisation (by line number).
+const manualSignature = (lines: QuoteLine[]) => lines.map((line) => `${line.lineNo}:${manualKey(line)}`).join('|');
+
+// Snapshot kept in a MANUAL_PRICE request (and its audit events).
+type ManualPriceItem = {
+  lineNo: number;
+  referenceCode: string;
+  referenceDescription: string | null;
+  finishCode: string;
+  finishDescription: string | null;
+  origin: MaterialOrigin;
+  supplierName: string | null;
+  quantity: number;
+  discountPercent: string;
+  proposedUnitPrice: string;
+  enabledUnitPrice: string | null;
+  estimatedUnitCost: string | null;
+  priceReason: string;
+  approvedUnitPrice?: string;
+};
+interface ManualPriceDetails {
+  signature: string;
+  lines: ManualPriceItem[];
+}
+
+const describeManual = (line: QuoteLine) => ({
+  lineNo: line.lineNo,
+  referenceCode: line.referenceCode,
+  finishCode: line.finishCode,
+  quantity: line.quantity,
+  unitPrice: line.unitPrice.toFixed(2),
+  priceReason: line.priceReason,
+  approvedById: line.manualApprovedById,
+});
 // «2,5» for messages and task titles.
 const percentText = (value: Decimal) => Number(value.toString()).toLocaleString('es-CO', { maximumFractionDigits: 2 });
 const moneyText = (value: Decimal) =>
@@ -217,7 +298,7 @@ export class SalesService {
     const quote = await this.prisma.quote.findFirst({
       where: { id, ...this.quoteScope(user) },
       include: {
-        lines: { orderBy: { lineNo: 'asc' } },
+        lines: { orderBy: { lineNo: 'asc' }, include: { manualApprovedBy: authorSelect } },
         customer: true,
         order: { select: { id: true, number: true } },
         createdBy: { select: { id: true, name: true } },
@@ -234,13 +315,17 @@ export class SalesService {
     // The open request shows what the quote would become if approved.
     const discountRequests = quote.discountRequests.map((request) => ({
       ...request,
-      projected: request.status === 'PENDING' ? documentTotals(withGlobalDiscount(quote.lines, request.requestedPercent)) : null,
+      projected:
+        request.status === 'PENDING' && request.requestedPercent ? documentTotals(withGlobalDiscount(quote.lines, request.requestedPercent)) : null,
     }));
-    const withRequests = { ...quote, discountRequests, globalDiscountLimit: limit.toString() };
+    // Manual lines (and whether their price is authorised) for every role.
+    const lines = quote.lines.map((line) => ({ ...line, manualPrice: line.pricingMethod === 'MANUAL' }));
+    const withRequests = { ...quote, lines, discountRequests, globalDiscountLimit: limit.toString() };
     if (user.role === 'ADMIN') return withRequests;
+    // SALES: no pricing rule nor cost (its own manual reason and estimate stay).
     return {
       ...withRequests,
-      lines: quote.lines.map(({ pricingMethod: _method, pricingPercent: _percent, costBasis: _cost, costLotId: _lot, priceReason: _reason, ...line }) => line),
+      lines: lines.map(({ pricingMethod: _method, pricingPercent: _percent, costBasis: _cost, costLotId: _lot, ...line }) => line),
     };
   }
 
@@ -248,7 +333,10 @@ export class SalesService {
   // limit, or the largest one an administrator approved for it.
   private async sellerLimit(client: Tx | PrismaService, quoteId: string | null) {
     if (!quoteId) return SELLER_GLOBAL_DISCOUNT_LIMIT;
-    const approved = await client.quoteDiscountRequest.aggregate({ where: { quoteId, status: 'APPROVED' }, _max: { requestedPercent: true } });
+    const approved = await client.quoteDiscountRequest.aggregate({
+      where: { quoteId, kind: 'GLOBAL_DISCOUNT', status: 'APPROVED' },
+      _max: { requestedPercent: true },
+    });
     const max = approved._max.requestedPercent;
     return max && max.greaterThan(SELLER_GLOBAL_DISCOUNT_LIMIT) ? max : SELLER_GLOBAL_DISCOUNT_LIMIT;
   }
@@ -296,7 +384,7 @@ export class SalesService {
           createdById: user.id,
         },
       });
-      await this.writeQuoteLines(tx, quote.id, dto.lines, await this.globalDiscount(tx, null, dto.globalDiscountPercent, user));
+      await this.writeQuoteLines(tx, quote.id, dto.lines, await this.globalDiscount(tx, null, dto.globalDiscountPercent, user), user, []);
       return quote.id;
     });
     return this.getQuote(id, user);
@@ -310,6 +398,8 @@ export class SalesService {
       if (locked.status !== 'DRAFT') throw new ConflictException('Solo se puede modificar una cotización en borrador');
       const globalDiscount = await this.globalDiscount(tx, id, dto.globalDiscountPercent, user);
       const customer = await this.requireCustomer(tx, dto.customerId);
+      // Authorised manual prices survive only on lines that did not change.
+      const previous = await tx.quoteLine.findMany({ where: { quoteId: id }, orderBy: { lineNo: 'asc' } });
       await tx.quoteLine.deleteMany({ where: { quoteId: id } });
       await tx.quote.update({
         where: { id },
@@ -322,19 +412,41 @@ export class SalesService {
           paymentTerms: dto.paymentTerms || null,
         },
       });
-      await this.writeQuoteLines(tx, id, dto.lines, globalDiscount);
+      const lost = await this.writeQuoteLines(tx, id, dto.lines, globalDiscount, user, previous);
+      if (lost.length > 0) {
+        await audit(tx, {
+          entity: 'Quote',
+          entityId: id,
+          action: 'MANUAL_PRICE_APPROVAL_LOST',
+          userId: user.id,
+          reason: 'Se editaron renglones con precio manual autorizado',
+          data: { before: lost.map(describeManual), after: (await this.unauthorisedManual(tx, id)).map(describeManual) },
+        });
+      }
+      // An open manual-price request no longer describes what is waiting:
+      // cancelled only with the user's explicit consent.
+      const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, kind: 'MANUAL_PRICE', status: 'PENDING' } });
+      if (pending && (pending.details as unknown as ManualPriceDetails).signature !== manualSignature(await this.unauthorisedManual(tx, id))) {
+        if (!dto.replacePendingPriceRequest) {
+          throw new ConflictException(
+            'La cotización tiene una solicitud de precio manual en curso. Si guardas estos cambios, la solicitud se cancela y se pierde su avance; confirma para continuar.',
+          );
+        }
+        await this.closeRequest(tx, pending, 'CANCELLED', null, user, 'Se editó la cotización y la solicitud quedó desactualizada');
+      }
     });
     return this.getQuote(id, user);
   }
 
-  // Also withdraws an open discount request (and its administrator's task).
+  // Also withdraws its open requests (and their administrators' tasks).
   async cancelQuote(id: string, user: SafeUser) {
     await this.prisma.$transaction(async (tx) => {
       const locked = await this.lockQuote(tx, id, user);
       if (locked.status !== 'DRAFT') throw new ConflictException('La cotización no existe o ya no está en borrador');
       await tx.quote.update({ where: { id }, data: { status: 'CANCELLED' } });
-      const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, status: 'PENDING' } });
-      if (pending) await this.closeDiscountRequest(tx, pending.id, 'CANCELLED', null, user);
+      for (const pending of await tx.quoteDiscountRequest.findMany({ where: { quoteId: id, status: 'PENDING' } })) {
+        await this.closeRequest(tx, pending, 'CANCELLED', null, user, 'Se canceló la cotización');
+      }
     });
     return this.getQuote(id, user);
   }
@@ -346,9 +458,20 @@ export class SalesService {
     return customer;
   }
 
-  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[], globalDiscountPercent: Decimal) {
+  // Writes the lines with their amounts. A manual price is authorised when
+  // ADMIN saves it, or when it is unchanged from an authorised line of
+  // `previous`; returns the authorised manual lines that lost it.
+  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[], globalDiscountPercent: Decimal, user: SafeUser, previous: QuoteLine[]) {
     const rows: Omit<Prisma.QuoteLineUncheckedCreateInput, keyof LineAmounts>[] = [];
     const bases: (LineAmounts & { taxRatePercent: Decimal })[] = [];
+    // Authorised manual lines that may be kept, by what was authorised.
+    const authorised = new Map<string, QuoteLine[]>();
+    for (const line of previous) {
+      if (line.pricingMethod !== 'MANUAL' || !line.manualApprovedById) continue;
+      const key = manualKey(line);
+      authorised.set(key, [...(authorised.get(key) ?? []), line]);
+    }
+    const appliedByAdmin: number[] = [];
     for (const [index, line] of lines.entries()) {
       const reference = await tx.reference.findUnique({ where: { id: line.referenceId } });
       if (!reference?.active) throw new BadRequestException(`Renglón ${index + 1}: la referencia no existe o está inactiva`);
@@ -367,16 +490,7 @@ export class SalesService {
       if (discountPercent.greaterThan(100) || taxRatePercent.greaterThan(100)) {
         throw new BadRequestException(`Renglón ${index + 1}: los porcentajes no pueden superar 100`);
       }
-      // Values copied from the enabled price: later changes never touch it.
-      const price = await this.enabledPrice(tx, line);
-      if (!price) {
-        throw new BadRequestException(
-          `Renglón ${index + 1}: no hay precio de venta habilitado para ${reference.code} ${finish.code} (${line.origin === 'CHINA' ? 'China' : 'Nacional'}). Pide a administración que lo habilite.`,
-        );
-      }
-      const unitPrice = price.unitPrice;
-      bases.push({ ...lineAmounts(line.quantity, unitPrice, discountPercent, taxRatePercent), taxRatePercent });
-      rows.push({
+      const identity = {
         quoteId,
         lineNo: index + 1,
         referenceId: line.referenceId,
@@ -384,11 +498,73 @@ export class SalesService {
         origin: line.origin,
         supplierId: line.supplierId ?? null,
         quantity: line.quantity,
-        pricingMethod: 'MARKUP_ON_COST',
-        pricingPercent: price.markupPercent,
-        costBasis: price.unitCost,
-        salePriceId: price.id,
-        unitPrice,
+      };
+      let pricing: Pick<
+        Prisma.QuoteLineUncheckedCreateInput,
+        'pricingMethod' | 'pricingPercent' | 'costBasis' | 'salePriceId' | 'unitPrice' | 'priceReason' | 'estimatedUnitCost' | 'manualApprovedById' | 'manualApprovedAt'
+      >;
+      let unitPrice: Decimal;
+      if (line.manualUnitPrice !== undefined) {
+        // Manual price: always possible, explained, and authorised by an administrator.
+        unitPrice = dec(line.manualUnitPrice);
+        if (!unitPrice.greaterThan(0) || unitPrice.decimalPlaces() > 2) {
+          throw new BadRequestException(`Renglón ${index + 1}: el precio manual debe ser mayor que cero y tener máximo 2 decimales`);
+        }
+        const priceReason = line.priceReason ?? '';
+        if (priceReason.length < PRICE_REASON_MIN) {
+          throw new BadRequestException(
+            `Renglón ${index + 1}: explica por qué el precio es manual (mínimo ${PRICE_REASON_MIN} caracteres), p. ej. proveedor, costo y ganancia esperada`,
+          );
+        }
+        const estimatedUnitCost = line.estimatedUnitCost === undefined ? null : dec(line.estimatedUnitCost);
+        if (estimatedUnitCost && !estimatedUnitCost.greaterThan(0)) {
+          throw new BadRequestException(`Renglón ${index + 1}: el costo estimado debe ser mayor que cero`);
+        }
+        const key = manualKey({ ...identity, unitPrice, discountPercent, priceReason, estimatedUnitCost });
+        const kept = authorised.get(key)?.shift();
+        if (!kept && user.role === 'ADMIN') appliedByAdmin.push(index + 1);
+        pricing = {
+          pricingMethod: 'MANUAL',
+          pricingPercent: null,
+          costBasis: null,
+          salePriceId: null,
+          unitPrice,
+          priceReason,
+          estimatedUnitCost,
+          ...(kept
+            ? { manualApprovedById: kept.manualApprovedById, manualApprovedAt: kept.manualApprovedAt }
+            : user.role === 'ADMIN'
+              ? { manualApprovedById: user.id, manualApprovedAt: new Date() }
+              : { manualApprovedById: null, manualApprovedAt: null }),
+        };
+      } else {
+        if (line.priceReason || line.estimatedUnitCost !== undefined) {
+          throw new BadRequestException(`Renglón ${index + 1}: la justificación y el costo estimado solo aplican con precio manual`);
+        }
+        // Values copied from the enabled price: later changes never touch it.
+        const price = await this.enabledPrice(tx, line);
+        if (!price) {
+          throw new BadRequestException(
+            `Renglón ${index + 1}: no hay precio de venta habilitado para ${reference.code} ${finish.code} (${line.origin === 'CHINA' ? 'China' : 'Nacional'}). Usa precio manual o pide a administración que lo habilite.`,
+          );
+        }
+        unitPrice = price.unitPrice;
+        pricing = {
+          pricingMethod: 'MARKUP_ON_COST',
+          pricingPercent: price.markupPercent,
+          costBasis: price.unitCost,
+          salePriceId: price.id,
+          unitPrice,
+          priceReason: null,
+          estimatedUnitCost: null,
+          manualApprovedById: null,
+          manualApprovedAt: null,
+        };
+      }
+      bases.push({ ...lineAmounts(line.quantity, unitPrice, discountPercent, taxRatePercent), taxRatePercent });
+      rows.push({
+        ...identity,
+        ...pricing,
         discountPercent,
         taxRatePercent,
         referenceCode: reference.code,
@@ -402,6 +578,29 @@ export class SalesService {
     const amounts = withGlobalDiscount(bases, globalDiscountPercent);
     for (const [index, row] of rows.entries()) await tx.quoteLine.create({ data: { ...row, ...amounts[index] } });
     await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts), globalDiscountPercent } });
+    if (appliedByAdmin.length > 0) {
+      const applied = await tx.quoteLine.findMany({ where: { quoteId, lineNo: { in: appliedByAdmin } }, orderBy: { lineNo: 'asc' } });
+      await audit(tx, { entity: 'Quote', entityId: quoteId, action: 'MANUAL_PRICE_APPLIED', userId: user.id, data: { lines: applied.map(describeManual) } });
+    }
+    return [...authorised.values()].flat();
+  }
+
+  // Manual lines whose price is not authorised (what a request covers).
+  private unauthorisedManual(tx: Tx, quoteId: string) {
+    return tx.quoteLine.findMany({ where: { quoteId, pricingMethod: 'MANUAL', manualApprovedById: null }, orderBy: { lineNo: 'asc' } });
+  }
+
+  // Recomputes every line and the totals from the stored prices (after an
+  // administrator corrects manual prices).
+  private async recomputeQuote(tx: Tx, quoteId: string) {
+    const quote = await tx.quote.findUniqueOrThrow({ where: { id: quoteId }, select: { globalDiscountPercent: true } });
+    const lines = await tx.quoteLine.findMany({ where: { quoteId }, orderBy: { lineNo: 'asc' } });
+    const amounts = withGlobalDiscount(
+      lines.map((line) => ({ ...lineAmounts(line.quantity, line.unitPrice, line.discountPercent, line.taxRatePercent), taxRatePercent: line.taxRatePercent })),
+      quote.globalDiscountPercent,
+    );
+    for (const [index, line] of lines.entries()) await tx.quoteLine.update({ where: { id: line.id }, data: amounts[index] });
+    await tx.quote.update({ where: { id: quoteId }, data: documentTotals(amounts) });
   }
 
   // Applies a global discount to the saved lines (prices and line discounts
@@ -436,9 +635,9 @@ export class SalesService {
       await this.prisma.$transaction(async (tx) => {
         const locked = await this.lockQuote(tx, quoteId, user);
         if (locked.status !== 'DRAFT') throw new ConflictException('Solo se pide descuento para una cotización vigente (borrador)');
-        const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId, status: 'PENDING' } });
+        const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId, kind: 'GLOBAL_DISCOUNT', status: 'PENDING' } });
         if (pending) {
-          if (pending.requestedPercent.equals(percent) && pending.approverId === dto.approverId) return;
+          if (pending.requestedPercent?.equals(percent) && pending.approverId === dto.approverId) return;
           throw new ConflictException('Esta cotización ya tiene una solicitud de descuento pendiente; cancélala para enviar otra');
         }
         if (percent.greaterThan(100)) throw new BadRequestException('El descuento global no puede superar 100 %');
@@ -492,57 +691,219 @@ export class SalesService {
   async resolveDiscount(quoteId: string, requestId: string, decision: 'APPROVED' | 'REJECTED', resolution: string | undefined, user: SafeUser) {
     await this.prisma.$transaction(async (tx) => {
       const locked = await this.lockQuote(tx, quoteId, user);
-      const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId } });
-      if (!request) throw new NotFoundException('La solicitud de descuento no existe');
-      if (request.approverId !== user.id) {
-        throw new ForbiddenException('Solo el administrador elegido por el vendedor responde esta solicitud');
-      }
+      const request = await this.answerable(tx, quoteId, requestId, 'GLOBAL_DISCOUNT', user);
       if (request.status === decision) return;
       if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
       if (locked.status !== 'DRAFT') throw new ConflictException('La cotización ya no está vigente');
-      await this.closeDiscountRequest(tx, request.id, decision, decision === 'REJECTED' ? resolution || null : null, user);
-      if (decision === 'APPROVED') await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent);
+      await this.closeRequest(tx, request, decision, decision === 'REJECTED' ? resolution || null : null, user);
+      if (decision === 'APPROVED') await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent!);
       await enqueue(tx, [{ userId: request.requestedById, kind: 'discount-resolved', dedupeKey: `discount-resolved:${request.id}` }]);
     });
     return this.getQuote(quoteId, user);
   }
 
+  // The request of that kind on that quote, which only the administrator the
+  // seller chose may answer.
+  private async answerable(tx: Tx, quoteId: string, requestId: string, kind: QuoteRequestKind, user: SafeUser) {
+    const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId, kind } });
+    if (!request) throw new NotFoundException(kind === 'GLOBAL_DISCOUNT' ? 'La solicitud de descuento no existe' : 'La solicitud de precio manual no existe');
+    if (request.approverId !== user.id) {
+      throw new ForbiddenException('Solo el administrador elegido por el vendedor responde esta solicitud');
+    }
+    return request;
+  }
+
   // The seller (or an administrator) withdraws an open request.
-  async cancelDiscountRequest(quoteId: string, requestId: string, user: SafeUser) {
+  async cancelDiscountRequest(quoteId: string, requestId: string, user: SafeUser, kind: QuoteRequestKind = 'GLOBAL_DISCOUNT') {
     await this.prisma.$transaction(async (tx) => {
       await this.lockQuote(tx, quoteId, user);
-      const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId } });
-      if (!request) throw new NotFoundException('La solicitud de descuento no existe');
+      const request = await tx.quoteDiscountRequest.findFirst({ where: { id: requestId, quoteId, kind } });
+      if (!request) throw new NotFoundException(kind === 'GLOBAL_DISCOUNT' ? 'La solicitud de descuento no existe' : 'La solicitud de precio manual no existe');
       if (request.status === 'CANCELLED') return;
       if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
-      await this.closeDiscountRequest(tx, request.id, 'CANCELLED', null, user);
+      await this.closeRequest(tx, request, 'CANCELLED', null, user, 'Retirada por quien la pidió o por un administrador');
     });
     return this.getQuote(quoteId, user);
   }
 
   // Closes a PENDING request (the quote is locked by the caller) and its task:
-  // answered → task completed; cancelled → task cancelled.
-  private async closeDiscountRequest(
+  // answered → task completed; cancelled → task cancelled. `note` explains a
+  // cancellation in the audit trail; `data` adds to it.
+  private async closeRequest(
     tx: Tx,
-    requestId: string,
+    request: Pick<QuoteDiscountRequest, 'id' | 'kind'>,
     status: 'APPROVED' | 'REJECTED' | 'CANCELLED',
     resolution: string | null,
     user: SafeUser,
+    note?: string,
+    data: Record<string, unknown> = {},
   ) {
     const now = new Date();
-    const request = await tx.quoteDiscountRequest.update({ where: { id: requestId }, data: { status, resolvedAt: now, resolution } });
+    const closed = await tx.quoteDiscountRequest.update({ where: { id: request.id }, data: { status, resolvedAt: now, resolution } });
     await tx.task.updateMany({
-      where: { discountRequestId: requestId, completedAt: null, cancelledAt: null },
+      where: { discountRequestId: request.id, completedAt: null, cancelledAt: null },
       data: status === 'CANCELLED' ? { cancelledAt: now } : { completedAt: now },
     });
     await audit(tx, {
       entity: 'Quote',
-      entityId: request.quoteId,
-      action: `DISCOUNT_${status}`,
+      entityId: closed.quoteId,
+      action: `${REQUEST_AUDIT[closed.kind]}_${status}`,
       userId: user.id,
-      reason: resolution ?? undefined,
-      data: { requestId, percent: request.requestedPercent.toString() },
+      reason: resolution ?? note,
+      data: { requestId: closed.id, ...(closed.requestedPercent ? { percent: closed.requestedPercent.toString() } : {}), ...data },
     });
+  }
+
+  // --- Manual price requests ----------------------------------------------------
+
+  // SALES asks the administrator it chooses to authorise every manual price of
+  // the quote that is not authorised yet. It becomes a task of that
+  // administrator; the quote can be neither printed for the customer nor
+  // converted until then. Repeating the same request is a no-op; another one
+  // while one is open needs `replace` (the open one is cancelled).
+  async requestPrice(quoteId: string, dto: PriceRequestDto, user: SafeUser) {
+    if (user.role === 'ADMIN') {
+      throw new BadRequestException('Como administrador, tus precios manuales quedan autorizados al guardar la cotización');
+    }
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const locked = await this.lockQuote(tx, quoteId, user);
+        if (locked.status !== 'DRAFT') throw new ConflictException('Solo se pide autorización para una cotización vigente (borrador)');
+        const lines = await this.unauthorisedManual(tx, quoteId);
+        if (lines.length === 0) throw new BadRequestException('La cotización no tiene precios manuales por autorizar');
+        const signature = manualSignature(lines);
+        const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId, kind: 'MANUAL_PRICE', status: 'PENDING' } });
+        if (pending) {
+          // Retry of the same request (double click, lost answer): nothing new.
+          if ((pending.details as unknown as ManualPriceDetails).signature === signature && pending.approverId === dto.approverId) return;
+          if (!dto.replace) throw new ConflictException(PRICE_REQUEST_REPLACE);
+        }
+        const approver = await tx.user.findUnique({ where: { id: dto.approverId }, select: { role: true, active: true } });
+        if (!approver || approver.role !== 'ADMIN' || !approver.active) {
+          throw new BadRequestException('Elige un administrador activo para autorizar el precio manual');
+        }
+        const items: ManualPriceItem[] = [];
+        for (const line of lines) {
+          const enabled = await this.enabledPrice(tx, line);
+          items.push({
+            lineNo: line.lineNo,
+            referenceCode: line.referenceCode,
+            referenceDescription: line.referenceDescription,
+            finishCode: line.finishCode,
+            finishDescription: line.finishDescription,
+            origin: line.origin,
+            supplierName: line.supplierName,
+            quantity: line.quantity,
+            discountPercent: line.discountPercent.toString(),
+            proposedUnitPrice: line.unitPrice.toFixed(2),
+            enabledUnitPrice: enabled ? enabled.unitPrice.toFixed(2) : null,
+            estimatedUnitCost: line.estimatedUnitCost ? line.estimatedUnitCost.toString() : null,
+            priceReason: line.priceReason ?? '',
+          });
+        }
+        const details: ManualPriceDetails = { signature, lines: items };
+        if (pending) await this.closeRequest(tx, pending, 'CANCELLED', null, user, 'Reemplazada por una solicitud nueva');
+        const request = await tx.quoteDiscountRequest.create({
+          data: {
+            quoteId,
+            kind: 'MANUAL_PRICE',
+            details: details as unknown as Prisma.InputJsonValue,
+            reason: dto.reason || null,
+            requestedById: user.id,
+            approverId: dto.approverId,
+          },
+        });
+        if (pending) await tx.quoteDiscountRequest.update({ where: { id: pending.id }, data: { replacedById: request.id } });
+        const quote = await tx.quote.findUniqueOrThrow({ where: { id: quoteId }, select: { number: true, customerName: true } });
+        const summary = items
+          .map((item) => `${item.quantity} × ${item.referenceCode} ${item.finishDescription ?? item.finishCode} a ${moneyText(dec(item.proposedUnitPrice))}`)
+          .join('; ');
+        const now = new Date();
+        await tx.task.create({
+          data: {
+            title: `Autorizar precio manual · ${quote.number}`,
+            description: `${user.name} pide autorizar precios manuales en la cotización ${quote.number} para ${quote.customerName}: ${summary}.${dto.reason ? ` Nota: ${dto.reason}` : ''}`,
+            dueAt: new Date(now.getTime() + DISCOUNT_ANSWER_HOURS * 3_600_000),
+            createdAt: now,
+            assigneeId: dto.approverId,
+            createdById: user.id,
+            kind: 'DISCOUNT_APPROVAL',
+            discountRequestId: request.id,
+          },
+        });
+        await enqueue(tx, [{ userId: dto.approverId, kind: 'price-requested', dedupeKey: `price-requested:${request.id}` }]);
+        await audit(tx, {
+          entity: 'Quote',
+          entityId: quoteId,
+          action: 'MANUAL_PRICE_REQUESTED',
+          userId: user.id,
+          reason: dto.reason || undefined,
+          data: { requestId: request.id, approverId: dto.approverId, replaces: pending?.id ?? null, lines: items },
+        });
+      });
+    } catch (error) {
+      // Only one open request per quote and kind (unique index), even if two arrive at once.
+      if (isUniqueViolation(error)) throw new ConflictException(PRICE_REQUEST_REPLACE);
+      throw error;
+    }
+    return this.getQuote(quoteId, user);
+  }
+
+  // Only the administrator the seller chose answers. Approving may correct
+  // any requested price; the quote is recomputed and becomes printable and
+  // convertible (if nothing else is pending). Repeating the same answer is a
+  // no-op.
+  async resolvePrice(quoteId: string, requestId: string, decision: 'APPROVED' | 'REJECTED', dto: ApprovePriceDto & { resolution?: string }, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockQuote(tx, quoteId, user);
+      const request = await this.answerable(tx, quoteId, requestId, 'MANUAL_PRICE', user);
+      if (request.status === decision) return;
+      if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
+      if (locked.status !== 'DRAFT') throw new ConflictException('La cotización ya no está vigente');
+      const details = request.details as unknown as ManualPriceDetails;
+      if (decision === 'REJECTED') {
+        await this.closeRequest(tx, request, 'REJECTED', dto.resolution || null, user, undefined, { lines: details.lines });
+      } else {
+        const lines = await this.unauthorisedManual(tx, quoteId);
+        // Edits cancel the request, so this only guards against the impossible.
+        if (manualSignature(lines) !== details.signature) {
+          throw new ConflictException('La cotización cambió después de la solicitud; pide a ventas que la envíe de nuevo');
+        }
+        const corrections = new Map<number, Decimal>();
+        for (const correction of dto.lines ?? []) {
+          if (!lines.some((line) => line.lineNo === correction.lineNo)) {
+            throw new BadRequestException(`El renglón ${correction.lineNo} no está en esta solicitud de precio manual`);
+          }
+          const price = dec(correction.unitPrice);
+          if (!price.greaterThan(0) || price.decimalPlaces() > 2) {
+            throw new BadRequestException(`Renglón ${correction.lineNo}: el precio debe ser mayor que cero y tener máximo 2 decimales`);
+          }
+          corrections.set(correction.lineNo, price);
+        }
+        const now = new Date();
+        for (const line of lines) {
+          await tx.quoteLine.update({
+            where: { id: line.id },
+            data: { unitPrice: corrections.get(line.lineNo) ?? line.unitPrice, manualApprovedById: user.id, manualApprovedAt: now },
+          });
+        }
+        await this.recomputeQuote(tx, quoteId);
+        const approved = details.lines.map((item) => ({
+          ...item,
+          approvedUnitPrice: (corrections.get(item.lineNo) ?? dec(item.proposedUnitPrice)).toFixed(2),
+        }));
+        await tx.quoteDiscountRequest.update({
+          where: { id: request.id },
+          data: { details: { ...details, lines: approved } as unknown as Prisma.InputJsonValue },
+        });
+        await this.closeRequest(tx, request, 'APPROVED', null, user, undefined, {
+          lines: approved.map((item) => ({ lineNo: item.lineNo, referenceCode: item.referenceCode, proposedUnitPrice: item.proposedUnitPrice, approvedUnitPrice: item.approvedUnitPrice })),
+          corrected: corrections.size > 0,
+        });
+      }
+      await enqueue(tx, [{ userId: request.requestedById, kind: 'price-resolved', dedupeKey: `price-resolved:${request.id}` }]);
+    });
+    return this.getQuote(quoteId, user);
   }
 
   // One quote → one order. Idempotent: the same operationKey (double click,
@@ -566,11 +927,19 @@ export class SalesService {
         const existing = await tx.salesOrder.findUnique({ where: { quoteId: id }, select: { number: true } });
         if (existing) throw new ConflictException(`La cotización ya se convirtió en la orden ${existing.number}`);
         if (rows[0].status !== 'DRAFT') throw new ConflictException('Solo se convierte una cotización vigente (borrador)');
-        // The order must carry the discount the administrator decides on.
-        if (await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, status: 'PENDING' }, select: { id: true } })) {
-          throw new ConflictException('Hay una solicitud de descuento global pendiente: espera la respuesta del administrador o cancélala antes de convertir');
+        // The order must carry what the administrator decides on.
+        const pending = await tx.quoteDiscountRequest.findFirst({ where: { quoteId: id, status: 'PENDING' }, select: { kind: true } });
+        if (pending) {
+          throw new ConflictException(
+            pending.kind === 'GLOBAL_DISCOUNT'
+              ? 'Hay una solicitud de descuento global pendiente: espera la respuesta del administrador o cancélala antes de convertir'
+              : 'El precio manual está en solicitud: espera la autorización del administrador antes de convertir',
+          );
         }
         const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+        if (quote.lines.some((line) => line.pricingMethod === 'MANUAL' && !line.manualApprovedById)) {
+          throw new ConflictException('La cotización tiene precios manuales sin autorizar: envía la solicitud a un administrador antes de convertir');
+        }
         // Quotes saved before the payment method existed must choose one first.
         if (!quote.paymentMethod) throw new ConflictException('Indica la forma de pago y guarda la cotización antes de convertirla en orden');
         const order = await tx.salesOrder.create({
@@ -617,11 +986,22 @@ export class SalesService {
                 finishDescription: line.finishDescription,
                 supplierName: line.supplierName,
                 salePriceId: line.salePriceId,
+                manualPrice: line.pricingMethod === 'MANUAL',
+                priceReason: line.pricingMethod === 'MANUAL' ? line.priceReason : null,
+                manualApprovedById: line.pricingMethod === 'MANUAL' ? line.manualApprovedById : null,
               })),
             },
           },
         });
         await tx.quote.update({ where: { id }, data: { status: 'CONVERTED' } });
+        const manual = quote.lines.filter((line) => line.pricingMethod === 'MANUAL');
+        await audit(tx, {
+          entity: 'Quote',
+          entityId: id,
+          action: 'CONVERTED',
+          userId: user.id,
+          data: { orderId: order.id, orderNumber: order.number, ...(manual.length > 0 ? { manualPrices: manual.map(describeManual) } : {}) },
+        });
         return order.id;
       });
       return this.getOrder(orderId, user);
@@ -642,13 +1022,66 @@ export class SalesService {
     return user.role === 'ADMIN' ? {} : { createdById: user.id };
   }
 
-  async listOrders(query: ListQueryDto, user: SafeUser) {
+  // Filters of the order list and the seller summary (combined with AND).
+  private orderFilters(query: OrderListQueryDto): Prisma.SalesOrderWhereInput {
+    // Days in Bogotá (UTC-05:00, no daylight saving time); `to` included.
+    const day = (value: string, field: string) => {
+      const date = new Date(`${value}T00:00:00.000-05:00`);
+      if (Number.isNaN(date.getTime()) || new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value) {
+        throw new BadRequestException(`${field}: la fecha no existe`);
+      }
+      return date;
+    };
+    const from = query.dateFrom ? day(query.dateFrom, 'Desde') : undefined;
+    const to = query.dateTo ? new Date(day(query.dateTo, 'Hasta').getTime() + 86_400_000) : undefined;
+    if (from && to && from >= to) throw new BadRequestException('La fecha «desde» es posterior a la fecha «hasta»');
+    return {
+      ...(query.status ? { status: query.status as SalesOrderStatus } : {}),
+      ...(query.sellerId ? { createdById: query.sellerId } : {}),
+      ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
+      ...(query.payment ? { paymentStatus: query.payment === 'NONE' ? null : query.payment } : {}),
+    };
+  }
+
+  // Per seller (owner of the order): orders and amounts, split by payment
+  // state, for commissions. Cancelled orders are left out. Base = value
+  // before VAT after line and global discounts.
+  async ordersSummary(query: OrderListQueryDto) {
+    // Without a status filter, cancelled orders are not sales.
+    const where: Prisma.SalesOrderWhereInput = { ...this.orderFilters(query), ...(query.status ? {} : { status: { not: 'CANCELLED' } }) };
+    const groups = await this.prisma.salesOrder.groupBy({
+      by: ['createdById', 'paymentStatus'],
+      where,
+      _count: { _all: true },
+      _sum: { subtotal: true, discountTotal: true, globalDiscountAmount: true, total: true },
+    });
+    const sellers = await this.prisma.user.findMany({ where: { id: { in: [...new Set(groups.map((g) => g.createdById))] } }, select: { id: true, name: true } });
+    const empty = () => ({ orders: 0, base: ZERO, total: ZERO });
+    const rows = new Map<string, { seller: { id: string; name: string }; all: ReturnType<typeof empty>; paid: ReturnType<typeof empty>; pending: ReturnType<typeof empty>; cash: ReturnType<typeof empty> }>();
+    for (const group of groups) {
+      const seller = sellers.find((s) => s.id === group.createdById) ?? { id: group.createdById, name: 'Usuario eliminado' };
+      const row = rows.get(seller.id) ?? { seller, all: empty(), paid: empty(), pending: empty(), cash: empty() };
+      const base = dec(group._sum.subtotal).minus(dec(group._sum.discountTotal)).minus(dec(group._sum.globalDiscountAmount));
+      const total = dec(group._sum.total);
+      const bucket = group.paymentStatus === 'PAID' ? row.paid : group.paymentStatus === 'PENDING' ? row.pending : row.cash;
+      for (const target of [row.all, bucket]) {
+        target.orders += group._count._all;
+        target.base = target.base.plus(base);
+        target.total = target.total.plus(total);
+      }
+      rows.set(seller.id, row);
+    }
+    const text = (bucket: ReturnType<typeof empty>) => ({ orders: bucket.orders, base: bucket.base.toFixed(2), total: bucket.total.toFixed(2) });
+    return [...rows.values()]
+      .sort((a, b) => b.all.total.comparedTo(a.all.total) || a.seller.name.localeCompare(b.seller.name))
+      .map((row) => ({ seller: row.seller, all: text(row.all), paid: text(row.paid), pending: text(row.pending), cash: text(row.cash) }));
+  }
+
+  async listOrders(query: OrderListQueryDto, user: SafeUser) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
-    const where: Prisma.SalesOrderWhereInput = {
-      ...this.orderScope(user),
-      ...(query.status ? { status: query.status as SalesOrderStatus } : {}),
-    };
+    // SALES: always within its own orders (whatever seller it asks for).
+    const where: Prisma.SalesOrderWhereInput = { AND: [this.orderFilters(query), this.orderScope(user)] };
     const [total, items] = await this.prisma.$transaction([
       this.prisma.salesOrder.count({ where }),
       this.prisma.salesOrder.findMany({
@@ -828,6 +1261,10 @@ export class SalesService {
   // get 404). Prints customer-facing values only, never costs.
   async quotePdf(id: string, user: SafeUser) {
     const quote = await this.loadQuote(id, user);
+    // The customer never sees a price nobody authorised (ADMIN may preview).
+    if (user.role !== 'ADMIN' && quote.lines.some((line) => line.manualPrice && !line.manualApprovedById)) {
+      throw new ConflictException('La cotización tiene precios manuales sin autorizar: el PDF se habilita cuando un administrador los apruebe');
+    }
     const pdf = await renderSalesPdf({
       title: 'COTIZACIÓN',
       number: quote.number,

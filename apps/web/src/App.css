@@ -3888,6 +3888,53 @@ button.doc-row:focus-visible {
   color: var(--muted);
 }
 
+/* Manual price of a quote line and its authorisation request. */
+.manual-toggle {
+  margin: 10px 0 4px;
+  font-weight: 600;
+}
+
+.manual-price {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px dashed var(--warning-border);
+  border-radius: 8px;
+  background: var(--warning-bg);
+}
+
+.manual-price textarea {
+  width: 100%;
+}
+
+.manual-status {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+
+.manual-status.manual-ok {
+  color: #00695c;
+}
+
+.manual-request + .manual-request,
+.manual-request + .subtitle {
+  margin-top: 18px;
+}
+
+.manual-request-banner {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.manual-request td input {
+  width: 110px;
+  text-align: right;
+}
+
 /* Payment state of an abono / credit order. */
 .badge-paid {
   margin-left: 10px;

@@ -12,7 +12,10 @@ export type NotificationKind =
   | 'dispatch-overdue'
   // Global discount of a quote: to the chosen administrator / to the seller.
   | 'discount-requested'
-  | 'discount-resolved';
+  | 'discount-resolved'
+  // Manual prices of a quote: to the chosen administrator / to the seller.
+  | 'price-requested'
+  | 'price-resolved';
 
 export interface OutboxItem {
   userId: string;
