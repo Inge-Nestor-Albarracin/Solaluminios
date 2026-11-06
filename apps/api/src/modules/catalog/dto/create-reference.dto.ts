@@ -6,16 +6,17 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
+import { REFERENCE_CODE_PATTERN, normalizeReferenceCode } from '../catalog-codes.js';
 
 export class CreateReferenceDto {
   @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().toUpperCase() : value,
+    typeof value === 'string' ? normalizeReferenceCode(value) : value,
   )
   @IsString()
   @MaxLength(50)
-  @Matches(/^[A-Z0-9][A-Z0-9._/-]*$/, {
+  @Matches(REFERENCE_CODE_PATTERN, {
     message:
-      'El código debe contener letras, números o los símbolos . _ / -',
+      'El código debe contener letras, números, los símbolos . _ / - o un espacio entre partes (p. ej. «703 CURVO»)',
   })
   code!: string;
 
@@ -36,4 +37,13 @@ export class CreateReferenceDto {
   @IsNotEmpty({ message: 'familyId no puede estar vacío' })
   @MaxLength(50)
   familyId?: string | null;
+
+  // Other families where it is also known (a hint on screen only).
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  familyHint?: string | null;
 }

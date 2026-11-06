@@ -8,7 +8,8 @@ import { useSession } from '../../session/session-context'
 import { IconArrow } from '../icons'
 import { Empty, Field, Loading, Notice } from '../ui'
 
-const CODE_PATTERN = /^[A-Z0-9][A-Z0-9._/-]*$/
+// Like the API: one space allowed between parts («703 CURVO»).
+const CODE_PATTERN = /^[A-Z0-9][A-Z0-9._/-]*(?: [A-Z0-9._/-]+)*$/
 // The list is filtered in the browser; render at most this many rows.
 const MAX_ROWS = 100
 
@@ -16,6 +17,7 @@ interface Editing {
   id: string
   description: string
   familyId: string
+  familyHint: string
 }
 
 // References (profiles): create, edit description/family, activate/deactivate.
@@ -64,7 +66,9 @@ export function ReferencesAdmin() {
     if ((current?.description ?? null) !== description) body.description = description
     // Omitted keeps the family, null removes it, an id sets it.
     if ((current?.familyId ?? '') !== editing.familyId) body.familyId = editing.familyId || null
-    if (body.description === undefined && body.familyId === undefined) {
+    const familyHint = editing.familyHint.trim() || null
+    if ((current?.familyHint ?? null) !== familyHint) body.familyHint = familyHint
+    if (body.description === undefined && body.familyId === undefined && body.familyHint === undefined) {
       setEditing(null)
       return
     }
@@ -193,9 +197,20 @@ export function ReferencesAdmin() {
                                 </option>
                               ) : null}
                             </select>
+                            <input
+                              type="text"
+                              maxLength={200}
+                              placeholder="También aparece en… (opcional)"
+                              aria-label={`Otras familias donde se conoce ${reference.code}`}
+                              value={editing.familyHint}
+                              onChange={(e) => setEditing({ ...editing, familyHint: e.target.value })}
+                            />
                           </span>
                         ) : family ? (
-                          `${family.code} — ${family.name}`
+                          <>
+                            {family.code} — {family.name}
+                            {reference.familyHint ? <span className="cell-sub"> · También aparece en: {reference.familyHint}</span> : null}
+                          </>
                         ) : (
                           <span className="muted">Sin familia</span>
                         )}
@@ -238,6 +253,7 @@ export function ReferencesAdmin() {
                                   id: reference.id,
                                   description: reference.description ?? '',
                                   familyId: reference.familyId ?? '',
+                                  familyHint: reference.familyHint ?? '',
                                 })
                               }}
                             >
@@ -285,12 +301,12 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
   const [familyId, setFamilyId] = useState('')
   const create = useMutation()
   useUnsavedWork(code.trim() || description.trim() ? 'Formulario de referencia sin guardar' : null)
-  const normalized = code.trim().toUpperCase()
+  const normalized = code.trim().replace(/\s+/g, ' ').toUpperCase()
   const codeInvalid = normalized !== '' && !CODE_PATTERN.test(normalized)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!normalized || codeInvalid) return create.setError('El código solo admite letras, números y . _ / -')
+    if (!normalized || codeInvalid) return create.setError('El código solo admite letras, números, . _ / - y un espacio entre partes (p. ej. «703 CURVO»)')
     const result: { reference?: Reference } = {}
     const ok = await create.run(async () => {
       const { data } = await request<Reference>('/catalog/references', {

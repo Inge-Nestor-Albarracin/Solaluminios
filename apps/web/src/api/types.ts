@@ -21,6 +21,8 @@ export interface Family {
   code: string
   name: string
   active: boolean
+  // Active references of the family (sent by the family list).
+  activeReferences?: number
   // Version used for conflict-safe edits (expectedUpdatedAt).
   updatedAt?: string
 }
@@ -31,6 +33,8 @@ export interface Reference {
   description: string | null
   active: boolean
   familyId: string | null
+  // Other families where it is also known (a hint on screen only).
+  familyHint: string | null
   updatedAt?: string
 }
 

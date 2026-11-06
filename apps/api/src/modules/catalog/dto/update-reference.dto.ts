@@ -32,6 +32,15 @@ export class UpdateReferenceDto {
   @MaxLength(50)
   familyId?: string | null;
 
+  // Omitted: keeps it. Empty or null: removes it. A hint on screen only.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  familyHint?: string | null;
+
   // Version the client edited (updatedAt it received). Optional: when sent,
   // a newer change by someone else makes the API answer 409.
   @ValidateIf((_object, value: unknown) => value !== undefined)

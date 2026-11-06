@@ -20,6 +20,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { RetryableException } from '../../infrastructure/http/retryable.js';
 import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
 import { Decimal, ZERO, dec } from '../../shared/money.js';
+import { ACCENT_FOLD_FROM, ACCENT_FOLD_TO, escapeLike, foldAccents } from '../../shared/search.js';
 import type { SafeUser } from '../auth/auth.types.js';
 import { cancelOpenDispatches } from '../dispatch/dispatch-cancel.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
@@ -212,17 +213,24 @@ export class SalesService {
 
   // --- Customers ------------------------------------------------------------
 
-  listCustomers(query: CustomerQueryDto) {
-    return this.prisma.customer.findMany({
-      where: {
-        active: true,
-        ...(query.search
-          ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { taxId: { contains: query.search } }] }
-          : {}),
-      },
-      orderBy: { name: 'asc' },
-      take: 100,
-    });
+  // Active customers by name or NIT. The name ignores case and accents
+  // («pena» finds «Peña») and the NIT ignores dots, dashes and spaces
+  // («900123456» finds «900.123.456-7»).
+  async listCustomers(query: CustomerQueryDto) {
+    const term = query.search?.trim() ?? '';
+    if (!term) return this.prisma.customer.findMany({ where: { active: true }, orderBy: { name: 'asc' }, take: 100 });
+    const text = foldAccents(term);
+    const code = term.replace(/[^0-9a-z]/gi, '').toLowerCase();
+    const matches = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "customers"
+      WHERE active
+        AND (
+          translate(lower(name), ${ACCENT_FOLD_FROM}, ${ACCENT_FOLD_TO}) LIKE ${`%${escapeLike(text)}%`}
+          OR (${code} <> '' AND lower(regexp_replace(coalesce("taxId", ''), '[^0-9A-Za-z]', '', 'g')) LIKE ${`%${escapeLike(code)}%`})
+        )
+      ORDER BY name, id
+      LIMIT 50`;
+    return this.prisma.customer.findMany({ where: { id: { in: matches.map((m) => m.id) } }, orderBy: [{ name: 'asc' }, { id: 'asc' }] });
   }
 
   createCustomer(dto: SaveCustomerDto, user: SafeUser) {

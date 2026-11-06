@@ -143,6 +143,8 @@ export interface Quote {
   number: string
   customerId: string
   customerName: string
+  // Current customer record (for its NIT).
+  customer?: { taxId: string | null }
   status: 'DRAFT' | 'CONVERTED' | 'CANCELLED'
   validUntil: string | null
   notes: string | null

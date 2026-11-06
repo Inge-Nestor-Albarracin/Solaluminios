@@ -4098,3 +4098,68 @@ button.doc-row:focus-visible {
     justify-self: stretch;
   }
 }
+
+/* Customer of a quote: search by name or NIT with visible results. */
+.customer-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.customer-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.customer-results {
+  display: grid;
+  max-height: 280px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.customer-results button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.customer-results button:hover,
+.customer-results button:focus-visible {
+  background: var(--info-bg);
+}
+
+/* Family of a bundle: a search box above the list narrows its options. */
+.field-sublabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-sublabel > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.required-mark {
+  color: var(--danger);
+}

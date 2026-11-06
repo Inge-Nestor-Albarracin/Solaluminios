@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import { ACCENT_FOLD_FROM, ACCENT_FOLD_TO, escapeLike, foldAccents } from '../../shared/search.js';
+import { normalizeReferenceCode } from './catalog-codes.js';
 import { CreateReferenceDto } from './dto/create-reference.dto.js';
 import { UpdateReferenceDto } from './dto/update-reference.dto.js';
 import { CreateFinishDto } from './dto/create-finish.dto.js';
@@ -32,6 +34,7 @@ export class CatalogService {
           code: dto.code,
           description: dto.description || null,
           familyId: dto.familyId || null,
+          familyHint: dto.familyHint || null,
         },
       });
     } catch (error: unknown) {
@@ -53,13 +56,34 @@ export class CatalogService {
       await this.requireFamily(query.familyId);
     }
 
-    return this.prisma.reference.findMany({
-      where:
-        query.familyId !== undefined ? { familyId: query.familyId } : undefined,
-      orderBy: {
-        code: 'asc',
-      },
-    });
+    const search = query.search ?? '';
+    if (!search) {
+      return this.prisma.reference.findMany({
+        where:
+          query.familyId !== undefined ? { familyId: query.familyId } : undefined,
+        orderBy: {
+          code: 'asc',
+        },
+      });
+    }
+
+    // By code or description, ignoring case and accents. The exact code
+    // first, then codes that start with the text (shorter first: «38» → 386
+    // before 3809), then the rest.
+    const code = normalizeReferenceCode(search);
+    const text = foldAccents(search);
+    const matches = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "references"
+      WHERE (${query.familyId ?? null}::text IS NULL OR "familyId" = ${query.familyId ?? null})
+        AND (
+          upper(code) LIKE ${`%${escapeLike(code)}%`}
+          OR translate(lower(coalesce(description, '')), ${ACCENT_FOLD_FROM}, ${ACCENT_FOLD_TO}) LIKE ${`%${escapeLike(text)}%`}
+        )
+      ORDER BY (upper(code) = ${code}) DESC, (upper(code) LIKE ${`${escapeLike(code)}%`}) DESC, length(code), code, id
+      LIMIT 50`;
+    const found = await this.prisma.reference.findMany({ where: { id: { in: matches.map((m) => m.id) } } });
+    const order = new Map(matches.map((m, index) => [m.id, index]));
+    return found.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
   }
 
   async getReference(id: string) {
@@ -81,10 +105,11 @@ export class CatalogService {
     if (
       dto.description === undefined &&
       dto.active === undefined &&
-      dto.familyId === undefined
+      dto.familyId === undefined &&
+      dto.familyHint === undefined
     ) {
       throw new BadRequestException(
-        'Debes enviar una descripción, un estado o una familia',
+        'Debes enviar una descripción, un estado, una familia o una pista de familia',
       );
     }
 
@@ -107,6 +132,10 @@ export class CatalogService {
       data.active = dto.active;
     }
 
+    if (dto.familyHint !== undefined) {
+      data.familyHint = dto.familyHint || null;
+    }
+
     const { count } = await this.prisma.reference.updateMany({
       where: { id, ...versionWhere(dto.expectedUpdatedAt) },
       data,
@@ -121,13 +150,17 @@ export class CatalogService {
     return reference;
   }
 
-  listFamilies(query: ListFamiliesQueryDto = {}) {
-    return this.prisma.productFamily.findMany({
+  // With the number of active references of each family (shown by the
+  // phone picker on every family).
+  async listFamilies(query: ListFamiliesQueryDto = {}) {
+    const families = await this.prisma.productFamily.findMany({
       where: query.active !== undefined ? { active: query.active } : undefined,
       orderBy: {
         code: 'asc',
       },
+      include: { _count: { select: { references: { where: { active: true } } } } },
     });
+    return families.map(({ _count, ...family }) => ({ ...family, activeReferences: _count.references }));
   }
 
   async createFamily(dto: CreateFamilyDto) {

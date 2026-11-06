@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { CatalogSelectors } from '../components/CatalogSelectors'
+import { CustomerPicker } from '../components/CustomerPicker'
 import { DownloadPdfButton } from '../components/DownloadPdfButton'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
@@ -548,9 +549,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const { request, user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
   const suppliers = useLoad<Supplier[]>('/suppliers?active=true')
-  const [search, setSearch] = useState('')
-  const customers = useLoad<Customer[]>(`/customers${search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''}`)
-  const [customerId, setCustomerId] = useState(quote?.customerId ?? '')
+  const [customer, setCustomer] = useState<Pick<Customer, 'id' | 'name' | 'taxId'> | null>(
+    quote ? { id: quote.customerId, name: quote.customerName, taxId: quote.customer?.taxId ?? null } : null,
+  )
+  const customerId = customer?.id ?? ''
   const [newCustomer, setNewCustomer] = useState<{ name: string; taxId: string } | null>(null)
   const [validUntil, setValidUntil] = useState(quote?.validUntil?.slice(0, 10) ?? '')
   const [notes, setNotes] = useState(quote?.notes ?? '')
@@ -643,9 +645,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     if (!newCustomer?.name.trim()) return
     try {
       const { data } = await request<Customer>('/customers', { method: 'POST', body: { name: newCustomer.name.trim(), ...(newCustomer.taxId.trim() ? { taxId: newCustomer.taxId.trim() } : {}) } })
-      setCustomerId(data.id)
+      setCustomer(data)
+      setDirty(true)
       setNewCustomer(null)
-      customers.reload()
     } catch (err) {
       setError(describeError(err))
     }
@@ -786,17 +788,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
 
       <section className="card">
         <div className="form-grid">
-          <Field label="Buscar cliente">
-            <input value={search} disabled={!editable} onChange={(e) => setSearch(e.target.value)} placeholder="Nombre o NIT" />
-          </Field>
-          <Field label="Cliente">
-            <select value={customerId} disabled={!editable} onChange={(e) => { setCustomerId(e.target.value); setDirty(true) }}>
-              <option value="">Elige…</option>
-              {quote && !customers.data?.some((c) => c.id === quote.customerId) ? <option value={quote.customerId}>{quote.customerName}</option> : null}
-              {(customers.data ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}{c.taxId ? ` · ${c.taxId}` : ''}</option>
-              ))}
-            </select>
+          <Field label="Cliente" hint={editable ? 'Busca por nombre o NIT y elige uno de los resultados.' : undefined}>
+            <CustomerPicker
+              selected={customer}
+              disabled={!editable}
+              onSelect={(picked) => {
+                setCustomer(picked)
+                setDirty(true)
+              }}
+            />
           </Field>
           <Field label="Válida hasta">
             <input type="date" value={validUntil} disabled={!editable} onChange={(e) => { setValidUntil(e.target.value); setDirty(true) }} />

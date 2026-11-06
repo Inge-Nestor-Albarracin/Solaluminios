@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsISO8601,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -72,4 +73,13 @@ export class ListReferencesQueryDto {
   @IsNotEmpty({ message: 'familyId no puede estar vacío' })
   @MaxLength(50)
   familyId?: string;
+
+  // Part of the code or the description (case and accents ignored).
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 }

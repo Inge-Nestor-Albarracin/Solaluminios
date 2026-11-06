@@ -368,9 +368,10 @@ export function RegisterBundleView({
             </fieldset>
           </Section>
 
-          <Section number="02" title="Producto" description="La familia filtra las referencias. Referencia y acabado se guardan por separado.">
+          <Section number="02" title="Producto" description="Elige la familia y luego su referencia. Referencia y acabado se guardan por separado.">
             <CatalogSelectors
               mode="form"
+              requireFamily
               value={catalog}
               onChange={setCatalog}
               onDescribe={setCatalogLabels}

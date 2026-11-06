@@ -1958,6 +1958,147 @@ cotización), aunque otra persona la haya convertido.
 - Una orden de contado no indica si realmente se cobró; si hace falta, hay que
   extender el estado de pago al contado.
 
+## Búsqueda de cliente en la cotización (06/11/2026)
+
+**Problema.** «Buscar cliente» solo filtraba en silencio la lista desplegable
+de al lado: no se veía ningún resultado ni se seleccionaba nada. Además, el
+NIT se comparaba tal cual («900123456» no encontraba «900.123.456-7») y el
+nombre distinguía tildes («pena» no encontraba «Peña»).
+
+**Solución.**
+- API `GET /customers?search=`, solo clientes activos y hasta 50 resultados:
+  - el nombre ignora mayúsculas y tildes;
+  - el NIT ignora puntos, guiones y espacios;
+  - `%` y `_` del usuario se toman literalmente.
+- Web: componente nuevo `CustomerPicker`, un solo campo «Cliente»:
+  - al escribir (pausa de 250 ms) muestra los resultados debajo;
+  - clic o Enter elige el primero;
+  - el elegido se muestra con su NIT y un botón «Cambiar»;
+  - avisa cuando no hay coincidencias y sugiere «+ Cliente nuevo»;
+  - un cliente recién creado queda elegido.
+
+**Pruebas.**
+- Suite nueva `customers-search.e2e-spec.ts` (3 pruebas): tildes y mayúsculas,
+  NIT con o sin símbolos, inactivos excluidos y `%`/`_` literales.
+- API unitarias 43/43; e2e 191/191.
+- Navegador (sufijo 8C5748, datos borrados por ID): «pena ventaneria» encuentra
+  «Peña Ventanería»; «900857» encuentra «900.857.111-2»; Enter elige; sin
+  resultados; crear cliente; «Cambiar»; sin desbordamiento a 375 px.
+- Web: `tsc`, `oxlint` y build.
+
+## Catálogo de referencias y selector para celular (06/11/2026)
+
+**Fuente.** `Catalogo_Solualuminios.xlsx`, hoja «Referencias», primeras 4 columnas
+más «Estado de familia» y «Otras familias»: 218 referencias en 23 familias
+(máximo 21 por familia). Se convirtió a `apps/api/prisma/data/catalog-references.csv`
+(columnas `familyCode, familyName, referenceCode, description, familyHint,
+familyToValidate`).
+- **Familias sin código (18):** códigos asignados aquí, con el nombre
+  exactamente como lo conocen. Por ejemplo, `KALIMA-KIMBAYA` → «KALIMA -
+  KIMBAYA», `TAIRONA-ZINU`, `COLOSAL-2.6`, `ASTRAL-1.7`, `SIDERAL-2.4`,
+  `DIVISION-BANO`, `VARIOS-VITRAL`, `TUBULARES-ALETA`, `ANGULOS-ANCLAJE`,
+  `CIRCULO-1/4`. Las demás llevan su nombre como código.
+- **Familias con código en el archivo:** conservan el suyo (`744`, `3831`,
+  `5020`, `7038`, `8025`).
+- **Decisiones del usuario:**
+  - los acabados quedan como estaban (no se importan los del archivo);
+  - una referencia tiene una sola familia (la de la columna B). Las 9 que
+    también aparecen en otra guardan solo una pista de texto (`familyHint`,
+    «También aparece en: …») que se ve en pantalla; no la usa ningún filtro,
+    total ni compra;
+  - las 9 «familia por validar» se importan con la familia propuesta y el
+    reporte las lista para revisarlas.
+- **Códigos de referencia:** ahora admiten un espacio entre partes («703 CURVO»,
+  «3604 LENNER»; 5 casos en el catálogo). Validación en el DTO y en el
+  administrador; se normalizan espacios repetidos.
+
+**Migración** `20261106120000_reference_family_hint` (revisada; aplicada solo a
+la BD de pruebas): columna opcional `references.familyHint` con CHECK de 1 a 200
+caracteres.
+
+**Importador** (`src/modules/catalog/catalog-import.ts` y
+`src/scripts/import-catalog.ts`; desde `apps/api`: `pnpm build`, luego
+`pnpm catalog:import`):
+- **Por defecto solo simula** y reporta: familias y referencias nuevas, campos
+  vacíos que completaría, conflictos, inactivas y «por validar».
+- `--apply` aplica en una transacción y deja una auditoría
+  `CATALOG_IMPORTED`. Crea y completa campos vacíos, y **nunca borra ni
+  desactiva**.
+- Una referencia existente con otra familia u otra descripción se reporta como
+  conflicto y se conserva. Solo `--overwrite` la reemplaza (también el nombre de
+  una familia).
+- La pista de familia siempre sigue al catálogo.
+- Un archivo con errores (código inválido, referencia repetida, familia con dos
+  nombres) no escribe nada.
+- Ejecutarlo dos veces da lo mismo: la segunda vez reporta 0 nuevas y 218 sin
+  cambios.
+- Usa `DATABASE_URL` de `.env` y solo imprime el nombre de la base y el host.
+- Si faltan migraciones, lo dice.
+
+**API.**
+- `GET /catalog/references?search=` busca por código o descripción, sin
+  importar mayúsculas ni tildes, con el código exacto primero. Se combina con
+  `familyId` y devuelve hasta 50 resultados.
+- Crear y editar referencias acepta `familyHint`. Las escrituras del catálogo
+  siguen siendo solo de ADMIN.
+- Utilidades compartidas `shared/search.ts` (`escapeLike`, `foldAccents`),
+  usadas también por la búsqueda de clientes.
+
+**Web.**
+- «Registrar paquete» usa las listas desplegables de siempre (`CatalogSelectors`
+  con `requireFamily`):
+  - la familia es obligatoria y se muestra con su número de referencias
+    («KALIMA - KIMBAYA (14)»), en orden natural;
+  - «Referencia» queda bloqueada («Elige primero la familia») hasta elegir
+    familia, y luego lista solo las de esa familia, en orden natural de
+    código;
+  - si la referencia aparece en otra familia, se muestra «También aparece en:
+    …» bajo la lista;
+  - encima de la lista de familias hay un cuadro «Buscar por nombre o código».
+    Lo escrito (p. ej. «Kim», «puerta», «744») deja en la lista solo las
+    familias que coinciden, sin importar mayúsculas ni tildes, y el primer
+    renglón dice cuántas coinciden o que ninguna. Vacío, muestra todas. La
+    familia ya elegida no se pierde aunque no coincida con lo escrito.
+- Las demás pantallas que usan los selectores (cotización, compras, lotes,
+  filtros) no cambian.
+- Administrador de referencias: códigos con espacio y el campo «También
+  aparece en…».
+
+**Pruebas.**
+- Suite nueva `catalog-import.e2e-spec.ts` (6 pruebas):
+  - el archivo real es válido (23 familias, 218 referencias, 9 por validar);
+  - simular no escribe; aplicar crea; repetir no cambia nada;
+  - conflictos conservados y reemplazados solo con `--overwrite`;
+  - un archivo inválido no escribe;
+  - búsqueda;
+  - código con espacio y escritura solo de ADMIN.
+- API unitarias 43/43; e2e 197/197.
+- Navegador a 375 px:
+  - catálogo real importado en la BD de pruebas con el script (y una segunda
+    ejecución sin cambios);
+  - búsqueda «387»; familia KALIMA - KIMBAYA con sus 14 referencias; pista de
+    la 177; «Últimas usadas»;
+  - sin desbordamiento;
+  - limpieza por códigos exactos del CSV (218 referencias, 23 familias,
+    usuario, ubicación y acabados de prueba).
+- Web: `tsc`, `oxlint` y build.
+
+**Selector descartado (06/11/2026).** Se probó un selector con pestañas,
+tarjetas de familia y búsqueda por código. El usuario prefirió volver a las
+listas desplegables con la familia obligatoria, y se retiró
+(`ReferencePicker`, «Últimas usadas»). Se conservan del API:
+- `activeReferences` en `GET /catalog/families`;
+- la búsqueda `?search=` (código exacto primero y luego por longitud).
+
+Quedan también las correcciones de pruebas hechas entonces: la suite
+`catalog-import` borra todas sus auditorías y la prueba de la lista completa
+de `catalog-families` tolera suites en paralelo.
+
+**Pendiente para usar el catálogo.** En la base de desarrollo faltan las
+migraciones `20261104120000_quote_manual_price` y
+`20261106120000_reference_family_hint`; después de aplicarlas, ejecutar la
+simulación y luego `--apply`. Igual en el servidor.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

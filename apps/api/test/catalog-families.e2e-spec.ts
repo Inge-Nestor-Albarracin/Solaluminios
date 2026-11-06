@@ -282,12 +282,16 @@ describe('Catalog families (e2e)', () => {
   });
 
   it('regression: references without filter and finishes still work', async () => {
+    // Counted before and after: suites running in parallel create and delete
+    // their own references meanwhile. The list is complete (not paginated).
+    const before = await prisma.reference.count();
     const all = await http().get('/catalog/references').set(readOnly).expect(200);
+    const after = await prisma.reference.count();
     expect(Array.isArray(all.body)).toBe(true);
     const ids = (all.body as { id: string }[]).map((r) => r.id);
     expect(ids).toEqual(expect.arrayContaining([refA.id, refB.id]));
-    const total = await prisma.reference.count();
-    expect(all.body).toHaveLength(total);
+    expect(all.body.length).toBeGreaterThanOrEqual(Math.min(before, after));
+    expect(all.body.length).toBeLessThanOrEqual(Math.max(before, after));
 
     const finishes = await http().get('/catalog/finishes').set(readOnly).expect(200);
     expect(Array.isArray(finishes.body)).toBe(true);

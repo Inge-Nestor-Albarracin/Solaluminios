@@ -145,6 +145,10 @@ model Reference {
   description String?
   active      Boolean  @default(true)
   familyId    String?
+  // Other families where operators also know this reference (catalog note,
+  // shown as a hint only). The reference belongs to `familyId` alone: no
+  // filter, total or report uses this text.
+  familyHint  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
