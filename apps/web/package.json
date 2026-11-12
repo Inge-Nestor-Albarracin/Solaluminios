@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node scripts/chafon.test.mts",
+    "test": "node scripts/chafon.test.mts && node scripts/numbers.test.mts",
     "preview": "vite preview"
   },
   "dependencies": {

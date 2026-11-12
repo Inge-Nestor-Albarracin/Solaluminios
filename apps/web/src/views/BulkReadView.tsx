@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { ApiError, describeError } from '../api/client'
 import type { Bundle } from '../api/types'
+import { BulkTransferPanel } from '../components/BulkTransferPanel'
 import { IconScan } from '../components/icons'
 import { Empty, Field, Kpi, Notice, PageHeader } from '../components/ui'
 import type { TagRead } from '../lib/chafon'
@@ -149,7 +150,8 @@ function ReadRange({
 }
 
 // Bulk RFID reading: many chips at once, each shown with its reference.
-// Read-only: nothing is registered or changed in the inventory.
+// Reading changes nothing; operators can then transfer the registered
+// bundles read to one destination (BulkTransferPanel), all or none.
 export function BulkReadView({
   navigate,
   chips,
@@ -296,6 +298,25 @@ export function BulkReadView({
     setManual('')
   }
 
+  // Takes a chip out of the list (e.g. a neighbouring bundle read by mistake).
+  const remove = (epc: string) =>
+    setChips((previous) => {
+      const next = new Map(previous)
+      next.delete(epc)
+      return next
+    })
+
+  // After a transfer: the chips show the bundles' new place and state.
+  const moved = (bundles: Bundle[]) =>
+    setChips((previous) => {
+      const next = new Map(previous)
+      for (const bundle of bundles) {
+        const chip = next.get(bundle.epc)
+        if (chip) next.set(bundle.epc, { ...chip, bundle })
+      }
+      return next
+    })
+
   const clear = () => {
     buffer.current = []
     setChips(new Map())
@@ -332,7 +353,11 @@ export function BulkReadView({
       <PageHeader
         eyebrow="Inventario · RFID"
         title="Lectura masiva"
-        description="Lee muchos paquetes a la vez con la pistola Chafon y ve la referencia de cada chip. Solo consulta: no registra ni cambia el inventario."
+        description={
+          operator
+            ? 'Lee muchos paquetes a la vez con la pistola Chafon y ve la referencia de cada chip. Leer no cambia el inventario; después puedes trasladar los paquetes leídos a otra bodega o almacén.'
+            : 'Lee muchos paquetes a la vez con la pistola Chafon y ve la referencia de cada chip. Solo consulta: no registra ni cambia el inventario.'
+        }
       />
 
       <div className="bulk-layout">
@@ -505,6 +530,8 @@ export function BulkReadView({
             </section>
           ) : null}
 
+          {operator && found.length > 0 ? <BulkTransferPanel bundles={found.map((chip) => chip.bundle!)} onMoved={moved} /> : null}
+
           <div className="tabs bulk-filter" role="tablist" aria-label="Filtrar lecturas">
             {(
               [
@@ -561,6 +588,7 @@ export function BulkReadView({
                       </span>
                       <small>
                         {finishLabel(chip.bundle.finish)} · {bundlePlace(chip.bundle)}
+                        {chip.bundle.openedAt ? ' · abierto (sueltos)' : ''}
                       </small>
                     </>
                   ) : (
@@ -576,6 +604,11 @@ export function BulkReadView({
                   <small title="Veces que el lector vio este chip">
                     {chip.reads}× {chip.rssi !== null ? `· ${chip.rssi} dBm` : ''}
                   </small>
+                  {operator ? (
+                    <button type="button" className="text-button" onClick={() => remove(chip.epc)} aria-label={`Quitar ${chip.epc} de la lista`}>
+                      Quitar
+                    </button>
+                  ) : null}
                 </div>
               </li>
             ))}

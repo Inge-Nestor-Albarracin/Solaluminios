@@ -10,7 +10,9 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  // Per IP (shared by a whole branch): 30 logins per minute. Each account is
+  // also locked after 5 failures (login-attempts.ts).
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto) {

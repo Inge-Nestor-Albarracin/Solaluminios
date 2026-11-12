@@ -14,6 +14,8 @@ import {
   EMPTY_CATALOG,
   EMPTY_LOCATION,
   arrivalPayload,
+  placePayload,
+  placeReady,
   type ArrivalValue,
   type CatalogValue,
   type LocationValue,
@@ -53,6 +55,11 @@ interface BatchResult {
 
 // Registration in two steps: "Guardar y continuar" adds the bundle to a local
 // list; "Guardar definitivo" sends the whole list in one transaction.
+// Same ceiling as the API per bundle; above UNUSUAL_QUANTITY the user
+// confirms once (typing errors such as 999999 instead of 99).
+const MAX_BUNDLE_QUANTITY = 1_000_000
+const UNUSUAL_QUANTITY = 1_000
+
 export function RegisterBundleView({
   initialEpc,
   navigate,
@@ -70,6 +77,9 @@ export function RegisterBundleView({
   const [locationLabel, setLocationLabel] = useState('')
   const [arrival, setArrival] = useState<ArrivalValue>(EMPTY_ARRIVAL)
   const [quantity, setQuantity] = useState('')
+  // Chip and quantity of an unusually large bundle the user already
+  // confirmed once (a typo such as 999999 instead of 99 must be noticed).
+  const [confirmedLarge, setConfirmedLarge] = useState<string | null>(null)
   const [epc, setEpc] = useState(initialEpc ?? '')
   const [notes, setNotes] = useState('')
   // Provenance of the entry group: China preselected (agreed default),
@@ -117,7 +127,7 @@ export function RegisterBundleView({
     true,
     !!catalog.referenceId && !!catalog.finishId,
     arrivalLabel !== null,
-    !!location.rackId,
+    placeReady(location),
     normalizedEpc !== '' && !epcInvalid && quantityValid,
   ]
   const completed = steps.filter(Boolean).length
@@ -136,6 +146,18 @@ export function RegisterBundleView({
     }
     if (!quantityValid) {
       setError('La cantidad debe ser un número entero de perfiles mayor que cero.')
+      return
+    }
+    if (amount > MAX_BUNDLE_QUANTITY) {
+      setError(`Un paquete puede tener máximo ${MAX_BUNDLE_QUANTITY.toLocaleString('es-CO')} perfiles. Revisa la cantidad.`)
+      return
+    }
+    const largeKey = `${normalizedEpc}:${amount}`
+    if (amount > UNUSUAL_QUANTITY && confirmedLarge !== largeKey) {
+      setConfirmedLarge(largeKey)
+      setError(
+        `¿Seguro? ${amount.toLocaleString('es-CO')} perfiles en un solo paquete es una cantidad inusual. Revisa la cantidad; si es correcta, pulsa otra vez «Guardar y continuar».`,
+      )
       return
     }
     if (origin === 'NATIONAL' && !supplierId) {
@@ -178,8 +200,7 @@ export function RegisterBundleView({
         referenceId: catalog.referenceId,
         finishId: catalog.finishId,
         quantity: amount,
-        inventoryLocationId: location.inventoryLocationId,
-        rackId: location.rackId,
+        ...placePayload(location),
         registrationType,
         ...arrivalPayload(arrival),
         notes: notes.trim() || undefined,
@@ -196,6 +217,7 @@ export function RegisterBundleView({
       },
     }
     queue.add(item)
+    setConfirmedLarge(null)
     setAdded(`Chip ${normalizedEpc} agregado a la lista (${queue.items.length + 1}). Lee el siguiente.`)
     // Keep product, arrival and location to speed up consecutive bundles.
     setEpc('')
@@ -269,7 +291,7 @@ export function RegisterBundleView({
     ['Acabado', catalogLabels.finish || null],
     ['Origen', origin === 'NATIONAL' && !supplierId ? null : provenanceLabel],
     ['Llegada', arrivalLabel],
-    ['Ubicación', location.rackId ? locationLabel : null],
+    ['Ubicación', placeReady(location) ? locationLabel : null],
     ['Chip', normalizedEpc && !epcInvalid ? normalizedEpc : null, true],
     ['Perfiles', quantityValid ? `${amount} ${amount === 1 ? 'perfil' : 'perfiles'}` : null],
   ]
@@ -416,7 +438,7 @@ export function RegisterBundleView({
             <ArrivalFields value={arrival} onChange={setArrival} disabled={busy} />
           </Section>
 
-          <Section number="04" title="Ubicación" description="Sucursal, bodega, pasillo y burro donde queda el paquete.">
+          <Section number="04" title="Ubicación" description="Sucursal, bodega, pasillo y burro donde queda el paquete. En un almacén no hay pasillo ni burro: el paquete queda abierto y sus perfiles, sueltos.">
             <LocationSelectors
               mode="form"
               value={location}
@@ -455,6 +477,7 @@ export function RegisterBundleView({
                 type="number"
                 inputMode="numeric"
                 min={1}
+                max={MAX_BUNDLE_QUANTITY}
                 step={1}
                 required
                 placeholder="Ej. 10"

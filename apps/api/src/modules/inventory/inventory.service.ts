@@ -20,7 +20,8 @@ import {
 import {
   bundleDetailInclude,
   bundleListInclude,
-  requireActiveRackInLocation,
+  requirePlace,
+  storeOpeningReason,
   type Tx,
 } from './inventory.shared.js';
 
@@ -192,7 +193,7 @@ export class InventoryService {
           movement.type === dto.registrationType &&
           movement.quantity === dto.quantity &&
           movement.destinationLocationId === dto.inventoryLocationId &&
-          movement.destinationRackId === dto.rackId &&
+          movement.destinationRackId === (dto.rackId ?? null) &&
           bundle.epc === dto.epc &&
           bundle.referenceId === dto.referenceId &&
           bundle.finishId === dto.finishId &&
@@ -240,7 +241,7 @@ export class InventoryService {
     await this.requireNewEpc(tx, dto.epc);
     await this.requireActiveReference(tx, dto.referenceId);
     await this.requireActiveFinish(tx, dto.finishId);
-    await requireActiveRackInLocation(tx, dto.rackId, dto.inventoryLocationId);
+    const place = await requirePlace(tx, dto.inventoryLocationId, dto.rackId);
 
     let lotId: string | null = null;
     if (dto.supplierId && !dto.origin) {
@@ -263,10 +264,12 @@ export class InventoryService {
         finishId: dto.finishId,
         quantity: dto.quantity,
         inventoryLocationId: dto.inventoryLocationId,
-        rackId: dto.rackId,
+        rackId: place.rackId,
         ...arrival,
         notes: dto.notes || null,
         lotId,
+        // A retail store sells loose: the bundle is opened on arrival.
+        ...(place.loose ? { openedAt: registeredAt, openedById: user.id } : {}),
       },
       select: { id: true },
     });
@@ -279,12 +282,28 @@ export class InventoryService {
         quantityBefore: 0,
         quantityAfter: dto.quantity,
         destinationLocationId: dto.inventoryLocationId,
-        destinationRackId: dto.rackId,
+        destinationRackId: place.rackId,
         occurredAt: registeredAt,
         performedById: user.id,
         operationKey,
       },
     });
+    if (place.loose) {
+      await tx.inventoryMovement.create({
+        data: {
+          bundleId: bundle.id,
+          type: 'OPENING',
+          quantity: dto.quantity,
+          quantityBefore: dto.quantity,
+          quantityAfter: dto.quantity,
+          sourceLocationId: dto.inventoryLocationId,
+          occurredAt: registeredAt,
+          performedById: user.id,
+          reason: storeOpeningReason(place.location.name, 'registro'),
+          operationKey: `${operationKey}:open`,
+        },
+      });
+    }
 
     return bundle.id;
   }

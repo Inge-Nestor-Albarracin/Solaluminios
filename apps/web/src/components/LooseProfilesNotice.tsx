@@ -116,7 +116,7 @@ function LooseLine({ dispatch, line, executor, onChanged }: { dispatch: Dispatch
             {toTake === 0 ? ' — hecho.' : '.'}
           </li>
           <li>
-            <strong>Obtener los {missing} restantes de un paquete</strong>: si está en otra bodega, trasládalo a este almacén y ábrelo aquí.
+            <strong>Obtener los {missing} restantes de un paquete</strong>: si está en otra bodega, trasládalo aquí (si es un almacén, queda abierto al llegar).
             {line.suggested.length > 0 ? (
               <ul className="loose-bundles">
                 {line.suggested.map((s) => (

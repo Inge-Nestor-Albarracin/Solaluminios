@@ -18,6 +18,7 @@ import {
   BundleAdjustmentDto,
   BundleExitDto,
   BundleOpenDto,
+  BundleTransferBatchDto,
   BundleTransferDto,
 } from './dto/bundle-operation.dto.js';
 import {
@@ -130,6 +131,21 @@ export class InventoryController {
     return withStatus(
       response,
       await this.operations.open(id, dto, sessionUser(request)),
+    );
+  }
+
+  // Several whole bundles to one destination: all or none. 201 when moved
+  // now, 200 when a retry with the same key replays the saved result.
+  @Roles('ADMIN', 'WAREHOUSE')
+  @Post('bundles/transfer')
+  async transferMany(
+    @Body() dto: BundleTransferBatchDto,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return withStatus(
+      response,
+      await this.operations.transferMany(dto, sessionUser(request)),
     );
   }
 

@@ -3,7 +3,7 @@ import { ApiError, describeError } from '../api/client'
 import { IconScan } from '../components/icons'
 import { LocationSelectors } from '../components/LocationSelectors'
 import { Field, Notice, PageHeader } from '../components/ui'
-import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
+import { EMPTY_LOCATION, placePayload, placeReady, type LocationValue } from '../lib/forms'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
 import { useSession } from '../session/session-context'
@@ -63,7 +63,7 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
 
   const amount = Number(quantity)
   const differs = found !== null && Number.isInteger(amount) && amount !== found.expectedQuantity
-  const valid = found?.status === 'PENDING' && Number.isInteger(amount) && amount >= 1 && !!location.rackId
+  const valid = found?.status === 'PENDING' && Number.isInteger(amount) && amount >= 1 && placeReady(location)
 
   const receive = async () => {
     if (!found || !valid || busy) return
@@ -76,8 +76,7 @@ export function ReceiveView({ navigate }: { navigate: Navigate }) {
         body: {
           epc: found.epc,
           quantity: amount,
-          inventoryLocationId: location.inventoryLocationId,
-          rackId: location.rackId,
+          ...placePayload(location),
           ...(differs && reason.trim() ? { discrepancyReason: reason.trim() } : {}),
           operationKey: key.current,
         },

@@ -1,5 +1,9 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -54,17 +58,37 @@ export class BundleTransferDto extends OperationDto {
   @MaxLength(50)
   inventoryLocationId!: string;
 
-  @Transform(trim)
+  // Only warehouses (bodegas) use racks; retail stores (almacenes) refuse
+  // one. Required or refused by the location type, not here.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  rackId!: string;
+  rackId?: string;
 
   @Transform(trim)
   @IsOptional()
   @IsString()
   @MaxLength(500)
   reason?: string | null;
+}
+
+// Most bundles moved in one transfer (one transaction).
+export const MAX_TRANSFER_BATCH = 200;
+
+// Several whole bundles to the same destination, all or none.
+export class BundleTransferBatchDto extends BundleTransferDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Elige al menos un paquete' })
+  @ArrayMaxSize(MAX_TRANSFER_BATCH, { message: `Máximo ${MAX_TRANSFER_BATCH} paquetes por traslado` })
+  @ArrayUnique({ message: 'Un paquete está repetido en la lista' })
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  @MaxLength(50, { each: true })
+  bundleIds!: string[];
 }
 
 export const ADJUSTMENT_TYPES = ['ADJUSTMENT_IN', 'ADJUSTMENT_OUT'] as const;

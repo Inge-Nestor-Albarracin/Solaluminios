@@ -20,6 +20,7 @@ import { useLoad } from './lib/useLoad'
 import { ROLE_LABELS, canDispatch, canOperate, canSell, useSession } from './session/session-context'
 import { AdminView } from './views/AdminView'
 import { BulkReadView, type BulkChips } from './views/BulkReadView'
+import { ViewErrorBoundary } from './components/ViewErrorBoundary'
 import { BundleDetailView } from './views/BundleDetailView'
 import { BundlesView } from './views/BundlesView'
 import { HomeView } from './views/HomeView'
@@ -300,6 +301,7 @@ function Workspace() {
             </button>
           </div>
         ) : null}
+        <ViewErrorBoundary key={viewKey(view)} onHome={() => navigate({ name: 'home' })}>
         {view.name === 'home' ? (
           <HomeView
             name={user?.name ?? ''}
@@ -330,6 +332,7 @@ function Workspace() {
         {view.name === 'dispatch' ? <DispatchView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'admin' && user?.role === 'ADMIN' ? <AdminView /> : null}
         {view.name === 'bundle' ? <BundleDetailView key={view.id} id={view.id} navigate={navigate} /> : null}
+        </ViewErrorBoundary>
       </main>
 
       <nav className="nav-bottom" aria-label="Secciones">{navButtons('bottom')}</nav>
@@ -352,6 +355,11 @@ function Workspace() {
       ) : null}
     </div>
   )
+}
+
+// One error boundary per screen: a failure stays on that screen.
+function viewKey(view: View): string {
+  return 'id' in view && view.id ? `${view.name}:${view.id}` : view.name
 }
 
 export default App

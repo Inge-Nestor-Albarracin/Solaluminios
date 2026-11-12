@@ -72,8 +72,15 @@ export class LocationsService {
     });
   }
 
+  // Only warehouses (bodegas) have aisles and racks: what is in a retail
+  // store (almacén) is loose.
   async createAisle(dto: CreateAisleDto) {
-    await this.requireInventoryLocation(dto.inventoryLocationId);
+    const location = await this.requireInventoryLocation(dto.inventoryLocationId);
+    if (location.type === 'RETAIL_STORE') {
+      throw new BadRequestException(
+        `${location.name} es un almacén: los almacenes no manejan pasillos ni burros`,
+      );
+    }
     return this.createUnique(
       () => this.prisma.aisle.create({
         data: {

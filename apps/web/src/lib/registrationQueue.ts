@@ -10,7 +10,8 @@ export interface RegisterBundleBody {
   finishId: string
   quantity: number
   inventoryLocationId: string
-  rackId: string
+  // Only for warehouses; retail stores have no rack.
+  rackId?: string
   registrationType: 'INITIAL_STOCK' | 'ENTRY'
   arrivalDatePrecision: 'EXACT' | 'MONTH' | 'UNKNOWN'
   arrivalDate?: string

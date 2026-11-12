@@ -18,7 +18,7 @@ import {
 } from '../../shared/db.js';
 import type { SafeUser } from '../auth/auth.types.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
-import { bundleListInclude, requireActiveRackInLocation } from '../inventory/inventory.shared.js';
+import { bundleListInclude, requirePlace, storeOpeningReason } from '../inventory/inventory.shared.js';
 import type { CreateShipmentDto, PreRegisterDto, PreRegistrationQueryDto, ReceiveDto } from './dto/supply.dto.js';
 import { LotsService } from './lots.service.js';
 
@@ -275,7 +275,7 @@ export class InboundService {
           const discrepancy = dto.quantity !== pre.expectedQuantity;
           const note = dto.discrepancyReason || null;
           const reason = discrepancy ? note ?? `Diferencia en recepción: ${pre.expectedQuantity} previstos, ${dto.quantity} recibidos` : null;
-          await requireActiveRackInLocation(tx, dto.rackId, dto.inventoryLocationId);
+          const place = await requirePlace(tx, dto.inventoryLocationId, dto.rackId);
 
           const now = new Date();
           const bundle = await tx.bundle.create({
@@ -285,8 +285,10 @@ export class InboundService {
               finishId: pre.finishId,
               quantity: dto.quantity,
               inventoryLocationId: dto.inventoryLocationId,
-              rackId: dto.rackId,
+              rackId: place.rackId,
               lotId: pre.lotId,
+              // A retail store sells loose: the bundle is opened on arrival.
+              ...(place.loose ? { openedAt: now, openedById: user.id } : {}),
               arrivalDatePrecision: 'EXACT',
               arrivalDate: new Date(`${businessToday(now)}T00:00:00.000Z`),
             },
@@ -299,7 +301,7 @@ export class InboundService {
               quantityBefore: 0,
               quantityAfter: dto.quantity,
               destinationLocationId: dto.inventoryLocationId,
-              destinationRackId: dto.rackId,
+              destinationRackId: place.rackId,
               occurredAt: now,
               performedById: user.id,
               reason: discrepancy
@@ -308,6 +310,22 @@ export class InboundService {
               operationKey: movementKey,
             },
           });
+          if (place.loose) {
+            await tx.inventoryMovement.create({
+              data: {
+                bundleId: bundle.id,
+                type: 'OPENING',
+                quantity: dto.quantity,
+                quantityBefore: dto.quantity,
+                quantityAfter: dto.quantity,
+                sourceLocationId: dto.inventoryLocationId,
+                occurredAt: now,
+                performedById: user.id,
+                reason: storeOpeningReason(place.location.name, 'recepción'),
+                operationKey: `${movementKey}:open`,
+              },
+            });
+          }
           await tx.inboundPreRegistration.update({
             where: { id: pre.id },
             data: {

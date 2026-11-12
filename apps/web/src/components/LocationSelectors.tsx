@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { Aisle, Branch, InventoryLocation, Rack } from '../api/types'
-import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
+import { EMPTY_LOCATION, isStore, type LocationValue } from '../lib/forms'
 import { useLoad } from '../lib/useLoad'
 import { Field } from './ui'
 
@@ -9,6 +9,7 @@ const LEVELS: Level[] = ['branch', 'location', 'aisle', 'rack']
 
 // Dependent selectors Branch → Location → Aisle → Rack. Changing an upper
 // level always clears the lower ones. The API lists only active records.
+// Retail stores (almacenes) have no aisle or rack: choosing one hides them.
 export function LocationSelectors({
   value,
   onChange,
@@ -27,7 +28,9 @@ export function LocationSelectors({
   // Receives a readable description of the selection, e.g. for confirmations.
   onDescribe?: (description: string) => void
 }) {
-  const show = (level: Level) => LEVELS.indexOf(level) <= LEVELS.indexOf(depth)
+  const store = isStore(value)
+  const show = (level: Level) =>
+    LEVELS.indexOf(level) <= LEVELS.indexOf(depth) && !(store && (level === 'aisle' || level === 'rack'))
   const enc = encodeURIComponent
 
   const branches = useLoad<Branch[]>('/locations/branches')
@@ -51,7 +54,7 @@ export function LocationSelectors({
   const rack = racks.data?.find((r) => r.id === value.rackId)
   const description = [
     branch?.name,
-    location?.name,
+    location ? `${location.name}${location.type === 'RETAIL_STORE' ? ' (almacén)' : ''}` : undefined,
     aisle ? `Pasillo ${aisle.number}` : undefined,
     rack ? `Burro ${rack.number}` : undefined,
   ]
@@ -98,11 +101,16 @@ export function LocationSelectors({
             required={required}
             disabled={disabled || !value.branchId || locations.loading}
             onChange={(e) =>
-              onChange({ ...EMPTY_LOCATION, branchId: value.branchId, inventoryLocationId: e.target.value })
+              onChange({
+                ...EMPTY_LOCATION,
+                branchId: value.branchId,
+                inventoryLocationId: e.target.value,
+                locationType: locations.data?.find((l) => l.id === e.target.value)?.type ?? '',
+              })
             }
           >
             <option value="">
-              {placeholder(!!value.branchId, locations.loading, locations.data?.length === 0, 'Selecciona una bodega')}
+              {placeholder(!!value.branchId, locations.loading, locations.data?.length === 0, 'Selecciona una bodega o almacén')}
             </option>
             {(locations.data ?? []).map((location) => (
               <option key={location.id} value={location.id}>
@@ -111,6 +119,9 @@ export function LocationSelectors({
             ))}
           </select>
           {locations.error ? <span className="field-error">{locations.error}</span> : null}
+          {store && mode === 'form' && LEVELS.indexOf(depth) >= LEVELS.indexOf('aisle') ? (
+            <span className="field-hint">Almacén: sin pasillo ni burro. Los paquetes quedan abiertos y sus perfiles, sueltos.</span>
+          ) : null}
         </Field>
       ) : null}
 

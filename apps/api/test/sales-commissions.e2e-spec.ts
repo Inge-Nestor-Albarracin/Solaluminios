@@ -54,7 +54,7 @@ describe('Sales by seller and payment state (e2e)', () => {
     const quote = await http()
       .post('/quotes')
       .set(as(seller))
-      .send({ customerId: ids.customer, paymentMethod, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '10', taxRatePercent: '19' }] })
+      .send({ customerId: ids.customer, paymentMethod, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '3', taxRatePercent: '19' }] })
       .expect(201);
     return (await http().post(`/quotes/${quote.body.id}/convert`).set(as(converter)).send({ operationKey: randomUUID() }).expect(200)).body as OrderRow;
   };

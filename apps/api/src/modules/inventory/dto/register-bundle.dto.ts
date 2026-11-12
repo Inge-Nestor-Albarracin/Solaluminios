@@ -57,7 +57,7 @@ export class RegisterBundleDto {
   // Whole profiles physically in the bundle.
   @IsInt({ message: 'La cantidad debe ser un número entero de perfiles' })
   @Min(1, { message: 'La cantidad debe ser mayor que cero' })
-  @Max(1000000)
+  @Max(1000000, { message: 'La cantidad máxima por paquete es 1.000.000 perfiles' })
   quantity!: number;
 
   @Transform(trim)
@@ -66,11 +66,16 @@ export class RegisterBundleDto {
   @MaxLength(50)
   inventoryLocationId!: string;
 
-  @Transform(trim)
+  // Only warehouses (bodegas) use racks; retail stores (almacenes) refuse
+  // one. Required or refused by the location type, not here.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  rackId!: string;
+  rackId?: string;
 
   @IsIn(BUNDLE_REGISTRATION_TYPES, {
     message: 'registrationType debe ser INITIAL_STOCK o ENTRY',

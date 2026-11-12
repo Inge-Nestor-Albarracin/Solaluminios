@@ -43,6 +43,7 @@ import type {
 import {
   GLOBAL_DISCOUNT_MIN,
   SELLER_GLOBAL_DISCOUNT_LIMIT,
+  SELLER_LINE_DISCOUNT_LIMIT,
   documentTotals,
   lineAmounts,
   withGlobalDiscount,
@@ -233,12 +234,33 @@ export class SalesService {
     return this.prisma.customer.findMany({ where: { id: { in: matches.map((m) => m.id) } }, orderBy: [{ name: 'asc' }, { id: 'asc' }] });
   }
 
-  createCustomer(dto: SaveCustomerDto, user: SafeUser) {
+  async createCustomer(dto: SaveCustomerDto, user: SafeUser) {
+    await this.requireNewTaxId(dto.taxId, null);
     return this.prisma.customer.create({ data: { ...this.customerData(dto), createdById: user.id } });
+  }
+
+  // One customer per NIT, whatever its format: «900.123.456-7»,
+  // «900123456-7» and «900123456» are the same NIT (the check digit after
+  // the dash is ignored). Customers without NIT are not compared.
+  private async requireNewTaxId(taxId: string | null | undefined, exceptId: string | null) {
+    const base = (taxId ?? '').split('-')[0].replace(/[^0-9a-z]/gi, '').toLowerCase();
+    if (!base) return;
+    const [found] = await this.prisma.$queryRaw<{ name: string; taxId: string; active: boolean }[]>`
+      SELECT name, "taxId", active FROM "customers"
+      WHERE lower(regexp_replace(split_part(coalesce("taxId", ''), '-', 1), '[^0-9A-Za-z]', '', 'g')) = ${base}
+        AND (${exceptId}::text IS NULL OR id <> ${exceptId})
+      ORDER BY active DESC, name
+      LIMIT 1`;
+    if (found) {
+      throw new ConflictException(
+        `Ya existe el cliente «${found.name}» con el NIT ${found.taxId}${found.active ? '' : ' (inactivo)'}. Búscalo por su NIT en vez de crearlo de nuevo.`,
+      );
+    }
   }
 
   async updateCustomer(id: string, dto: SaveCustomerDto) {
     if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException('El cliente no existe');
+    await this.requireNewTaxId(dto.taxId, id);
     return this.prisma.customer.update({ where: { id }, data: this.customerData(dto) });
   }
 
@@ -497,6 +519,24 @@ export class SalesService {
       const taxRatePercent = dec(line.taxRatePercent);
       if (discountPercent.greaterThan(100) || taxRatePercent.greaterThan(100)) {
         throw new BadRequestException(`Renglón ${index + 1}: los porcentajes no pueden superar 100`);
+      }
+      // A seller gives up to 3 % per line. More only on a manual-price line
+      // (the administrator authorises it with its discount) or when the line
+      // keeps, unchanged, a discount saved before (e.g. by an administrator).
+      if (user.role !== 'ADMIN' && line.manualUnitPrice === undefined && discountPercent.greaterThan(SELLER_LINE_DISCOUNT_LIMIT)) {
+        const kept = previous.some(
+          (saved) =>
+            saved.referenceId === line.referenceId &&
+            saved.finishId === line.finishId &&
+            saved.origin === line.origin &&
+            (saved.supplierId ?? null) === (line.supplierId ?? null) &&
+            dec(saved.discountPercent).equals(discountPercent),
+        );
+        if (!kept) {
+          throw new BadRequestException(
+            `Renglón ${index + 1}: puedes dar hasta ${SELLER_LINE_DISCOUNT_LIMIT.toString()} % de descuento por renglón. Para más, usa precio manual (lo autoriza un administrador) o pide un descuento global.`,
+          );
+        }
       }
       const identity = {
         quoteId,

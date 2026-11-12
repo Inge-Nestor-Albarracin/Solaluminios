@@ -27,6 +27,7 @@ import {
 } from '../lib/commerce'
 import { EMPTY_CATALOG, type CatalogValue } from '../lib/forms'
 import { formatDateTime } from '../lib/format'
+import { parseMoney } from '../lib/numbers'
 import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
@@ -46,6 +47,9 @@ interface LineDraft {
   manualPrice: string
   priceReason: string
   estimatedCost: string
+  // Discount saved with this line: a seller may keep it unchanged even above
+  // the 3 % limit (the API's rule).
+  savedDiscount?: string
 }
 
 // China preselected for new lines (agreed default), visible and editable.
@@ -70,11 +74,26 @@ const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/
 const MANUAL_PRICE = /^\d{1,12}(\.\d{1,2})?$/
 // Minimum explanation of a manual price (the API's rule).
 const PRICE_REASON_MIN = 10
+// Line discount a seller gives alone (the API's rule); more needs a manual
+// price, which an administrator authorises with its discount.
+const SELLER_LINE_DISCOUNT_LIMIT = 3
+const MONEY_HINT = 'Escribe el precio en pesos, mayor que cero, p. ej. 12.000 o 12000,50.'
+
+// Why the line discount cannot be saved (null when it can).
+function lineDiscountError(line: LineDraft, isAdmin: boolean): string | null {
+  const value = decimal(line.discountPercent || '0')
+  if (!DECIMAL.test(value) || Number(value) > 100) return 'Escribe un porcentaje entre 0 y 100, p. ej. 2 o 2,5.'
+  const kept = line.savedDiscount !== undefined && Number(line.savedDiscount) === Number(value)
+  if (!isAdmin && !line.manual && Number(value) > SELLER_LINE_DISCOUNT_LIMIT && !kept) {
+    return `Puedes dar hasta ${SELLER_LINE_DISCOUNT_LIMIT} % por renglón. Para más, usa precio manual (lo autoriza un administrador) o pide un descuento global.`
+  }
+  return null
+}
 
 // Price used by the line: the manual one or the enabled one.
 function linePrice(line: LineDraft, enabled: string | null): string | null {
   if (!line.manual) return enabled
-  const price = decimal(line.manualPrice)
+  const price = parseMoney(line.manualPrice)
   return MANUAL_PRICE.test(price) && Number(price) > 0 ? price : null
 }
 
@@ -100,10 +119,10 @@ const draftKey = (line: LineDraft) =>
     origin: line.origin,
     supplierId: line.supplierId,
     quantity: Number(line.quantity),
-    unitPrice: decimal(line.manualPrice),
+    unitPrice: parseMoney(line.manualPrice),
     discountPercent: decimal(line.discountPercent || '0'),
     priceReason: line.priceReason,
-    estimatedCost: decimal(line.estimatedCost),
+    estimatedCost: parseMoney(line.estimatedCost),
   })
 const savedKey = (line: QuoteLine) =>
   manualKey({
@@ -254,12 +273,13 @@ function ManualPriceRequest({ quote, pending, onChanged }: { quote: Quote; pendi
   const [prices, setPrices] = useState<Record<number, string>>(() => Object.fromEntries(items.map((item) => [item.lineNo, String(Number(item.proposedUnitPrice))])))
   const [rejecting, setRejecting] = useState<string | null>(null)
   const approver = user?.id === pending.approver.id
-  const valid = items.every((item) => MANUAL_PRICE.test(decimal(prices[item.lineNo] ?? '')) && Number(decimal(prices[item.lineNo] ?? '')) > 0)
+  const validPrice = (lineNo: number) => MANUAL_PRICE.test(parseMoney(prices[lineNo] ?? '')) && Number(parseMoney(prices[lineNo] ?? '')) > 0
+  const valid = items.every((item) => validPrice(item.lineNo))
   const approve = () =>
     void act('approve', {
       lines: items
-        .filter((item) => Number(decimal(prices[item.lineNo])) !== Number(item.proposedUnitPrice))
-        .map((item) => ({ lineNo: item.lineNo, unitPrice: decimal(prices[item.lineNo]) })),
+        .filter((item) => Number(parseMoney(prices[item.lineNo])) !== Number(item.proposedUnitPrice))
+        .map((item) => ({ lineNo: item.lineNo, unitPrice: parseMoney(prices[item.lineNo]) })),
     })
 
   return (
@@ -290,7 +310,7 @@ function ManualPriceRequest({ quote, pending, onChanged }: { quote: Quote; pendi
                 <td className="num" data-label="Propuesto">{formatMoney(item.proposedUnitPrice)}</td>
                 <td className="num" data-label="Habilitado">{item.enabledUnitPrice ? formatMoney(item.enabledUnitPrice) : 'Sin precio'}</td>
                 <td className="num" data-label="Costo est.">{item.estimatedUnitCost ? formatUnitCost(item.estimatedUnitCost) : '—'}</td>
-                <td className="num" data-label="Margen">{marginText(approver ? decimal(prices[item.lineNo] ?? '') : item.proposedUnitPrice, item.estimatedUnitCost) ?? '—'}</td>
+                <td className="num" data-label="Margen">{marginText(approver ? parseMoney(prices[item.lineNo] ?? '') : item.proposedUnitPrice, item.estimatedUnitCost) ?? '—'}</td>
                 <td data-label="Justificación">{item.priceReason}</td>
                 {approver ? (
                   <td className="num" data-label="Precio aprobado">
@@ -300,6 +320,7 @@ function ManualPriceRequest({ quote, pending, onChanged }: { quote: Quote; pendi
                       value={prices[item.lineNo] ?? ''}
                       onChange={(e) => setPrices({ ...prices, [item.lineNo]: e.target.value })}
                     />
+                    {validPrice(item.lineNo) ? null : <span className="field-error">{MONEY_HINT}</span>}
                   </td>
                 ) : null}
               </tr>
@@ -419,6 +440,8 @@ function LineEditor({
   onRemove: (() => void) | null
 }) {
   const { referenceId, finishId } = line.catalog
+  const { user } = useSession()
+  const discountError = lineDiscountError(line, user?.role === 'ADMIN')
   const enc = encodeURIComponent
   const availability = useLoad<AvailabilityGroup[]>(referenceId && finishId ? `/sales/availability?referenceId=${enc(referenceId)}&finishId=${enc(finishId)}` : null)
   // Sale price configured by administration (no cost or profit reaches sales).
@@ -458,6 +481,7 @@ function LineEditor({
         </Field>
         <Field label="Descuento (%)">
           <input inputMode="decimal" value={line.discountPercent} onChange={(e) => set({ discountPercent: e.target.value })} />
+          {discountError ? <span className="field-error">{discountError}</span> : null}
         </Field>
         <Field label="IVA de venta (%)" hint="19 % por defecto; puedes cambiarlo.">
           <input inputMode="decimal" value={line.taxRatePercent} onChange={(e) => set({ taxRatePercent: e.target.value })} />
@@ -487,13 +511,13 @@ function LineEditor({
           >
             <textarea rows={3} maxLength={1000} value={line.priceReason} onChange={(e) => set({ priceReason: e.target.value })} />
           </Field>
-          {line.manualPrice && !linePrice(line, null) ? <p className="field-error">Escribe un precio mayor que cero, con máximo 2 decimales.</p> : null}
+          {line.manualPrice && !linePrice(line, null) ? <p className="field-error">{MONEY_HINT}</p> : null}
           {line.priceReason.trim().length > 0 && line.priceReason.trim().length < PRICE_REASON_MIN ? (
             <p className="field-error">Explica un poco más (mínimo {PRICE_REASON_MIN} caracteres).</p>
           ) : null}
           <p className={authorisedBy ? 'manual-status manual-ok' : 'manual-status'}>
             {authorisedBy ? `✓ Precio autorizado por ${authorisedBy}` : 'Sin autorizar: al guardar se envía la solicitud al administrador que elijas.'}
-            {marginText(linePrice(line, null), decimal(line.estimatedCost)) ? ` · Margen estimado ${marginText(linePrice(line, null), decimal(line.estimatedCost))}` : ''}
+            {marginText(linePrice(line, null), parseMoney(line.estimatedCost)) ? ` · Margen estimado ${marginText(linePrice(line, null), parseMoney(line.estimatedCost))}` : ''}
           </p>
         </div>
       ) : null}
@@ -572,6 +596,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           manualPrice: line.manualPrice ? String(Number(line.unitPrice)) : '',
           priceReason: line.priceReason ?? '',
           estimatedCost: line.estimatedUnitCost ? String(Number(line.estimatedUnitCost)) : '',
+          savedDiscount: line.discountPercent,
         }))
       : [newLine()],
   )
@@ -589,6 +614,18 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const convertKey = useRef<string | null>(null)
+  // One request at a time: a double click must not create two quotes (the
+  // state update of `busy` arrives one render too late to stop it).
+  const inFlight = useRef(false)
+  const once = async (work: () => Promise<void>) => {
+    if (inFlight.current) return
+    inFlight.current = true
+    try {
+      await work()
+    } finally {
+      inFlight.current = false
+    }
+  }
 
   useUnsavedWork(dirty ? 'Cotización con cambios sin guardar' : null)
 
@@ -614,7 +651,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     return Object.fromEntries(lines.map((line) => [line.key, line.manual ? (pool.get(draftKey(line))?.shift() ?? (isAdmin ? user?.name ?? null : null)) : null]))
   })()
   const manualToAuthorise = !isAdmin && lines.some((line) => line.manual && !authorisedBy[line.key])
-  const manualValid = lines.every((line) => !line.manual || (linePrice(line, null) !== null && line.priceReason.trim().length >= PRICE_REASON_MIN && (!line.estimatedCost.trim() || (DECIMAL.test(decimal(line.estimatedCost)) && Number(decimal(line.estimatedCost)) > 0))))
+  const manualValid = lines.every((line) => !line.manual || (linePrice(line, null) !== null && line.priceReason.trim().length >= PRICE_REASON_MIN && (!line.estimatedCost.trim() || (DECIMAL.test(parseMoney(line.estimatedCost)) && Number(parseMoney(line.estimatedCost)) > 0))))
+  const discountsValid = lines.every((line) => lineDiscountError(line, isAdmin) === null)
   // Unauthorised manual lines as drafted vs. as saved (what an open request
   // covers): a difference means a new request (and losing the open one).
   const draftUnauthorised = lines
@@ -641,7 +679,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     setLines((current) => current.map((item, i) => (i === index ? line : item)))
   }
 
-  const createCustomer = async () => {
+  const createCustomer = () => once(async () => {
     if (!newCustomer?.name.trim()) return
     try {
       const { data } = await request<Customer>('/customers', { method: 'POST', body: { name: newCustomer.name.trim(), ...(newCustomer.taxId.trim() ? { taxId: newCustomer.taxId.trim() } : {}) } })
@@ -651,7 +689,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     } catch (err) {
       setError(describeError(err))
     }
-  }
+  })
 
   const payload = () => ({
     customerId,
@@ -670,15 +708,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       taxRatePercent: decimal(line.taxRatePercent),
       ...(line.manual
         ? {
-            manualUnitPrice: decimal(line.manualPrice),
+            manualUnitPrice: parseMoney(line.manualPrice),
             priceReason: line.priceReason.trim(),
-            ...(line.estimatedCost.trim() ? { estimatedUnitCost: decimal(line.estimatedCost) } : {}),
+            ...(line.estimatedCost.trim() ? { estimatedUnitCost: parseMoney(line.estimatedCost) } : {}),
           }
         : {}),
     })),
   })
 
-  const save = async (replace = false) => {
+  const save = (replace = false) => once(async () => {
     setBusy(true)
     setError(null)
     setConfirmReplace(false)
@@ -715,9 +753,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     } finally {
       setBusy(false)
     }
-  }
+  })
 
-  const convert = async () => {
+  const convert = () => once(async () => {
     if (!id) return
     setBusy(true)
     setError(null)
@@ -732,9 +770,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     } finally {
       setBusy(false)
     }
-  }
+  })
 
-  const cancel = async () => {
+  const cancel = () => once(async () => {
     if (!id) return
     try {
       await request(`/quotes/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
@@ -742,7 +780,22 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     } catch (err) {
       setError(describeError(err))
     }
-  }
+  })
+  // What is missing to save, shown next to the button (a tooltip is not
+  // visible on phones).
+  const blocker = !customerId
+    ? 'Elige el cliente.'
+    : !paymentMethod
+      ? 'Elige la forma de pago.'
+      : !discountsValid
+        ? 'Revisa el descuento de los renglones marcados.'
+        : !globalValid
+          ? 'El descuento global debe ser 0 o estar entre 0,1 y 100.'
+          : !manualValid
+            ? 'Completa el precio manual y su justificación.'
+            : needsApprover && !approverId
+              ? 'Elige el administrador que autoriza.'
+              : null
 
   return (
     <>
@@ -866,6 +919,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                 }
               >
                 <input inputMode="decimal" value={globalDiscount} onChange={(e) => { setGlobalDiscount(e.target.value); setDirty(true) }} />
+                {globalValid ? null : <span className="field-error">Escribe 0 o un porcentaje entre 0,1 y 100, p. ej. 2 o 2,5.</span>}
               </Field>
               {willRequest ? (
                 <Field label="Motivo del descuento para el administrador (opcional)">
@@ -985,20 +1039,13 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           <button
             type="button"
             className="button"
-            disabled={busy || !customerId || !paymentMethod || !globalValid || !manualValid || (needsApprover && !approverId)}
-            title={
-              !paymentMethod
-                ? 'Elige la forma de pago'
-                : !manualValid
-                  ? 'Completa el precio manual y su justificación'
-                  : needsApprover && !approverId
-                    ? 'Elige el administrador que autoriza'
-                    : undefined
-            }
+            disabled={busy || blocker !== null}
+            title={blocker ?? undefined}
             onClick={() => void save()}
           >
             {busy ? 'Guardando…' : needsApprover ? 'Guardar y solicitar autorización' : id ? 'Guardar cambios' : 'Guardar cotización'}
           </button>
+          {blocker && !busy ? <span className="cell-sub save-blocker">Para guardar: {blocker}</span> : null}
           {id && quote?.status === 'DRAFT' ? (
             <>
               <button

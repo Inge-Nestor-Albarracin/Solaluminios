@@ -17,6 +17,9 @@ export function markupOnCost(cost: Decimal, percent: Decimal): { gain: Decimal; 
 // approval (QuoteDiscountRequest). ADMIN applies any valid value.
 export const GLOBAL_DISCOUNT_MIN = new Decimal('0.1');
 export const SELLER_GLOBAL_DISCOUNT_LIMIT = new Decimal(3);
+// Line discount a seller gives by itself (the same 3 %). More goes through a
+// manual price, which an administrator authorises together with its discount.
+export const SELLER_LINE_DISCOUNT_LIMIT = new Decimal(3);
 
 export interface LineAmounts {
   lineSubtotal: Decimal;

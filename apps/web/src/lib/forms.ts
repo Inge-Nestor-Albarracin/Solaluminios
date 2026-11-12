@@ -13,6 +13,9 @@ export interface LocationValue {
   inventoryLocationId: string
   aisleId: string
   rackId: string
+  // Type of the chosen location ('' until one is chosen). Retail stores
+  // (almacenes) have no aisle or rack: what is placed there is loose.
+  locationType?: '' | 'WAREHOUSE' | 'RETAIL_STORE'
 }
 
 export const EMPTY_LOCATION: LocationValue = {
@@ -20,7 +23,20 @@ export const EMPTY_LOCATION: LocationValue = {
   inventoryLocationId: '',
   aisleId: '',
   rackId: '',
+  locationType: '',
 }
+
+export const isStore = (value: LocationValue) => value.locationType === 'RETAIL_STORE'
+
+// Complete destination: a store alone, or a warehouse with its rack.
+export const placeReady = (value: LocationValue) =>
+  !!value.inventoryLocationId && (isStore(value) || !!value.rackId)
+
+// What the API receives: the rack only for warehouses.
+export const placePayload = (value: LocationValue) => ({
+  inventoryLocationId: value.inventoryLocationId,
+  ...(!isStore(value) && value.rackId ? { rackId: value.rackId } : {}),
+})
 
 export interface ArrivalValue {
   precision: ArrivalDatePrecision

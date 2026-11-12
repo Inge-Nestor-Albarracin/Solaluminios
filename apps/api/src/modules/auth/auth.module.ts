@@ -11,7 +11,14 @@ import { RolesGuard } from './roles.guard.js';
 @Module({
   imports: [
     DatabaseModule,
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
+    // Per IP. All the phones of a branch usually share one public IP, so the
+    // limits are per shop, not per person: 600 requests per minute in
+    // general. Brute force on passwords is stopped per account (5 failures,
+    // 15 min lock: login-attempts.ts), not by this limit.
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60000, limit: 600 }],
+      errorMessage: 'Demasiadas solicitudes desde esta conexión. Espera un minuto e inténtalo de nuevo.',
+    }),
     JwtModule.registerAsync({
       useFactory: () => {
         const secret = process.env.JWT_SECRET;

@@ -35,10 +35,50 @@ function userWording(text: string): string {
   return text.replace(/\bestos EPC\b/g, 'estos chips').replace(/\bEPC\b/g, 'chip')
 }
 
+// Field names of validation errors, as users know them.
+const FIELD_LABELS: Record<string, string> = {
+  quantity: 'la cantidad',
+  epc: 'el chip',
+  discountPercent: 'el descuento',
+  taxRatePercent: 'el IVA',
+  manualUnitPrice: 'el precio manual',
+  globalDiscountPercent: 'el descuento global',
+}
+
+// Technical validation text («bundles.1.quantity must not be greater than
+// 1000000») into Spanish («Paquete 2: la cantidad no puede ser mayor que
+// 1.000.000»). Messages already written in Spanish pass unchanged.
+export function friendlyValidation(text: string): string {
+  if (/^ThrottlerException/.test(text)) return STATUS_MESSAGES[429]
+  const match = /^(?:(bundles|lines)\.(\d+)\.)?(\w+) (must .*|should .*)$/.exec(text)
+  if (!match) {
+    // A Spanish message with the path of a list item: «bundles.1.La cantidad…».
+    const item = /^(bundles|lines)\.(\d+)\.(.+)$/.exec(text)
+    return item ? `${item[1] === 'bundles' ? 'Paquete' : 'Renglón'} ${Number(item[2]) + 1}: ${item[3]}` : text
+  }
+  const [, list, index, field, rule] = match
+  const number = (value: string) => Number(value).toLocaleString('es-CO')
+  const rules: [RegExp, (m: RegExpExecArray) => string][] = [
+    [/^must not be greater than (\d+)/, (m) => `no puede ser mayor que ${number(m[1])}`],
+    [/^must not be less than (\d+)/, (m) => `no puede ser menor que ${number(m[1])}`],
+    [/^must be an integer/, () => 'debe ser un número entero'],
+    [/^should not be empty|^must be a string/, () => 'es obligatorio'],
+  ]
+  const translated = rules.map(([re, fn]) => { const m = re.exec(rule); return m ? fn(m) : null }).find(Boolean) ?? 'no es válido'
+  const prefix = list ? `${list === 'bundles' ? 'Paquete' : 'Renglón'} ${Number(index) + 1}: ` : ''
+  const label = FIELD_LABELS[field] ?? `el campo ${field}`
+  return `${prefix}${label.charAt(0).toUpperCase()}${label.slice(1)} ${translated}.`
+}
+
 function errorMessage(status: number, data: unknown): string {
+  // Too many requests: always the same plain explanation.
+  if (status === 429) {
+    const message = (data as { message?: unknown } | null)?.message
+    return typeof message === 'string' && /^[A-ZÁÉÍÓÚÑ¿]/.test(message) && !/Throttler/.test(message) ? message : STATUS_MESSAGES[429]
+  }
   const message = (data as { message?: unknown } | null)?.message
-  if (typeof message === 'string' && message) return userWording(message)
-  if (Array.isArray(message) && message.length) return userWording(message.join('. '))
+  if (typeof message === 'string' && message) return userWording(friendlyValidation(message))
+  if (Array.isArray(message) && message.length) return userWording(message.map((m) => friendlyValidation(String(m))).join('. '))
   return STATUS_MESSAGES[status] ?? 'Ocurrió un error en el servidor. Inténtalo de nuevo.'
 }
 

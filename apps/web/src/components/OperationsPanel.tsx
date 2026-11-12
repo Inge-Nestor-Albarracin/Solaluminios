@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ApiError, describeError } from '../api/client'
-import type { BundleDetail, OperationResult } from '../api/types'
+import type { Bundle, BundleDetail, OperationResult } from '../api/types'
 import { canAdjust, canOperate, useSession } from '../session/session-context'
-import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
+import { bundlePlace } from '../lib/format'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
-import { LocationSelectors } from './LocationSelectors'
+import { BulkTransferPanel, MAX_TRANSFER } from './BulkTransferPanel'
+import { IconScan } from './icons'
 import { Field, Notice } from './ui'
 
 type Action = 'open' | 'exit' | 'transfer' | 'adjustments'
@@ -214,68 +215,109 @@ function ExitForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onDone:
   )
 }
 
-function TransferForm({ bundle, onDone, onRefresh }: { bundle: BundleDetail; onDone: (message: string) => void; onRefresh: () => void }) {
-  const op = useOperation(bundle.id, onDone, onRefresh)
-  const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION)
-  const [description, setDescription] = useState('')
-  const [reason, setReason] = useState('')
-  const [confirming, setConfirming] = useState(false)
-  useUnsavedWork(location.rackId || description.trim() || reason.trim() || confirming || op.error ? 'Traslado sin confirmar' : null)
-  const sameRack = location.rackId === bundle.rackId && location.inventoryLocationId === bundle.inventoryLocationId
-  const valid = !!location.rackId && !sameRack
+// «Traslado» of the bundle on screen. Other bundles can be added by their
+// chip (reader in keyboard mode, or typed) to move a few together; one alone
+// also works. Same rules as the multiple transfer of Lectura masiva: all or
+// none, whole bundles, opened on arrival at a retail store.
+function TransferForm({ bundle, onRefresh }: { bundle: BundleDetail; onRefresh: () => void }) {
+  const { request } = useSession()
+  const [others, setOthers] = useState<Bundle[]>([])
+  const [chip, setChip] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
+  useUnsavedWork(others.length > 0 ? 'Paquetes agregados al traslado sin confirmar' : null)
+  const list: Bundle[] = [bundle, ...others]
 
-  const edit = (apply: () => void) => {
-    apply()
-    setConfirming(false)
-    op.reset()
-  }
-
-  const submit = async (event: FormEvent) => {
+  const add = async (event: FormEvent) => {
     event.preventDefault()
-    if (!confirming) return setConfirming(valid)
-    const ok = await op.run(
-      'transfer',
-      { inventoryLocationId: location.inventoryLocationId, rackId: location.rackId, reason: reason.trim() || undefined },
-      () => `Paquete trasladado a ${description}.`,
-    )
-    if (ok) {
-      setLocation(EMPTY_LOCATION)
-      setReason('')
-      setConfirming(false)
+    const epc = chip.trim().toUpperCase()
+    if (!epc || adding) return
+    setAddError(null)
+    if (!/^[A-Z0-9]+$/.test(epc)) return setAddError('El código del chip solo puede contener letras y números, sin espacios.')
+    if (list.some((item) => item.epc === epc)) {
+      setChip('')
+      return setAddError(`El chip ${epc} ya está en la lista.`)
+    }
+    if (list.length >= MAX_TRANSFER) return setAddError(`Máximo ${MAX_TRANSFER} paquetes por traslado.`)
+    setAdding(true)
+    try {
+      const { data } = await request<Bundle>(`/inventory/bundles/epc/${encodeURIComponent(epc)}`)
+      if (data.quantity === 0) {
+        setAddError(`El paquete ${epc} está agotado; no se traslada.`)
+      } else {
+        setOthers((current) => (current.some((item) => item.id === data.id) ? current : [...current, data]))
+      }
+      setChip('')
+    } catch (err) {
+      setAddError(err instanceof ApiError && err.status === 404 ? `No hay un paquete registrado con el chip ${epc}.` : describeError(err))
+    } finally {
+      setAdding(false)
     }
   }
 
+  // After the transfer: the added bundles show their new place; the bundle
+  // on screen and its history are reloaded.
+  const moved = (bundles: Bundle[]) => {
+    const byId = new Map(bundles.map((item) => [item.id, item]))
+    setOthers((current) => current.map((item) => byId.get(item.id) ?? item))
+    onRefresh()
+  }
+
   return (
-    <form className="form-grid" onSubmit={submit}>
-      {op.error ? <div className="field-wide"><Notice kind="error">{op.error}</Notice></div> : null}
-      <p className="field-wide muted">Se traslada el paquete completo; la cantidad no cambia.</p>
-      <LocationSelectors
-        mode="form"
-        value={location}
-        disabled={op.pending}
-        onChange={(value) => edit(() => setLocation(value))}
-        onDescribe={setDescription}
-        labels={{ location: 'Bodega destino', rack: 'Burro destino' }}
-      />
-      <Field label="Motivo (opcional)">
-        <input type="text" maxLength={500} disabled={op.pending} value={reason} onChange={(e) => edit(() => setReason(e.target.value))} />
-      </Field>
-      {sameRack ? (
-        <div className="field-wide"><Notice kind="warning">El paquete ya está en ese burro.</Notice></div>
-      ) : null}
-      <div className="field-wide">
-        {confirming ? (
-          <Confirm pending={op.pending} confirmLabel="Confirmar traslado" onBack={() => edit(() => undefined)}>
-            Se trasladará el paquete <span className="mono">{bundle.epc}</span> completo ({bundle.quantity} perfiles) a{' '}
-            <strong>{description}</strong>.
-          </Confirm>
-        ) : (
-          <button type="submit" className="button" disabled={!valid}>
-            Revisar traslado
-          </button>
-        )}
-      </div>
-    </form>
+    <div className="transfer-tab">
+      <p className="muted">
+        Se trasladan paquetes completos; la cantidad no cambia. Puedes trasladar solo este paquete o agregar otros leyendo su chip.
+      </p>
+
+      <ul className="transfer-list" aria-label="Paquetes a trasladar">
+        {list.map((item, index) => (
+          <li key={item.id}>
+            <span>
+              <span className="mono">{item.epc}</span>
+              <small>
+                {item.reference.code} · {item.quantity} perf. · {bundlePlace(item)}
+                {item.openedAt ? ' · abierto' : ''}
+              </small>
+            </span>
+            {index === 0 ? (
+              <span className="badge badge-muted">Este paquete</span>
+            ) : (
+              <button type="button" className="text-button" onClick={() => setOthers((current) => current.filter((other) => other.id !== item.id))}>
+                Quitar
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <form className="transfer-add" onSubmit={add}>
+        <Field label="Agregar otro paquete (opcional)" hint="Lee el chip con la pistola en modo teclado o escribe el código y pulsa Enter.">
+          <span className="input-wrap">
+            <IconScan />
+            <input
+              className="mono"
+              type="text"
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              placeholder="E2003412…"
+              value={chip}
+              disabled={adding}
+              onChange={(e) => {
+                setChip(e.target.value.toUpperCase())
+                setAddError(null)
+              }}
+            />
+          </span>
+        </Field>
+        <button type="submit" className="button button-secondary" disabled={adding || !chip.trim()}>
+          {adding ? 'Buscando…' : 'Agregar'}
+        </button>
+      </form>
+      {addError ? <Notice kind="error">{addError}</Notice> : null}
+
+      <BulkTransferPanel bundles={list} onMoved={moved} embedded />
+    </div>
   )
 }
 
@@ -397,7 +439,7 @@ export function OperationsPanel({ bundle, onDone, onRefresh }: { bundle: BundleD
           <Notice kind="info">El paquete está agotado: no admite salidas ni traslados.</Notice>
         ) : null}
         {active === 'exit' && !empty ? <ExitForm bundle={bundle} onDone={onDone} onRefresh={onRefresh} /> : null}
-        {active === 'transfer' && !empty ? <TransferForm bundle={bundle} onDone={onDone} onRefresh={onRefresh} /> : null}
+        {active === 'transfer' && !empty ? <TransferForm bundle={bundle} onRefresh={onRefresh} /> : null}
         {active === 'adjustments' ? <AdjustmentForm bundle={bundle} onDone={onDone} onRefresh={onRefresh} /> : null}
       </div>
     </div>

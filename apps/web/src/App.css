@@ -4163,3 +4163,141 @@ button.doc-row:focus-visible {
 .required-mark {
   color: var(--danger);
 }
+
+/* Multiple transfer from the bulk read (BulkTransferPanel). */
+.bulk-transfer {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.bulk-transfer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bulk-transfer-head .subtitle {
+  margin: 0 0 4px;
+}
+
+.bulk-transfer-head p {
+  margin: 0;
+  max-width: 60ch;
+}
+
+.bulk-transfer-count {
+  color: var(--text);
+  font-size: 14.5px;
+}
+
+.bulk-transfer-count strong {
+  color: var(--ink);
+  font: 800 18px/1.1 var(--display);
+}
+
+.bulk-transfer-count small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.bulk-transfer-problems {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 760px) {
+  .bulk-transfer-head .button {
+    width: 100%;
+  }
+}
+
+/* «Traslado» tab of a bundle: bundles to move and chip to add more. */
+.transfer-tab {
+  display: grid;
+  gap: 14px;
+}
+
+.transfer-tab > p {
+  margin: 0;
+}
+
+.transfer-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  list-style: none;
+}
+
+.transfer-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.transfer-list li:last-child {
+  border-bottom: 0;
+}
+
+.transfer-list li > span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.transfer-list .mono {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.transfer-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transfer-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.transfer-add > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.bulk-transfer.embedded {
+  margin-bottom: 0;
+}
+
+/* A screen that failed to draw (ViewErrorBoundary). */
+.view-error {
+  display: grid;
+  gap: 12px;
+}
+
+.view-error-detail {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .transfer-add {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -16,13 +16,17 @@ import type {
   BundleAdjustmentDto,
   BundleExitDto,
   BundleOpenDto,
+  BundleTransferBatchDto,
   BundleTransferDto,
 } from './dto/bundle-operation.dto.js';
 import {
   bundleDetailInclude,
+  bundleListInclude,
   movementInclude,
-  requireActiveRackInLocation,
+  requirePlace,
   reservedQuantity,
+  storeOpeningReason,
+  type Place,
   type Tx,
 } from './inventory.shared.js';
 
@@ -56,9 +60,12 @@ interface Operation {
   // Decides whether a stored movement with the same key is the same request.
   matches: (movement: InventoryMovement) => boolean;
   // Runs with the bundle row locked; updates the bundle and describes the
-  // movement to record.
-  apply: (tx: Tx, bundle: Bundle) => Promise<MovementData>;
+  // movement to record (and the opening that follows it, if any).
+  apply: (tx: Tx, bundle: Bundle) => Promise<MovementData & { opening?: MovementData }>;
 }
+
+// Key prefix of the movements of one multiple transfer.
+const batchTransferPrefix = (operationKey: string) => `bundle-transfer:${operationKey}:`;
 
 // Exits, transfers, adjustments and openings.
 //
@@ -141,7 +148,8 @@ export class InventoryOperationsService {
     });
   }
 
-  // Moves the whole bundle; quantity is unchanged.
+  // Moves the whole bundle; quantity is unchanged. Arriving at a retail store
+  // (almacén) it is opened in the same operation: its profiles are loose.
   transfer(bundleId: string, dto: BundleTransferDto, user: SafeUser) {
     const reason = dto.reason || null;
     return this.execute(bundleId, user, {
@@ -149,54 +157,175 @@ export class InventoryOperationsService {
       matches: (m) =>
         m.type === 'TRANSFER' &&
         m.destinationLocationId === dto.inventoryLocationId &&
-        m.destinationRackId === dto.rackId &&
+        m.destinationRackId === (dto.rackId ?? null) &&
         m.reason === reason,
       apply: async (tx, bundle) => {
-        if (bundle.quantity === 0) {
-          throw new ConflictException(
-            'El paquete está agotado y no se puede trasladar',
-          );
-        }
-        await requireActiveRackInLocation(
-          tx,
-          dto.rackId,
-          dto.inventoryLocationId,
-        );
-        // Reservations belong to the dispatch location: moving reserved
-        // material would invalidate them.
-        if ((await reservedQuantity(tx, bundle.id)) > 0) {
-          throw new ConflictException(
-            'El paquete tiene perfiles reservados para una orden de venta; no se traslada mientras la reserva esté activa',
-          );
-        }
-        if (
-          bundle.inventoryLocationId === dto.inventoryLocationId &&
-          bundle.rackId === dto.rackId
-        ) {
-          throw new BadRequestException(
-            'El paquete ya está en ese burro de esa ubicación',
-          );
-        }
-        await tx.bundle.update({
-          where: { id: bundle.id },
-          data: {
-            inventoryLocationId: dto.inventoryLocationId,
-            rackId: dto.rackId,
-          },
-        });
-        return {
-          type: 'TRANSFER',
-          quantity: bundle.quantity,
-          quantityBefore: bundle.quantity,
-          quantityAfter: bundle.quantity,
-          sourceLocationId: bundle.inventoryLocationId,
-          sourceRackId: bundle.rackId,
-          destinationLocationId: dto.inventoryLocationId,
-          destinationRackId: dto.rackId,
-          reason,
-        };
+        const place = await requirePlace(tx, dto.inventoryLocationId, dto.rackId);
+        const problem = notMovable(bundle, await reservedQuantity(tx, bundle.id), place);
+        if (problem) throw problem;
+        return this.moveTo(tx, bundle, place, reason, user, new Date());
       },
     });
+  }
+
+  // Several whole bundles to one destination in ONE transaction: all of them
+  // move or none does, and every problem is reported at once. Each bundle
+  // gets its own TRANSFER movement (and OPENING when the destination is a
+  // retail store) with the key `bundle-transfer:<key>:<bundleId>`. A retry
+  // with the same key returns the saved result.
+  async transferMany(dto: BundleTransferBatchDto, user: SafeUser) {
+    const reason = dto.reason || null;
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+          const ids = [...dto.bundleIds].sort();
+          await tx.$queryRaw`SELECT id FROM "bundles" WHERE id = ANY(${ids}::text[]) ORDER BY id FOR UPDATE`;
+          const replayed = await this.replayTransferMany(tx, dto, user);
+          if (replayed) return replayed;
+
+          const place = await requirePlace(tx, dto.inventoryLocationId, dto.rackId);
+          const bundles = await tx.bundle.findMany({ where: { id: { in: ids } } });
+          const missing = dto.bundleIds.length - bundles.length;
+          if (missing > 0) {
+            throw new NotFoundException(
+              missing === 1
+                ? 'Un paquete de la lista no existe; no se trasladó ninguno'
+                : `${missing} paquetes de la lista no existen; no se trasladó ninguno`,
+            );
+          }
+          const reserved = await tx.stockReservation.groupBy({
+            by: ['bundleId'],
+            where: { bundleId: { in: ids }, status: 'ACTIVE' },
+            _sum: { quantity: true },
+          });
+          const held = new Map(reserved.map((row) => [row.bundleId, row._sum.quantity ?? 0]));
+          const byId = new Map(bundles.map((bundle) => [bundle.id, bundle]));
+          const ordered = dto.bundleIds.map((id) => byId.get(id)!);
+          const problems = ordered
+            .map((bundle) => ({ bundle, error: notMovable(bundle, held.get(bundle.id) ?? 0, place) }))
+            .filter((row): row is { bundle: Bundle; error: Error } => row.error !== null)
+            .map(({ bundle, error }) => ({ bundleId: bundle.id, epc: bundle.epc, message: error.message }));
+          if (problems.length > 0) {
+            throw new ConflictException({
+              statusCode: 409,
+              error: 'Conflict',
+              message: `No se trasladó ningún paquete. ${problems.map((p) => `${p.epc}: ${p.message}`).join(' · ')}`,
+              problems,
+            });
+          }
+
+          const now = new Date();
+          let opened = 0;
+          for (const bundle of ordered) {
+            const key = batchTransferPrefix(dto.operationKey) + bundle.id;
+            const { opening, ...movement } = await this.moveTo(tx, bundle, place, reason, user, now);
+            await tx.inventoryMovement.create({
+              data: { ...movement, bundleId: bundle.id, occurredAt: now, performedById: user.id, operationKey: key },
+            });
+            if (opening) {
+              opened += 1;
+              await tx.inventoryMovement.create({
+                data: { ...opening, bundleId: bundle.id, occurredAt: now, performedById: user.id, operationKey: `${key}:open` },
+              });
+            }
+          }
+          return { replayed: false, ...(await this.transferResult(tx, dto.bundleIds, opened)) };
+        },
+        { maxWait: 10000, timeout: 60000 },
+      );
+    } catch (error: unknown) {
+      if (isLockTimeout(error)) {
+        throw new RetryableException(
+          'Uno de los paquetes está siendo modificado por otra operación. Reintenta en unos segundos con la misma solicitud.',
+        );
+      }
+      // The same key was committed concurrently by another request.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const replayed = await this.replayTransferMany(this.prisma, dto, user);
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  // The saved result of a multiple transfer with this key, if it is the same
+  // request; a key already used with other data is rejected.
+  private async replayTransferMany(client: Tx, dto: BundleTransferBatchDto, user: SafeUser) {
+    const prefix = batchTransferPrefix(dto.operationKey);
+    const saved = await client.inventoryMovement.findMany({
+      where: { operationKey: { startsWith: prefix } },
+    });
+    if (saved.length === 0) return null;
+    const transfers = saved.filter((m) => m.type === 'TRANSFER');
+    const reason = dto.reason || null;
+    const same =
+      transfers.length === dto.bundleIds.length &&
+      dto.bundleIds.every((id) => transfers.some((m) => m.operationKey === prefix + id && m.bundleId === id)) &&
+      transfers.every(
+        (m) =>
+          m.performedById === user.id &&
+          m.destinationLocationId === dto.inventoryLocationId &&
+          m.destinationRackId === (dto.rackId ?? null) &&
+          m.reason === reason,
+      );
+    if (!same) throw new ConflictException('La clave de operación ya se usó con otros datos');
+    const opened = saved.filter((m) => m.type === 'OPENING').length;
+    return { replayed: true, ...(await this.transferResult(client, dto.bundleIds, opened)) };
+  }
+
+  private async transferResult(client: Tx, ids: string[], opened: number) {
+    const bundles = await client.bundle.findMany({ where: { id: { in: ids } }, include: bundleListInclude });
+    const order = new Map(ids.map((id, index) => [id, index]));
+    bundles.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    return {
+      count: bundles.length,
+      profiles: bundles.reduce((total, bundle) => total + bundle.quantity, 0),
+      opened,
+      bundles,
+    };
+  }
+
+  // Moves a locked, validated bundle and describes its TRANSFER movement and,
+  // when it arrives closed at a retail store, the OPENING that follows.
+  private async moveTo(
+    tx: Tx,
+    bundle: Bundle,
+    place: Place,
+    reason: string | null,
+    user: SafeUser,
+    now: Date,
+  ): Promise<MovementData & { opening?: MovementData }> {
+    const opens = place.loose && !bundle.openedAt;
+    await tx.bundle.update({
+      where: { id: bundle.id },
+      data: {
+        inventoryLocationId: place.location.id,
+        rackId: place.rackId,
+        ...(opens ? { openedAt: now, openedById: user.id } : {}),
+      },
+    });
+    const transfer: MovementData = {
+      type: 'TRANSFER',
+      quantity: bundle.quantity,
+      quantityBefore: bundle.quantity,
+      quantityAfter: bundle.quantity,
+      sourceLocationId: bundle.inventoryLocationId,
+      sourceRackId: bundle.rackId,
+      destinationLocationId: place.location.id,
+      destinationRackId: place.rackId,
+      reason,
+    };
+    if (!opens) return transfer;
+    const opening: MovementData = {
+      type: 'OPENING',
+      quantity: bundle.quantity,
+      quantityBefore: bundle.quantity,
+      quantityAfter: bundle.quantity,
+      sourceLocationId: place.location.id,
+      reason: storeOpeningReason(place.location.name, 'traslado'),
+    };
+    return { ...transfer, opening };
   }
 
   adjust(bundleId: string, dto: BundleAdjustmentDto, user: SafeUser) {
@@ -268,17 +397,23 @@ export class InventoryOperationsService {
           const bundle = await tx.bundle.findUniqueOrThrow({
             where: { id: bundleId },
           });
-          const data = await operation.apply(tx, bundle);
+          const { opening, ...data } = await operation.apply(tx, bundle);
+          const occurredAt = new Date();
           const movement = await tx.inventoryMovement.create({
             data: {
               ...data,
               bundleId,
-              occurredAt: new Date(),
+              occurredAt,
               performedById: user.id,
               operationKey: operation.operationKey,
             },
             include: movementInclude,
           });
+          if (opening) {
+            await tx.inventoryMovement.create({
+              data: { ...opening, bundleId, occurredAt, performedById: user.id, operationKey: `${operation.operationKey}:open` },
+            });
+          }
           const updated = await tx.bundle.findUniqueOrThrow({
             where: { id: bundleId },
             include: bundleDetailInclude,
@@ -362,4 +497,24 @@ export class InventoryOperationsService {
       );
     }
   }
+}
+
+// Why a bundle cannot move to this place (null when it can). Reservations
+// belong to the dispatch location: moving reserved material would
+// invalidate them.
+function notMovable(bundle: Bundle, reserved: number, place: Place): Error | null {
+  if (bundle.quantity === 0) {
+    return new ConflictException('El paquete está agotado y no se puede trasladar');
+  }
+  if (reserved > 0) {
+    return new ConflictException(
+      'El paquete tiene perfiles reservados para una orden de venta; no se traslada mientras la reserva esté activa',
+    );
+  }
+  if (bundle.inventoryLocationId === place.location.id && bundle.rackId === place.rackId) {
+    return new BadRequestException(
+      place.loose ? `El paquete ya está en el almacén ${place.location.name}` : 'El paquete ya está en ese burro de esa ubicación',
+    );
+  }
+  return null;
 }

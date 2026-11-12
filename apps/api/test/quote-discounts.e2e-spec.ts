@@ -58,10 +58,10 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     }
   };
 
-  // Two lines with different VAT: 10 × price with 10 % line discount and 19 %
+  // Two lines with different VAT: 10 × price with 3 % line discount and 19 %
   // VAT, and 3 × price without discount and 0 % VAT.
   const lines = [
-    { referenceId: '', finishId: '', origin: 'NATIONAL', quantity: 10, discountPercent: '10', taxRatePercent: '19' },
+    { referenceId: '', finishId: '', origin: 'NATIONAL', quantity: 10, discountPercent: '3', taxRatePercent: '19' },
     { referenceId: '', finishId: '', origin: 'NATIONAL', quantity: 3, discountPercent: '0', taxRatePercent: '0' },
   ];
   const body = (globalDiscountPercent?: string) => ({
@@ -333,5 +333,28 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
       outcomes.add(`${approve.status}/${converted.status}:${order ? Number(order.globalDiscountPercent) : 'none'}`);
     }
     for (const outcome of outcomes) expect(['200/200:5', '200/409:none']).toContain(outcome);
+  });
+
+  it('line discount: SALES up to 3 % alone; more only with a manual price or kept unchanged; ADMIN any', async () => {
+    const withLine = (discountPercent: string, extra: object = {}) => ({
+      ...body(),
+      lines: [{ referenceId: ids.ref, finishId: ids.finishA, origin: 'NATIONAL', quantity: 2, discountPercent, taxRatePercent: '19', ...extra }],
+    });
+    const refused = await http().post('/quotes').set(as('SALES')).send(withLine('10')).expect(400);
+    expect(refused.body.message).toMatch(/hasta 3 % de descuento por renglón/);
+    await http().post('/quotes').set(as('SALES')).send(withLine('3')).expect(201);
+    // A manual price carries its discount to the administrator's authorisation.
+    const manual = await http()
+      .post('/quotes')
+      .set(as('SALES'))
+      .send(withLine('10', { manualUnitPrice: '5000', priceReason: 'Cliente con convenio especial' }))
+      .expect(201);
+    expect(manual.body.lines[0]).toMatchObject({ discountPercent: '10', manualPrice: true });
+    await http().post('/quotes').set(as('ADMIN')).send(withLine('10')).expect(201);
+    // A line saved earlier with more (older data) can be kept unchanged, not raised.
+    const old = (await http().post('/quotes').set(as('SALES')).send(withLine('3')).expect(201)).body as QuoteBody & { lines: { id: string }[] };
+    await prisma.quoteLine.update({ where: { id: old.lines[0].id }, data: { discountPercent: '10' } });
+    await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('10')).expect(200);
+    await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('12')).expect(400);
   });
 });

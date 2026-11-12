@@ -2099,6 +2099,212 @@ migraciones `20261104120000_quote_manual_price` y
 `20261106120000_reference_family_hint`; después de aplicarlas, ejecutar la
 simulación y luego `--apply`. Igual en el servidor.
 
+## Almacenes sin pasillo ni burro y traslado de varios paquetes (12/11/2026)
+
+**Objetivo.** La bodega de la 116 manda paquetes completos al almacén del 7
+de agosto, que vende todo por sueltos y no recibe de China. Decisiones del
+usuario:
+- Todos los almacenes trabajan sin pasillo ni burro; esa organización es solo
+  de las bodegas.
+- El traslado es inmediato (sin estado «en camino») y de paquetes completos.
+- Se pueden trasladar varios paquetes en una sola operación.
+
+**Regla.** La define el tipo de ubicación existente, sin migración nueva:
+- `WAREHOUSE` (bodega): exige pasillo y burro.
+- `RETAIL_STORE` (almacén): rechaza burro.
+
+Todo paquete que llega a un almacén queda abierto en la misma transacción,
+con un movimiento `OPENING` después del registro o traslado y un motivo que
+lo explica. Aplica a:
+- el registro de paquetes;
+- la recepción de prerregistros de China;
+- el traslado individual;
+- el traslado múltiple.
+
+Un paquete abierto que vuelve a una bodega sigue abierto y necesita burro. Los
+paquetes cerrados que ya estuvieran en un almacén no se tocan.
+
+**API.**
+- `inventory.shared.ts`: `requirePlace` (ubicación activa y burro según el
+  tipo) y `storeOpeningReason`.
+- `rackId` pasa a ser opcional en el registro, el traslado y la recepción. Lo
+  exige o lo rechaza el tipo de ubicación; la cadena vacía cuenta como
+  ausente.
+- Nuevo `POST /inventory/bundles/transfer` (ADMIN, WAREHOUSE):
+  - recibe `{operationKey, bundleIds[1..200], inventoryLocationId, rackId?,
+    reason?}`;
+  - es todo o nada en una transacción, con las filas bloqueadas en orden;
+  - si hay problemas (agotado, reservado, ya en el destino, inexistente), los
+    informa todos juntos en `problems` y no mueve nada;
+  - claves `bundle-transfer:<key>:<bundleId>` (`:open` para la apertura);
+  - un reintento con la misma clave devuelve el resultado guardado (200), y
+    con otros datos responde 409;
+  - responde `{count, profiles, opened, bundles}`.
+- `POST /locations/aisles` rechaza almacenes.
+
+**Web.**
+- `LocationSelectors` guarda el tipo de ubicación y oculta pasillo y burro en
+  los almacenes, con un aviso.
+- `placeReady` y `placePayload` (en `lib/forms.ts`) se usan en el registro, la
+  recepción de China y el traslado individual.
+- El traslado individual avisa que el paquete queda abierto al llegar a un
+  almacén.
+- Lectura masiva:
+  - para ADMIN y WAREHOUSE, panel «Trasladar los paquetes leídos»
+    (`BulkTransferPanel`) con destino, motivo o remisión, revisión y
+    confirmación;
+  - excluye agotados y los que ya están en el destino, y avisa cuántos
+    quedarán abiertos;
+  - conserva la clave mientras el resultado sea incierto;
+  - «Quitar» por chip para descartar paquetes vecinos leídos por error.
+
+**Pruebas.**
+- Suite nueva `retail-store-loose.e2e-spec.ts` (5 pruebas):
+  - burro exigido o rechazado según el tipo;
+  - pasillos rechazados en almacenes;
+  - registro en almacén abierto desde el inicio;
+  - traslado de 4 paquetes, 3 abiertos al llegar, con sueltos sumados y
+    reintento idempotente;
+  - todo o nada con varios problemas y validaciones;
+  - traslado individual de ida y vuelta.
+- API unitarias 43/43; e2e 202/202; `oxlint` del API y la web; build web.
+- Navegador, BD de pruebas:
+  - seed `sdui/seed10.mjs` con sucursal 116 (bodega), 7 de agosto (almacén) y
+    3 paquetes;
+  - lectura manual de los 3 chips y uno inexistente («Quitar»);
+  - traslado al almacén: 3 abiertos;
+  - resumen del almacén con 60 sueltos;
+  - registro con pasillo y burro ocultos;
+  - 375 px sin desbordamiento;
+  - limpieza con `--clean` por IDs exactos.
+
+**Datos agregados en desarrollo (autorizado por el usuario).** En
+`solaluminios_dev` se creó la sucursal `7-AGOSTO` («7 de agosto») con su
+almacén `ALM-7-AGOSTO` («Almacén 7 de agosto», `RETAIL_STORE`). Solo se
+agregaron registros; el script del scratchpad (`sdui/create-7agosto.mjs`) no
+hace nada si ya existen.
+
+**Verificación «Consultar chip → Traslado» (BD de pruebas).**
+- La consulta encuentra el paquete aunque el código se escriba en minúsculas;
+  un chip inexistente ofrece registrarlo.
+- Traslado entre burros de la bodega: el mismo burro queda bloqueado con
+  aviso.
+- Traslado al almacén: pasillo y burro se ocultan; el paquete queda abierto y
+  el historial muestra el traslado (con remisión) y la apertura.
+- Volver a trasladar al mismo almacén queda bloqueado.
+- Se corrigió la redacción del motivo de apertura, que repetía «almacén
+  Almacén…».
+
+**Pantalla blanca en «Consultar chip → Traslado» y traslado de pocos
+paquetes (12/11/2026).**
+- No se reprodujo con el código actual. Se probó con los datos reales de
+  desarrollo mediante un API alterno (puerto 3101) y un usuario temporal
+  WAREHOUSE (luego ADMIN):
+  - paquete cerrado y paquete abierto;
+  - escritorio y 375 px;
+  - el usuario se borró por ID y sin movimientos;
+  - no se confirmó ningún traslado.
+- Causa probable: una pestaña abierta desde antes de los cambios, con la
+  recarga en caliente de Vite en estado inconsistente.
+- `ViewErrorBoundary` envuelve cada pantalla de `App.tsx`: si una falla, en
+  vez de quedar en blanco muestra el mensaje con «Intentar de nuevo» e «Ir al
+  inicio», y lo registra en la consola.
+- La pestaña «Traslado» del paquete (`TransferForm`) usa ahora
+  `BulkTransferPanel` en modo `embedded`:
+  - lista «Este paquete» y permite agregar otros por chip (pistola en modo
+    teclado o escrito, con Enter);
+  - avisa chips repetidos, inexistentes o agotados;
+  - permite quitar paquetes;
+  - un paquete solo también se traslada por `POST /inventory/bundles/transfer`.
+- Verificación en la BD de pruebas:
+  - un paquete al almacén: quedó abierto, con traslado y apertura en el
+    historial;
+  - dos paquetes juntos a otro burro: después figuran como «ya están en el
+    destino»;
+  - sin errores de consola.
+- Web: `tsc`, `oxlint` y build.
+
+## QA exploratorio de usuario y correcciones (12/11/2026)
+
+**Sesión de QA.** En la BD de pruebas, con el script `sdui/seed11.mjs`
+(base, http y clean; limpieza por IDs y restauración de ajustes):
+- 6 usuarios de todos los roles, sucursales 116 y 7 de agosto, catálogo,
+  compras y precios, y 11 paquetes.
+- Se recorrieron como usuario: registro, consulta, lectura masiva y
+  traslado, operaciones, ventas (descuentos, precio manual, conversión,
+  reserva, cancelación), despachos en almacén y en bodega, permisos,
+  administración, 375 px y corte del API.
+- Sin errores 500.
+
+**Correcciones de los hallazgos importantes.**
+1. **Doble clic al guardar una cotización creaba dos.** `QuoteView` atiende
+   una solicitud a la vez (`once`, con ref) en guardar, convertir, crear
+   cliente y cancelar.
+2. **Descuento por renglón sin tope.** `SELLER_LINE_DISCOUNT_LIMIT` = 3 %
+   para vendedores.
+   - Más solo con precio manual, porque el administrador autoriza el renglón
+     con su descuento.
+   - Un renglón guardado antes con más se conserva si no cambia.
+   - ADMIN no tiene tope.
+   - La pantalla explica la regla.
+   - Las pruebas que usaban 10 % con SALES pasan a 3 %.
+3. **Precios con separador de miles.** `parseMoney` (`lib/numbers.ts`, con
+   pruebas en `scripts/numbers.test.mts`) acepta «12.000», «$ 1.500» y
+   «1.500,50», en el precio manual, el costo estimado y la aprobación del
+   administrador.
+   - Mensaje claro cuando el valor no es válido.
+   - El motivo por el que no se puede guardar se muestra junto al botón (antes
+     solo era un `title`).
+   - El descuento global y el de renglón muestran su error.
+4. **Límites por IP.** El inicio de sesión pasa de 5 a 30 por minuto y el
+   límite general de 120 a 600, porque una sucursal comparte IP. El bloqueo
+   por cuenta (5 fallos → 15 min) no cambia.
+   - Mensaje 429 en español.
+   - El cliente web traduce los mensajes técnicos de validación
+     (`friendlyValidation`: «Paquete 2: La cantidad…»).
+5. **Cantidades absurdas.** El registro tiene tope de 1.000.000 en pantalla.
+   Más de 1.000 perfiles pide confirmar una vez. El DTO da el mensaje en
+   español.
+6. **Clientes duplicados.** No se repite un NIT en cualquier formato (se
+   ignoran puntos, espacios y el dígito tras el guion), al crear ni al
+   editar. Respuesta 409 con el nombre del cliente existente; los clientes
+   sin NIT no se comparan.
+
+Además: concordancia y separador de miles en el panel de traslado.
+
+**Pruebas.**
+- API: unitarias 43/43; e2e 204/204 (nuevas: tope por renglón en
+  `quote-discounts` y NIT duplicado en `customers-search`); `oxlint`.
+- Web: `tsc`, `oxlint`, `pnpm test` (chafon 7/7, numbers 14/14) y build.
+- Navegador (BD de pruebas):
+  - «Para guardar: Elige la forma de pago»;
+  - aviso de 10 % por renglón;
+  - «12.000» → $120.000;
+  - triple clic → una sola cotización;
+  - NIT duplicado rechazado;
+  - aprobación con «1.800»;
+  - 2.000.000 frenado y 999.999 confirmado;
+  - 32 inicios de sesión → 429 con mensaje en español.
+
+**Notificaciones.** El API las tiene activas (`/push/config` entrega la
+llave pública) y las 9 pruebas e2e de push pasan con un emisor simulado. En
+el navegador integrado el permiso está bloqueado y la app lo explica. La
+entrega real a un celular no se verificó.
+
+**Pendientes de QA (no corregidos).**
+- Contraseñas solo con regla de longitud; no hay cambio de contraseña.
+- Avisos viejos que no se limpian.
+- Colores en minúscula en incidencias.
+- Sueltos sin separar por origen en Resumen.
+- No probados: pistola y lectores físicos, entrega real de push, iPhone,
+  PDF y recepción de China.
+
+**Pendientes.**
+- No hay pantalla para crear ubicaciones: el almacén del 7 de agosto debe
+  crearse con tipo `RETAIL_STORE`, porque el tipo no se edita.
+- El resumen no separa los sueltos por origen. Las reservas y despachos sí
+  los separan.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

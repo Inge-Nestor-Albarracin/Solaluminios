@@ -82,13 +82,22 @@ export const movementInclude = {
   destinationRack: rackSelect,
 } satisfies Prisma.InventoryMovementInclude;
 
-// Location, its branch, the rack and its aisle must exist and be active, and
-// the rack must belong to the selected location.
-export async function requireActiveRackInLocation(
+// Where a bundle is placed. Warehouses (bodegas) organise bundles by aisle
+// and rack. Retail stores (almacenes) have neither: what arrives there is
+// sold loose, so every bundle placed in one is opened (loose = true).
+export interface Place {
+  location: { id: string; code: string; name: string; type: 'WAREHOUSE' | 'RETAIL_STORE' };
+  rackId: string | null;
+  loose: boolean;
+}
+
+// Location and branch must exist and be active. A warehouse requires an
+// active rack of that location; a retail store refuses any rack.
+export async function requirePlace(
   tx: Tx,
-  rackId: string,
   inventoryLocationId: string,
-) {
+  rackId: string | null | undefined,
+): Promise<Place> {
   const location = await tx.inventoryLocation.findUnique({
     where: { id: inventoryLocationId },
     include: { branch: { select: { active: true } } },
@@ -97,7 +106,35 @@ export async function requireActiveRackInLocation(
   if (!location.active || !location.branch.active) {
     throw new BadRequestException('La ubicación o su sucursal está inactiva');
   }
+  const place = { id: location.id, code: location.code, name: location.name, type: location.type };
+  if (location.type === 'RETAIL_STORE') {
+    if (rackId) {
+      throw new BadRequestException(
+        `${location.name} es un almacén: no maneja pasillo ni burro. Envía solo la ubicación.`,
+      );
+    }
+    return { location: place, rackId: null, loose: true };
+  }
+  if (!rackId) {
+    throw new BadRequestException(`Elige el pasillo y el burro de la bodega ${location.name}`);
+  }
+  await requireActiveRackInLocation(tx, rackId, inventoryLocationId);
+  return { location: place, rackId, loose: false };
+}
 
+// Reason of the automatic opening of a bundle placed in a retail store.
+export function storeOpeningReason(storeName: string, how: 'registro' | 'recepción' | 'traslado'): string {
+  const when = { registro: 'al registrarse', recepción: 'al recibirse', traslado: 'al llegar por traslado' }[how];
+  return `Abierto ${when}: ${storeName} es un almacén y allí los perfiles quedan sueltos`;
+}
+
+// The rack and its aisle must exist and be active, and the rack must belong
+// to the selected location (already validated by requirePlace).
+async function requireActiveRackInLocation(
+  tx: Tx,
+  rackId: string,
+  inventoryLocationId: string,
+) {
   const rack = await tx.rack.findUnique({
     where: { id: rackId },
     include: {

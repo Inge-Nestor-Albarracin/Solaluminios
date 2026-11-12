@@ -72,7 +72,7 @@ describe('Security hardening (e2e)', () => {
       data: { name: 'E2E lock', email, passwordHash: await hashPassword(password), role: 'READ_ONLY' },
     });
     extraUsers.push(user.id);
-    // Called on the service: the per-IP throttler (5/min on /auth/login)
+    // Called on the service: the per-IP throttler (30/min on /auth/login)
     // would otherwise answer 429 first and hide the per-account rule.
     const auth = app.get(AuthService);
     const status = async (pwd: string) => {

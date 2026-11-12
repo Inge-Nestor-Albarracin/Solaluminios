@@ -48,6 +48,27 @@ describe('Customer search (e2e)', () => {
     await app?.close();
   });
 
+  const post = (path: string, body: object, method: 'post' | 'patch' = 'post') => {
+    ip += 1;
+    return request(app.getHttpServer())[method](path).set({ ...headers, 'X-Forwarded-For': `10.67.1.${(ip % 250) + 1}` }).send(body);
+  };
+
+  it('one customer per NIT whatever its format (check digit ignored); without NIT, no check', async () => {
+    for (const taxId of [`900${N}456-7`, `900 ${N} 456`, `900.${N}.456-3`]) {
+      const res = await post('/customers', { name: `Duplicado ${S}`, taxId }).expect(409);
+      expect(res.body.message).toMatch(new RegExp(`Peña Ventanería ${S}`));
+    }
+    // An inactive customer also holds its NIT (it is reported as inactive).
+    expect((await post('/customers', { name: `Otro ${S}`, taxId: `901${N}000` }).expect(409)).body.message).toMatch(/inactivo/);
+    const created = await post('/customers', { name: `Sin NIT ${S}` }).expect(201);
+    ids.noTax = created.body.id;
+    const other = await post('/customers', { name: `NIT nuevo ${S}`, taxId: `902${N}111-2` }).expect(201);
+    ids.other = other.body.id;
+    // Editing keeps its own NIT, but cannot take another customer's.
+    await post(`/customers/${ids.other}`, { name: `NIT nuevo editado ${S}`, taxId: `902.${N}.111-2` }, 'patch').expect(200);
+    await post(`/customers/${ids.other}`, { name: `NIT nuevo ${S}`, taxId: `900.${N}.456-7` }, 'patch').expect(409);
+  });
+
   it('finds by name ignoring case and accents', async () => {
     expect(await search(`pena ventaneria ${S.toLowerCase()}`)).toEqual([ids.pena]);
     expect(await search(`PEÑA VENTANERÍA ${S}`)).toEqual([ids.pena]);

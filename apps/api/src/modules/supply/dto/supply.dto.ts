@@ -232,10 +232,16 @@ export class ReceiveDto {
   @MaxLength(50)
   inventoryLocationId!: string;
 
+  // Only warehouses (bodegas) use racks; retail stores (almacenes) refuse
+  // one. Required or refused by the location type, not here.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  rackId!: string;
+  rackId?: string;
 
   @Transform(trim)
   @IsOptional()
