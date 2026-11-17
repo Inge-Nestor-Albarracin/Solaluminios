@@ -11,6 +11,8 @@ import {
   formatMoney,
   paymentLabel,
   totalsParts,
+  SALE_TYPE_LABEL,
+  hasLabour,
   type PaymentStatus,
   type SalesOrder,
   type Shortage,
@@ -145,6 +147,7 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
         }
       />
       <p className="doc-facts">
+        <span>Modalidad: <strong>{SALE_TYPE_LABEL[data.saleType ?? 'RETAIL']}{hasLabour(data) ? ' · con mano de obra (no se despacha)' : ''}</strong></span>
         <span>Forma de pago: <strong>{paymentLabel(data)}</strong></span>
         {data.paymentStatus ? (
           <span className="payment-state">

@@ -2,7 +2,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma } from '../../generated/prisma/client.js';
+import type { Bundle, Prisma } from '../../generated/prisma/client.js';
 
 export type Tx = Prisma.TransactionClient;
 
@@ -152,4 +152,63 @@ async function requireActiveRackInLocation(
   if (!rack.active || !rack.aisle.active) {
     throw new BadRequestException('El burro o su pasillo está inactivo');
   }
+}
+
+// What one movement of a bundle records (the caller adds bundle, time, user
+// and operation key).
+export type BundleMovementData = Pick<
+  Prisma.InventoryMovementUncheckedCreateInput,
+  | 'type'
+  | 'quantity'
+  | 'quantityBefore'
+  | 'quantityAfter'
+  | 'sourceLocationId'
+  | 'sourceRackId'
+  | 'destinationLocationId'
+  | 'destinationRackId'
+  | 'reason'
+>;
+
+// Moves a locked, validated bundle (whole) to a place and describes its
+// TRANSFER movement and, when it arrives closed at a retail store, the
+// OPENING that follows (its profiles become loose there). Shared by the
+// manual transfers and the shipment of material requests.
+export async function moveBundle(
+  tx: Tx,
+  bundle: Bundle,
+  place: Place,
+  reason: string | null,
+  userId: string,
+  now: Date,
+): Promise<BundleMovementData & { opening?: BundleMovementData }> {
+  const opens = place.loose && !bundle.openedAt;
+  await tx.bundle.update({
+    where: { id: bundle.id },
+    data: {
+      inventoryLocationId: place.location.id,
+      rackId: place.rackId,
+      ...(opens ? { openedAt: now, openedById: userId } : {}),
+    },
+  });
+  const transfer: BundleMovementData = {
+    type: 'TRANSFER',
+    quantity: bundle.quantity,
+    quantityBefore: bundle.quantity,
+    quantityAfter: bundle.quantity,
+    sourceLocationId: bundle.inventoryLocationId,
+    sourceRackId: bundle.rackId,
+    destinationLocationId: place.location.id,
+    destinationRackId: place.rackId,
+    reason,
+  };
+  if (!opens) return transfer;
+  const opening: BundleMovementData = {
+    type: 'OPENING',
+    quantity: bundle.quantity,
+    quantityBefore: bundle.quantity,
+    quantityAfter: bundle.quantity,
+    sourceLocationId: place.location.id,
+    reason: storeOpeningReason(place.location.name, 'traslado'),
+  };
+  return { ...transfer, opening };
 }

@@ -16,5 +16,7 @@ export type View =
   | { name: 'order'; id: string }
   | { name: 'dispatches' }
   | { name: 'dispatch'; id: string }
+  | { name: 'requests' }
+  | { name: 'request'; id?: string }
 
 export type Navigate = (view: View) => void

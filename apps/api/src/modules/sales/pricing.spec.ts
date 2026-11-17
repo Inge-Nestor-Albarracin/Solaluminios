@@ -1,5 +1,5 @@
 import { dec } from '../../shared/money.js';
-import { documentTotals, lineAmounts, withGlobalDiscount } from './pricing.js';
+import { NO_SERVICES, documentTotals, lineAmounts, servicesTotal, withGlobalDiscount } from './pricing.js';
 
 describe('global discount of a quote', () => {
   // Line 1: 10 × 1.000 with 10 % line discount, VAT 19 % → base 9.000.
@@ -16,7 +16,7 @@ describe('global discount of a quote', () => {
     // VAT on the base after both discounts: (9.000 − 450) × 19 % = 1.624,50.
     expect(amounts.map((line) => line.taxAmount.toFixed(2))).toEqual(['1624.50', '0.00']);
     expect(amounts.map((line) => line.lineTotal.toFixed(2))).toEqual(['10174.50', '949.99']);
-    const totals = documentTotals(amounts);
+    const totals = documentTotals(amounts, NO_SERVICES);
     expect(totals.subtotal.toFixed(2)).toBe('10999.99');
     expect(totals.discountTotal.toFixed(2)).toBe('1000.00');
     expect(totals.globalDiscountAmount.toFixed(2)).toBe('500.00');
@@ -30,13 +30,26 @@ describe('global discount of a quote', () => {
     const three = [1, 1, 1].map(() => ({ ...lineAmounts(1, dec('0.10'), dec(0), dec(19)), taxRatePercent: dec(19) }));
     // 2,5 % of 0,30 = 0,0075 → 0,01, given to one line only.
     const amounts = withGlobalDiscount(three, dec('2.5'));
-    expect(documentTotals(amounts).globalDiscountAmount.toFixed(2)).toBe('0.01');
+    expect(documentTotals(amounts, NO_SERVICES).globalDiscountAmount.toFixed(2)).toBe('0.01');
     expect(amounts.map((line) => line.globalDiscountAmount.toFixed(2))).toEqual(['0.01', '0.00', '0.00']);
   });
 
   it('without global discount keeps the line values unchanged', () => {
     const amounts = withGlobalDiscount(lines, dec(0));
     expect(amounts.map((line) => line.lineTotal.toFixed(2))).toEqual(lines.map((line) => line.lineTotal.toFixed(2)));
-    expect(documentTotals(amounts).globalDiscountAmount.toFixed(2)).toBe('0.00');
+    expect(documentTotals(amounts, NO_SERVICES).globalDiscountAmount.toFixed(2)).toBe('0.00');
+  });
+
+  it('services of a «Ventanería» sale are added to the total with no VAT and no discount', () => {
+    const amounts = withGlobalDiscount(lines, dec(5));
+    const plain = documentTotals(amounts, NO_SERVICES);
+    const windows = documentTotals(amounts, { assemblyAmount: '120000', installationAmount: '80000.50' });
+    // Materials (subtotal, discounts, VAT) do not change.
+    expect(windows.subtotal.equals(plain.subtotal)).toBe(true);
+    expect(windows.discountTotal.equals(plain.discountTotal)).toBe(true);
+    expect(windows.globalDiscountAmount.equals(plain.globalDiscountAmount)).toBe(true);
+    expect(windows.taxTotal.equals(plain.taxTotal)).toBe(true);
+    expect(windows.total.minus(plain.total).toFixed(2)).toBe('200000.50');
+    expect(servicesTotal({ assemblyAmount: '0', installationAmount: 0 }).toFixed(2)).toBe('0.00');
   });
 });

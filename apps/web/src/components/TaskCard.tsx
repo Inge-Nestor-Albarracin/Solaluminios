@@ -14,6 +14,7 @@ export function TaskCard({
   onCompleted,
   onOpenDispatch,
   onOpenQuote,
+  onOpenRequest,
 }: {
   task: Task
   now: number
@@ -21,6 +22,7 @@ export function TaskCard({
   onCompleted: () => void
   onOpenDispatch?: (dispatchId: string) => void
   onOpenQuote?: (quoteId: string) => void
+  onOpenRequest?: (requestId: string) => void
 }) {
   const { request, user } = useSession()
   const [confirming, setConfirming] = useState(false)
@@ -32,7 +34,7 @@ export function TaskCard({
   // shown as expired and can no longer be completed.
   // Dispatch and discount approval tasks are completed by their own flow and
   // never become "incomplete": they stay pending, overdue.
-  const isDispatch = task.kind === 'DISPATCH' || task.kind === 'DISCOUNT_APPROVAL'
+  const isDispatch = task.kind !== undefined && task.kind !== 'GENERAL'
   const expiredLocally = !isDispatch && task.status === 'pending' && new Date(task.dueAt).getTime() <= now
   const status = expiredLocally ? 'incomplete' : task.status
   const overdue = isDispatch && status === 'pending' && new Date(task.dueAt).getTime() <= now
@@ -89,6 +91,14 @@ export function TaskCard({
         <div className="task-actions">
           <button type="button" className="button" onClick={() => onOpenQuote(task.discountRequest!.quote.id)}>
             {status === 'pending' ? 'Revisar y responder' : `Ver ${task.discountRequest.quote.number}`}
+          </button>
+        </div>
+      ) : null}
+
+      {(task.kind === 'MATERIAL_REQUEST' || task.kind === 'MATERIAL_RECEPTION') && task.materialRequest && onOpenRequest ? (
+        <div className="task-actions">
+          <button type="button" className="button" onClick={() => onOpenRequest(task.materialRequest!.id)}>
+            {status === 'pending' ? (task.kind === 'MATERIAL_REQUEST' ? 'Preparar solicitud' : 'Revisar y marcar recibido') : `Ver ${task.materialRequest.number}`}
           </button>
         </div>
       ) : null}

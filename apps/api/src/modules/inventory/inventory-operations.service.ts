@@ -25,7 +25,8 @@ import {
   movementInclude,
   requirePlace,
   reservedQuantity,
-  storeOpeningReason,
+  moveBundle,
+  type BundleMovementData,
   type Place,
   type Tx,
 } from './inventory.shared.js';
@@ -42,18 +43,7 @@ function isLockTimeout(error: unknown): boolean {
   return meta?.code === '55P03' || /55P03|lock timeout/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
 }
 
-type MovementData = Pick<
-  Prisma.InventoryMovementUncheckedCreateInput,
-  | 'type'
-  | 'quantity'
-  | 'quantityBefore'
-  | 'quantityAfter'
-  | 'sourceLocationId'
-  | 'sourceRackId'
-  | 'destinationLocationId'
-  | 'destinationRackId'
-  | 'reason'
->;
+type MovementData = BundleMovementData;
 
 interface Operation {
   operationKey: string;
@@ -288,7 +278,7 @@ export class InventoryOperationsService {
 
   // Moves a locked, validated bundle and describes its TRANSFER movement and,
   // when it arrives closed at a retail store, the OPENING that follows.
-  private async moveTo(
+  private moveTo(
     tx: Tx,
     bundle: Bundle,
     place: Place,
@@ -296,36 +286,7 @@ export class InventoryOperationsService {
     user: SafeUser,
     now: Date,
   ): Promise<MovementData & { opening?: MovementData }> {
-    const opens = place.loose && !bundle.openedAt;
-    await tx.bundle.update({
-      where: { id: bundle.id },
-      data: {
-        inventoryLocationId: place.location.id,
-        rackId: place.rackId,
-        ...(opens ? { openedAt: now, openedById: user.id } : {}),
-      },
-    });
-    const transfer: MovementData = {
-      type: 'TRANSFER',
-      quantity: bundle.quantity,
-      quantityBefore: bundle.quantity,
-      quantityAfter: bundle.quantity,
-      sourceLocationId: bundle.inventoryLocationId,
-      sourceRackId: bundle.rackId,
-      destinationLocationId: place.location.id,
-      destinationRackId: place.rackId,
-      reason,
-    };
-    if (!opens) return transfer;
-    const opening: MovementData = {
-      type: 'OPENING',
-      quantity: bundle.quantity,
-      quantityBefore: bundle.quantity,
-      quantityAfter: bundle.quantity,
-      sourceLocationId: place.location.id,
-      reason: storeOpeningReason(place.location.name, 'traslado'),
-    };
-    return { ...transfer, opening };
+    return moveBundle(tx, bundle, place, reason, user.id, now);
   }
 
   adjust(bundleId: string, dto: BundleAdjustmentDto, user: SafeUser) {

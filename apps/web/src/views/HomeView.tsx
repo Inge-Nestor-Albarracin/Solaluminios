@@ -3,7 +3,7 @@ import { IconChevron } from '../components/icons'
 import { DevicePanel } from '../pwa/DevicePanel'
 import type { Navigate, View } from './navigation'
 
-type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch'>
+type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch' | 'request'>
 
 interface Tile {
   name: Section
@@ -81,6 +81,14 @@ const TILE_ICONS: Record<Section, (stroke: string) => ReactNode> = {
       <circle cx="34" cy="35" r="3.5" />
     </g>
   ),
+  requests: (s) => (
+    <g stroke={s}>
+      <rect x="6" y="20" width="16" height="16" rx="2" />
+      <path d="M6 26h16M14 20v6" />
+      <path d="M27 28h14M36 23l5 5-5 5" />
+      <path d="M26 10h14M26 15h9" />
+    </g>
+  ),
   admin: (s) => (
     <g stroke={s}>
       <circle cx="24" cy="24" r="6" />
@@ -120,6 +128,7 @@ export function HomeView({
     { name: 'summary', title: 'Resumen', subtitle: 'Existencias', icon: TILE_ICONS.summary },
     { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks },
     ...(dispatcher ? [{ name: 'dispatches' as const, title: 'Despachos', subtitle: 'Preparar y confirmar salidas', icon: TILE_ICONS.dispatches }] : []),
+    ...(seller || operator ? [{ name: 'requests' as const, title: 'Solicitudes', subtitle: 'Materiales a bodega y almacén', icon: TILE_ICONS.requests }] : []),
     ...(operator ? [{ name: 'receive' as const, title: 'Recepción China', subtitle: 'Paquetes prerregistrados', icon: TILE_ICONS.receive }] : []),
     ...(seller ? [{ name: 'sales' as const, title: 'Ventas', subtitle: 'Cotizaciones y órdenes', icon: TILE_ICONS.sales }] : []),
     ...(admin ? [{ name: 'admin' as const, title: 'Administración', subtitle: 'Catálogo y usuarios', icon: TILE_ICONS.admin }] : []),

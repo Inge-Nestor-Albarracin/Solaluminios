@@ -16,6 +16,8 @@ import {
   formatUnitCost,
   paymentLabel,
   totalsParts,
+  SALE_TYPE_LABEL,
+  hasLabour,
   type AvailabilityGroup,
   type Customer,
   type DiscountRequest,
@@ -23,11 +25,13 @@ import {
   type QuoteLine,
   type PaymentMethod,
   type Quote,
+  type SaleType,
   type Supplier,
 } from '../lib/commerce'
 import { EMPTY_CATALOG, type CatalogValue } from '../lib/forms'
 import { formatDateTime } from '../lib/format'
 import { parseMoney } from '../lib/numbers'
+import { notifyRequestUpdatesChanged } from '../lib/requestUpdates'
 import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
@@ -78,6 +82,14 @@ const PRICE_REASON_MIN = 10
 // price, which an administrator authorises with its discount.
 const SELLER_LINE_DISCOUNT_LIMIT = 3
 const MONEY_HINT = 'Escribe el precio en pesos, mayor que cero, p. ej. 12.000 o 12000,50.'
+// A labour amount from this value on is confirmed once (typing errors).
+const LARGE_SERVICE = 1_000_000
+// Labour field: empty (not charged) or pesos with up to 2 decimals.
+const serviceValue = (text: string): string | null => {
+  if (!text.trim()) return '0'
+  const value = parseMoney(text)
+  return MANUAL_PRICE.test(value) ? value : null
+}
 
 // Why the line discount cannot be saved (null when it can).
 function lineDiscountError(line: LineDraft, isAdmin: boolean): string | null {
@@ -600,6 +612,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
         }))
       : [newLine()],
   )
+  // «Detal» / «Ventanería» and its labour (assembly, installation).
+  const [saleType, setSaleType] = useState<SaleType>(quote?.saleType ?? 'RETAIL')
+  const [assembly, setAssembly] = useState(quote && Number(quote.assemblyAmount) > 0 ? String(Number(quote.assemblyAmount)) : '')
+  const [installation, setInstallation] = useState(quote && Number(quote.installationAmount) > 0 ? String(Number(quote.installationAmount)) : '')
+  // Labour removed when switching to «Detal» (shown, never silent).
+  const [labourCleared, setLabourCleared] = useState<string | null>(null)
+  // Large labour amounts the user already confirmed once.
+  const [confirmedLarge, setConfirmedLarge] = useState<string | null>(null)
+  const [largeWarning, setLargeWarning] = useState<string | null>(null)
   // Global discount of the whole quote (after line discounts, before IVA).
   const [globalDiscount, setGlobalDiscount] = useState(quote ? String(Number(quote.globalDiscountPercent)) : '0')
   const pendingPrice = quote?.discountRequests.find((r) => r.kind === 'MANUAL_PRICE' && r.status === 'PENDING') ?? null
@@ -614,6 +635,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const convertKey = useRef<string | null>(null)
+  // Converting a quote without payment method: it is chosen at this step.
+  const [converting, setConverting] = useState<{ method: PaymentMethod | ''; terms: string } | null>(null)
   // One request at a time: a double click must not create two quotes (the
   // state update of `busy` arrives one render too late to stop it).
   const inFlight = useRef(false)
@@ -628,6 +651,20 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   }
 
   useUnsavedWork(dirty ? 'Cotización con cambios sin guardar' : null)
+
+  // The seller sees here the answers to its requests: the menu notice of
+  // those answers goes away.
+  const answeredForMe = (quote?.discountRequests ?? []).filter(
+    (r) => r.requestedBy.id === user?.id && (r.status === 'APPROVED' || r.status === 'REJECTED'),
+  ).length
+  useEffect(() => {
+    if (!quote || answeredForMe === 0) return
+    request<{ seen: number }>(`/quotes/${encodeURIComponent(quote.id)}/request-updates/seen`, { method: 'POST' })
+      .then(({ data }) => {
+        if (data.seen > 0) notifyRequestUpdatesChanged()
+      })
+      .catch(() => undefined)
+  }, [quote?.id, answeredForMe, request]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const editable = !id || quote?.status === 'DRAFT'
   const globalValue = decimal(globalDiscount || '0')
@@ -671,9 +708,22 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const approvers = useLoad<{ id: string; name: string }[]>(needsApprover ? '/sales/discount-approvers' : null)
   const unauthorisedSaved = (quote?.lines ?? []).some((line) => line.manualPrice && !line.manualApprovedBy)
   const draftAmounts = lines.map((line) => lineAmounts(line, linePrice(line, prices[line.key] ?? null)))
-  const draftTotals = draftAmounts.every((amounts) => amounts !== null)
+  const windows = saleType === 'WINDOWS'
+  const assemblyValue = windows ? serviceValue(assembly) : '0'
+  const installationValue = windows ? serviceValue(installation) : '0'
+  const servicesValid = assemblyValue !== null && installationValue !== null
+  const materialTotals = draftAmounts.every((amounts) => amounts !== null)
     ? documentPreview(draftAmounts as Amounts[], globalValid ? Number(needsApproval ? appliedGlobal : globalValue) : 0)
     : null
+  const draftTotals =
+    materialTotals && servicesValid
+      ? {
+          ...materialTotals,
+          assemblyAmount: assemblyValue,
+          installationAmount: installationValue,
+          total: (Number(materialTotals.total) + Number(assemblyValue) + Number(installationValue)).toFixed(2),
+        }
+      : materialTotals
   const update = (index: number, line: LineDraft) => {
     setDirty(true)
     setLines((current) => current.map((item, i) => (i === index ? line : item)))
@@ -695,7 +745,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     customerId,
     ...(validUntil ? { validUntil } : {}),
     ...(notes.trim() ? { notes: notes.trim() } : {}),
-    paymentMethod,
+    ...(paymentMethod ? { paymentMethod } : {}),
+    saleType,
+    ...(windows ? { assemblyAmount: assemblyValue ?? '0', installationAmount: installationValue ?? '0' } : {}),
     ...(paymentTerms.trim() ? { paymentTerms: paymentTerms.trim() } : {}),
     globalDiscountPercent: needsApproval ? appliedGlobal : globalValue,
     lines: lines.map((line) => ({
@@ -717,6 +769,19 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   })
 
   const save = (replace = false) => once(async () => {
+    const large = [
+      ['Ensamble', Number(assemblyValue ?? 0)],
+      ['Instalación', Number(installationValue ?? 0)],
+    ].filter(([, value]) => Number(value) >= LARGE_SERVICE) as [string, number][]
+    const largeKey = `${assemblyValue}|${installationValue}`
+    if (large.length > 0 && confirmedLarge !== largeKey) {
+      setConfirmedLarge(largeKey)
+      setLargeWarning(
+        `¿Seguro? ${large.map(([label, value]) => `${label} de ${formatMoney(value)}`).join(' e ')} es un valor alto. Revísalo; si es correcto, pulsa otra vez el botón de guardar.`,
+      )
+      return
+    }
+    setLargeWarning(null)
     setBusy(true)
     setError(null)
     setConfirmReplace(false)
@@ -755,13 +820,16 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     }
   })
 
-  const convert = () => once(async () => {
+  const convert = (payment?: { method: PaymentMethod; terms: string }) => once(async () => {
     if (!id) return
     setBusy(true)
     setError(null)
     convertKey.current ??= uuid()
     try {
-      const { data } = await request<{ id: string }>(`/quotes/${encodeURIComponent(id)}/convert`, { method: 'POST', body: { operationKey: convertKey.current } })
+      const { data } = await request<{ id: string }>(`/quotes/${encodeURIComponent(id)}/convert`, {
+        method: 'POST',
+        body: { operationKey: convertKey.current, ...(payment ? { paymentMethod: payment.method, paymentTerms: payment.terms.trim() } : {}) },
+      })
       navigate({ name: 'order', id: data.id })
     } catch (err) {
       // Lost answer: keep the key; the retry returns the same order.
@@ -785,10 +853,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   // visible on phones).
   const blocker = !customerId
     ? 'Elige el cliente.'
-    : !paymentMethod
-      ? 'Elige la forma de pago.'
-      : !discountsValid
+    : !discountsValid
         ? 'Revisa el descuento de los renglones marcados.'
+        : !servicesValid
+          ? 'Revisa los valores de ensamble e instalación.'
         : !globalValid
           ? 'El descuento global debe ser 0 o estar entre 0,1 y 100.'
           : !manualValid
@@ -814,7 +882,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       />
       {quote ? (
         <p className="doc-facts">
-          <span>Forma de pago: <strong>{paymentLabel(quote)}</strong></span>
+          <span>Modalidad: <strong>{SALE_TYPE_LABEL[quote.saleType ?? 'RETAIL']}{hasLabour(quote) ? ' · con mano de obra' : ''}</strong></span>
+          <span>Forma de pago: <strong>{quote.paymentMethod ? paymentLabel(quote) : 'por definir (se elige al convertir en orden de venta)'}</strong></span>
           {isAdmin && quote.createdBy ? (
             <span>Creada por <strong>{quote.createdBy.name}</strong> · {formatDateTime(quote.createdAt)}</span>
           ) : null}
@@ -840,6 +909,36 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       ) : null}
 
       <section className="card">
+        <fieldset className="sale-type" disabled={!editable}>
+          <legend>Modalidad</legend>
+          {(['RETAIL', 'WINDOWS'] as const).map((type) => (
+            <label key={type} className={saleType === type ? 'sale-type-option selected' : 'sale-type-option'}>
+              <input
+                type="radio"
+                name="sale-type"
+                checked={saleType === type}
+                onChange={() => {
+                  setSaleType(type)
+                  setDirty(true)
+                  if (type === 'RETAIL' && (assembly.trim() || installation.trim())) {
+                    const shown = (text: string) => (serviceValue(text) !== null ? formatMoney(Number(serviceValue(text))) : text.trim())
+                    const removed = [assembly.trim() ? `ensamble (${shown(assembly)})` : null, installation.trim() ? `instalación (${shown(installation)})` : null].filter(Boolean).join(' e ')
+                    setLabourCleared(`Se quitó ${removed}: en Detal no se cobra mano de obra.`)
+                    setAssembly('')
+                    setInstallation('')
+                  } else {
+                    setLabourCleared(null)
+                  }
+                }}
+              />
+              <span>
+                <strong>{SALE_TYPE_LABEL[type]}</strong>
+                <small>{type === 'RETAIL' ? 'Materiales y accesorios.' : 'Materiales y accesorios, con ensamble e instalación si se cobran.'}</small>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {labourCleared ? <Notice kind="warning">{labourCleared}</Notice> : null}
         <div className="form-grid">
           <Field label="Cliente" hint={editable ? 'Busca por nombre o NIT y elige uno de los resultados.' : undefined}>
             <CustomerPicker
@@ -857,9 +956,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           <Field label="Notas">
             <input value={notes} disabled={!editable} maxLength={1000} onChange={(e) => { setNotes(e.target.value); setDirty(true) }} />
           </Field>
-          <Field label="Forma de pago">
+          <Field label="Forma de pago (opcional)" hint="Si es solo una consulta, déjala sin elegir: se pide al convertir en orden de venta.">
             <select value={paymentMethod} disabled={!editable} onChange={(e) => { setPaymentMethod(e.target.value as PaymentMethod | ''); setDirty(true) }}>
-              <option value="">Elige…</option>
+              <option value="">Por definir</option>
               {(Object.keys(PAYMENT_METHOD_LABEL) as PaymentMethod[]).map((method) => (
                 <option key={method} value={method}>{PAYMENT_METHOD_LABEL[method]}</option>
               ))}
@@ -908,6 +1007,22 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           <button type="button" className="button button-secondary" onClick={() => { setDirty(true); setLines((current) => [...current, newLine()]) }}>
             + Agregar renglón
           </button>
+          {windows ? (
+            <section className="card labour">
+              <h2 className="subtitle">Mano de obra (Ventanería)</h2>
+              <p className="cell-sub">Valor total de cada servicio cotizado, sin IVA y sin descuentos. Déjalo vacío si no se cobra.</p>
+              <div className="form-grid">
+                <Field label="Ensamble" hint="Armar la ventana en el taller.">
+                  <input inputMode="decimal" placeholder="Ej. 150.000" value={assembly} onChange={(e) => { setAssembly(e.target.value); setDirty(true); setLargeWarning(null) }} />
+                  {assemblyValue === null ? <span className="field-error">{MONEY_HINT}</span> : null}
+                </Field>
+                <Field label="Instalación" hint="Instalar la ventana en la obra.">
+                  <input inputMode="decimal" placeholder="Ej. 90.000" value={installation} onChange={(e) => { setInstallation(e.target.value); setDirty(true); setLargeWarning(null) }} />
+                  {installationValue === null ? <span className="field-error">{MONEY_HINT}</span> : null}
+                </Field>
+              </div>
+            </section>
+          ) : null}
           <section className="card">
             <div className="form-grid">
               <Field
@@ -1022,6 +1137,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       ) : null}
 
       {error ? <Notice kind="error">{error}</Notice> : null}
+      {largeWarning ? <Notice kind="warning">{largeWarning}</Notice> : null}
       {confirmReplace ? (
         <Notice kind="warning">
           <strong>La cotización tiene una solicitud de precio manual en curso.</strong> Si guardas estos cambios, esa solicitud se cancela y se pierde su avance
@@ -1061,12 +1177,44 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                         ? 'Hay precios manuales sin autorizar'
                         : undefined
                 }
-                onClick={() => void convert()}
+                onClick={() => (quote?.paymentMethod ? void convert() : setConverting({ method: '', terms: paymentTerms }))}
               >
                 Convertir en orden de venta
               </button>
               <button type="button" className="text-button danger" disabled={busy} onClick={() => void cancel()}>Cancelar cotización</button>
             </>
+          ) : null}
+          {converting ? (
+            <div className="confirm convert-payment" role="dialog" aria-label="Forma de pago de la orden de venta">
+              <p>
+                <strong>¿Cómo va a pagar el cliente?</strong> Es obligatorio para la orden de venta y queda también en la cotización.
+              </p>
+              <div className="form-grid">
+                <Field label="Forma de pago">
+                  <select value={converting.method} disabled={busy} onChange={(e) => setConverting({ ...converting, method: e.target.value as PaymentMethod | '' })}>
+                    <option value="">Elige…</option>
+                    {(Object.keys(PAYMENT_METHOD_LABEL) as PaymentMethod[]).map((method) => (
+                      <option key={method} value={method}>{PAYMENT_METHOD_LABEL[method]}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Condiciones de pago" hint={converting.method ? PAYMENT_TERMS_HINT[converting.method] : 'Opcional.'}>
+                  <input value={converting.terms} disabled={busy} maxLength={300} onChange={(e) => setConverting({ ...converting, terms: e.target.value })} />
+                </Field>
+              </div>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy || !converting.method}
+                  onClick={() => converting.method && void convert({ method: converting.method, terms: converting.terms })}
+                >
+                  {busy ? 'Convirtiendo…' : 'Convertir en orden de venta'}
+                </button>
+                <button type="button" className="text-button" disabled={busy} onClick={() => setConverting(null)}>Volver</button>
+                {!converting.method ? <span className="cell-sub">Para convertir: elige la forma de pago.</span> : null}
+              </div>
+            </div>
           ) : null}
         </div>
       ) : null}

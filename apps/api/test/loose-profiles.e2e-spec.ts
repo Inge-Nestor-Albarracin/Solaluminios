@@ -360,7 +360,7 @@ describe('Opened bundles and loose profiles (e2e)', () => {
       const results = await Promise.all([createDispatch(p, 5), createDispatch(q, 5)]).finally(() => vi.restoreAllMocks());
       const onLoose = await active({ bundleId: loose.id });
       const holders = (await prisma.stockReservation.findMany({ where: { bundleId: loose.id, status: 'ACTIVE' }, select: { salesOrderLine: { select: { salesOrderId: true } } } })).map(
-        (r) => r.salesOrderLine.salesOrderId,
+        (r) => r.salesOrderLine?.salesOrderId,
       );
       const totalP = await active({ salesOrderLine: { salesOrderId: p.id } });
       const totalQ = await active({ salesOrderLine: { salesOrderId: q.id } });

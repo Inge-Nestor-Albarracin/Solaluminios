@@ -63,4 +63,18 @@ describe('sales PDF', () => {
     for (const word of ['SOLUALUMINIOS', 'NIT 901882638', 'COT-000001', '17.30', 'Blanco mate', 'FORMA DE PAGO', 'Cartera (crédito) · 30 días']) expect(text.includes(word), word).toBe(true);
     for (const word of ['origen', 'nacional', 'china']) expect(text.toLowerCase().includes(word), word).toBe(false);
   });
+
+  it('«Ventanería»: assembly and installation apart from the materials, only those charged', async () => {
+    const both = visibleText(await renderSalesPdf({ ...data, services: { assembly: '150000', installation: '90000' }, total: '597140.42' }));
+    for (const word of ['SERVICIOS DE VENTANERÍA (SIN IVA, SIN DESCUENTO)', 'Ensamble de la ventana en taller', 'Instalación', 'Materiales sin IVA', 'IVA de materiales', 'Ensamble (sin IVA)', 'Instalación (sin IVA)']) {
+      expect(both.includes(word), word).toBe(true);
+    }
+    const onlyInstallation = visibleText(await renderSalesPdf({ ...data, services: { assembly: '0', installation: '90000' }, total: '447140.42' }));
+    expect(onlyInstallation.includes('Instalación (sin IVA)')).toBe(true);
+    expect(onlyInstallation.includes('Ensamble')).toBe(false);
+    // Without services (or both 0) the document looks as before.
+    const none = visibleText(await renderSalesPdf({ ...data, services: { assembly: '0', installation: '0' } }));
+    expect(none.includes('SERVICIOS')).toBe(false);
+    expect(none.includes('Subtotal sin IVA')).toBe(true);
+  });
 });

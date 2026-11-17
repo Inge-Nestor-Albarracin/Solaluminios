@@ -77,15 +77,17 @@ model InventoryLocation {
   createdAt DateTime              @default(now())
   updatedAt DateTime              @updatedAt
 
-  branch            Branch              @relation(fields: [branchId], references: [id])
-  aisles            Aisle[]
-  bundles           Bundle[]
-  defaultUsers      User[]
-  outgoingMovements InventoryMovement[] @relation("MovementSourceLocation")
-  incomingMovements InventoryMovement[] @relation("MovementDestinationLocation")
-  salesOrders       SalesOrder[]
-  dispatches        Dispatch[]
-  readerDevices     ReaderDevice[]
+  branch               Branch              @relation(fields: [branchId], references: [id])
+  aisles               Aisle[]
+  bundles              Bundle[]
+  defaultUsers         User[]
+  outgoingMovements    InventoryMovement[] @relation("MovementSourceLocation")
+  incomingMovements    InventoryMovement[] @relation("MovementDestinationLocation")
+  salesOrders          SalesOrder[]
+  dispatches           Dispatch[]
+  readerDevices        ReaderDevice[]
+  materialRequestsFrom MaterialRequest[]   @relation("MaterialRequestSource")
+  materialRequestsTo   MaterialRequest[]   @relation("MaterialRequestDestination")
 
   @@unique([branchId, code], map: "warehouses_branchId_code_key")
   @@map("warehouses")
@@ -152,13 +154,14 @@ model Reference {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  family           ProductFamily?           @relation(fields: [familyId], references: [id])
-  bundles          Bundle[]
-  lots             StockLot[]
-  preRegistrations InboundPreRegistration[]
-  purchaseLines    PurchaseLine[]
-  quoteLines       QuoteLine[]
-  orderLines       SalesOrderLine[]
+  family               ProductFamily?           @relation(fields: [familyId], references: [id])
+  bundles              Bundle[]
+  lots                 StockLot[]
+  preRegistrations     InboundPreRegistration[]
+  purchaseLines        PurchaseLine[]
+  quoteLines           QuoteLine[]
+  orderLines           SalesOrderLine[]
+  materialRequestLines MaterialRequestLine[]
 
   @@index([familyId])
   @@map("references")
@@ -172,12 +175,13 @@ model Finish {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  bundles          Bundle[]
-  lots             StockLot[]
-  preRegistrations InboundPreRegistration[]
-  purchaseLines    PurchaseLine[]
-  quoteLines       QuoteLine[]
-  orderLines       SalesOrderLine[]
+  bundles              Bundle[]
+  lots                 StockLot[]
+  preRegistrations     InboundPreRegistration[]
+  purchaseLines        PurchaseLine[]
+  quoteLines           QuoteLine[]
+  orderLines           SalesOrderLine[]
+  materialRequestLines MaterialRequestLine[]
 
   @@map("finishes")
 }
@@ -193,39 +197,45 @@ model User {
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
-  defaultInventoryLocation InventoryLocation?       @relation(fields: [defaultInventoryLocationId], references: [id], onDelete: Restrict)
-  movements                InventoryMovement[]
-  tasksAssigned            Task[]                   @relation("TaskAssignee")
-  tasksCreated             Task[]                   @relation("TaskCreator")
-  pushSubscriptions        PushSubscription[]
-  shipmentsCreated         InboundShipment[]        @relation("ShipmentCreator")
-  preRegistrationsCreated  InboundPreRegistration[] @relation("PreRegistrationCreator")
-  preRegistrationsReceived InboundPreRegistration[] @relation("PreRegistrationReceiver")
-  lotsCreated              StockLot[]               @relation("LotCreator")
-  purchasesCreated         Purchase[]               @relation("PurchaseCreator")
-  purchasesConfirmed       Purchase[]               @relation("PurchaseConfirmer")
-  salePricesCreated        SalePrice[]              @relation("SalePriceCreator")
-  customersCreated         Customer[]               @relation("CustomerCreator")
-  quotesCreated            Quote[]                  @relation("QuoteCreator")
-  discountsRequested       QuoteDiscountRequest[]   @relation("DiscountRequester")
-  discountsToApprove       QuoteDiscountRequest[]   @relation("DiscountApprover")
-  quoteLinePricesApproved  QuoteLine[]              @relation("QuoteLinePriceApprover")
-  orderLinePricesApproved  SalesOrderLine[]         @relation("OrderLinePriceApprover")
-  ordersCreated            SalesOrder[]             @relation("OrderCreator")
-  ordersConverted          SalesOrder[]             @relation("OrderConverter")
-  orderPaymentStatuses     SalesOrder[]             @relation("OrderPaymentStatus")
-  bundlesOpened            Bundle[]                 @relation("BundleOpener")
-  reservationsCreated      StockReservation[]       @relation("ReservationCreator")
-  dispatchesCreated        Dispatch[]               @relation("DispatchCreator")
-  dispatchesAssigned       Dispatch[]               @relation("DispatchAssignee")
-  dispatchesConfirmed      Dispatch[]               @relation("DispatchConfirmer")
-  picksCreated             DispatchPick[]           @relation("PickCreator")
-  incidentsResolved        DispatchIncident[]       @relation("IncidentResolver")
-  notifications            NotificationOutbox[]
-  readerDevicesCreated     ReaderDevice[]           @relation("ReaderDeviceCreator")
-  readerSessionsOpened     ReaderSession[]          @relation("ReaderSessionOpener")
-  readerObservations       ReaderObservation[]
-  auditEvents              AuditEvent[]
+  defaultInventoryLocation  InventoryLocation?       @relation(fields: [defaultInventoryLocationId], references: [id], onDelete: Restrict)
+  movements                 InventoryMovement[]
+  tasksAssigned             Task[]                   @relation("TaskAssignee")
+  tasksCreated              Task[]                   @relation("TaskCreator")
+  pushSubscriptions         PushSubscription[]
+  shipmentsCreated          InboundShipment[]        @relation("ShipmentCreator")
+  preRegistrationsCreated   InboundPreRegistration[] @relation("PreRegistrationCreator")
+  preRegistrationsReceived  InboundPreRegistration[] @relation("PreRegistrationReceiver")
+  lotsCreated               StockLot[]               @relation("LotCreator")
+  purchasesCreated          Purchase[]               @relation("PurchaseCreator")
+  purchasesConfirmed        Purchase[]               @relation("PurchaseConfirmer")
+  salePricesCreated         SalePrice[]              @relation("SalePriceCreator")
+  customersCreated          Customer[]               @relation("CustomerCreator")
+  quotesCreated             Quote[]                  @relation("QuoteCreator")
+  discountsRequested        QuoteDiscountRequest[]   @relation("DiscountRequester")
+  discountsToApprove        QuoteDiscountRequest[]   @relation("DiscountApprover")
+  quoteLinePricesApproved   QuoteLine[]              @relation("QuoteLinePriceApprover")
+  orderLinePricesApproved   SalesOrderLine[]         @relation("OrderLinePriceApprover")
+  ordersCreated             SalesOrder[]             @relation("OrderCreator")
+  ordersConverted           SalesOrder[]             @relation("OrderConverter")
+  orderPaymentStatuses      SalesOrder[]             @relation("OrderPaymentStatus")
+  bundlesOpened             Bundle[]                 @relation("BundleOpener")
+  reservationsCreated       StockReservation[]       @relation("ReservationCreator")
+  dispatchesCreated         Dispatch[]               @relation("DispatchCreator")
+  dispatchesAssigned        Dispatch[]               @relation("DispatchAssignee")
+  dispatchesConfirmed       Dispatch[]               @relation("DispatchConfirmer")
+  picksCreated              DispatchPick[]           @relation("PickCreator")
+  incidentsResolved         DispatchIncident[]       @relation("IncidentResolver")
+  notifications             NotificationOutbox[]
+  readerDevicesCreated      ReaderDevice[]           @relation("ReaderDeviceCreator")
+  readerSessionsOpened      ReaderSession[]          @relation("ReaderSessionOpener")
+  readerObservations        ReaderObservation[]
+  auditEvents               AuditEvent[]
+  materialRequestsAssigned  MaterialRequest[]        @relation("MaterialRequestAssignee")
+  materialRequestsCreated   MaterialRequest[]        @relation("MaterialRequestCreator")
+  materialRequestsShipped   MaterialRequest[]        @relation("MaterialRequestShipper")
+  materialRequestsReceived  MaterialRequest[]        @relation("MaterialRequestReceiver")
+  materialRequestsCancelled MaterialRequest[]        @relation("MaterialRequestCanceller")
+  materialRequestPicks      MaterialRequestPick[]
 
   @@index([defaultInventoryLocationId])
   @@map("users")
@@ -265,6 +275,7 @@ model Bundle {
   preRegistration   InboundPreRegistration?
   reservations      StockReservation[]
   picks             DispatchPick[]
+  materialPicks     MaterialRequestPick[]
 
   @@index([referenceId, finishId, inventoryLocationId])
   @@index([lotId])
@@ -291,11 +302,14 @@ model InventoryMovement {
   operationKey          String                @unique
   // Set on exits confirmed by a dispatch (traceability to the sales order).
   dispatchId            String?
+  // Set on transfers shipped for a material request (warehouse → branch).
+  materialRequestId     String?
   createdAt             DateTime              @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime              @updatedAt @db.Timestamptz(3)
 
   bundle              Bundle             @relation(fields: [bundleId], references: [id], onDelete: Restrict)
   dispatch            Dispatch?          @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  materialRequest     MaterialRequest?   @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
   performedBy         User               @relation(fields: [performedById], references: [id], onDelete: Restrict)
   sourceLocation      InventoryLocation? @relation("MovementSourceLocation", fields: [sourceLocationId], references: [id], onDelete: Restrict)
   destinationLocation InventoryLocation? @relation("MovementDestinationLocation", fields: [destinationLocationId], references: [id], onDelete: Restrict)
@@ -310,6 +324,7 @@ model InventoryMovement {
   @@index([sourceRackId])
   @@index([destinationRackId])
   @@index([dispatchId])
+  @@index([materialRequestId])
   @@map("inventory_movements")
 }
 
@@ -328,6 +343,9 @@ enum TaskKind {
   GENERAL
   DISPATCH
   DISCOUNT_APPROVAL
+  // Material requests: prepare and ship (warehouse) / mark received (branch).
+  MATERIAL_REQUEST
+  MATERIAL_RECEPTION
 }
 
 model Task {
@@ -342,6 +360,8 @@ model Task {
   dispatchId        String?   @unique
   // DISCOUNT_APPROVAL tasks only (CHECK): the request the admin answers.
   discountRequestId String?   @unique
+  // MATERIAL_REQUEST / MATERIAL_RECEPTION tasks only (CHECK).
+  materialRequestId String?
   cancelledAt       DateTime? @db.Timestamptz(3)
   createdAt         DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
@@ -350,7 +370,10 @@ model Task {
   createdBy       User                  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
   dispatch        Dispatch?             @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
   discountRequest QuoteDiscountRequest? @relation(fields: [discountRequestId], references: [id], onDelete: Restrict)
+  materialRequest MaterialRequest?      @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
 
+  // One preparation task and one reception task per request.
+  @@unique([materialRequestId, kind])
   @@index([assigneeId, completedAt, dueAt])
   @@index([createdById])
   @@index([dueAt])
@@ -405,11 +428,12 @@ model Supplier {
   createdAt DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt DateTime         @updatedAt @db.Timestamptz(3)
 
-  lots       StockLot[]
-  shipments  InboundShipment[]
-  purchases  Purchase[]
-  quoteLines QuoteLine[]
-  orderLines SalesOrderLine[]
+  lots                 StockLot[]
+  shipments            InboundShipment[]
+  purchases            Purchase[]
+  quoteLines           QuoteLine[]
+  orderLines           SalesOrderLine[]
+  materialRequestLines MaterialRequestLine[]
 
   @@map("suppliers")
 }
@@ -709,6 +733,13 @@ enum PricingMethod {
   MANUAL
 }
 
+// Kind of sale of a quote / order: «Detal» (materials) or «Ventanería»
+// (materials plus, optionally, assembly and installation services).
+enum SaleType {
+  RETAIL
+  WINDOWS
+}
+
 // How the customer pays a quote / order (agreed terms, not a payment record).
 enum PaymentMethod {
   CASH // Contado – efectivo
@@ -748,7 +779,14 @@ model Quote {
   globalDiscountPercent Decimal        @default(0) @db.Decimal(9, 4)
   globalDiscountAmount  Decimal        @default(0) @db.Decimal(18, 2)
   taxTotal              Decimal        @default(0) @db.Decimal(18, 2)
-  // = subtotal − discountTotal − globalDiscountAmount + taxTotal = Σ lineTotal.
+  // «Detal» (RETAIL) or «Ventanería» (WINDOWS). Ventanería may add the
+  // assembly and installation of the window: amounts typed by the seller,
+  // without VAT nor discounts, outside the material lines (no stock).
+  saleType              SaleType       @default(RETAIL)
+  assemblyAmount        Decimal        @default(0) @db.Decimal(18, 2)
+  installationAmount    Decimal        @default(0) @db.Decimal(18, 2)
+  // = subtotal − discountTotal − globalDiscountAmount + taxTotal
+  //   + assemblyAmount + installationAmount = Σ lineTotal + services.
   total                 Decimal        @default(0) @db.Decimal(18, 2)
   createdById           String
   createdAt             DateTime       @default(now()) @db.Timestamptz(3)
@@ -804,6 +842,8 @@ model QuoteDiscountRequest {
   resolvedAt       DateTime?                  @db.Timestamptz(3)
   // Rejection reason of the administrator (optional).
   resolution       String?
+  // When the seller saw the answer (in-app notice); null = not seen yet.
+  requesterSeenAt  DateTime?                  @db.Timestamptz(3)
   createdAt        DateTime                   @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime                   @updatedAt @db.Timestamptz(3)
 
@@ -816,6 +856,7 @@ model QuoteDiscountRequest {
 
   @@index([quoteId, createdAt])
   @@index([approverId, status])
+  @@index([requestedById, requesterSeenAt])
   @@map("quote_discount_requests")
 }
 
@@ -901,6 +942,11 @@ model SalesOrder {
   globalDiscountPercent Decimal          @default(0) @db.Decimal(9, 4)
   globalDiscountAmount  Decimal          @default(0) @db.Decimal(18, 2)
   taxTotal              Decimal          @db.Decimal(18, 2)
+  // Copied from the quote (see Quote): services are not lines, so they are
+  // never reserved nor dispatched.
+  saleType              SaleType         @default(RETAIL)
+  assemblyAmount        Decimal          @default(0) @db.Decimal(18, 2)
+  installationAmount    Decimal          @default(0) @db.Decimal(18, 2)
   total                 Decimal          @db.Decimal(18, 2)
   notes                 String?
   // Copied from the quote when it is converted.
@@ -989,24 +1035,28 @@ enum ReservationStatus {
 // assigned to a dispatch line). Available = bundle.quantity − ACTIVE
 // reservations; a trigger keeps ACTIVE reservations ≤ bundle.quantity.
 model StockReservation {
-  id               String            @id @default(cuid())
-  bundleId         String
-  salesOrderLineId String
-  dispatchLineId   String?
-  quantity         Int
-  status           ReservationStatus @default(ACTIVE)
-  createdById      String
-  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
-  closedAt         DateTime?         @db.Timestamptz(3)
-  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+  id                    String            @id @default(cuid())
+  bundleId              String
+  // Exactly one of: a sales order line, or a material request line (CHECK).
+  salesOrderLineId      String?
+  materialRequestLineId String?
+  dispatchLineId        String?
+  quantity              Int
+  status                ReservationStatus @default(ACTIVE)
+  createdById           String
+  createdAt             DateTime          @default(now()) @db.Timestamptz(3)
+  closedAt              DateTime?         @db.Timestamptz(3)
+  updatedAt             DateTime          @updatedAt @db.Timestamptz(3)
 
-  bundle         Bundle         @relation(fields: [bundleId], references: [id], onDelete: Restrict)
-  salesOrderLine SalesOrderLine @relation(fields: [salesOrderLineId], references: [id], onDelete: Restrict)
-  dispatchLine   DispatchLine?  @relation(fields: [dispatchLineId], references: [id], onDelete: Restrict)
-  createdBy      User           @relation("ReservationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  bundle              Bundle               @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  salesOrderLine      SalesOrderLine?      @relation(fields: [salesOrderLineId], references: [id], onDelete: Restrict)
+  materialRequestLine MaterialRequestLine? @relation(fields: [materialRequestLineId], references: [id], onDelete: Restrict)
+  dispatchLine        DispatchLine?        @relation(fields: [dispatchLineId], references: [id], onDelete: Restrict)
+  createdBy           User                 @relation("ReservationCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([bundleId, status])
   @@index([salesOrderLineId, status])
+  @@index([materialRequestLineId, status])
   @@index([dispatchLineId, status])
   @@map("stock_reservations")
 }
@@ -1285,4 +1335,119 @@ model AuditEvent {
 
   @@index([entity, entityId])
   @@map("audit_events")
+}
+
+// ==========================================================================
+// MATERIAL REQUESTS: internal supply of a branch from a warehouse
+// ==========================================================================
+// Sales asks a warehouse (e.g. Bodega 116) for profiles for a branch (e.g.
+// Almacén 7 de agosto) with lines like a quote's, without prices, chips or
+// bundles. A warehouse worker (in turn, or the one Sales chose) prepares it
+// by reading the chips of WHOLE bundles (each picked bundle is reserved
+// entirely), then confirms the physical shipment: the bundles are
+// transferred to the destination (and opened there when it is a retail
+// store). The branch marks the request received. Creating or sending it
+// never moves inventory.
+
+enum MaterialRequestStatus {
+  SENT
+  PREPARING
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+model MaterialRequest {
+  id                    String                @id @default(cuid())
+  number                String                @unique
+  status                MaterialRequestStatus @default(SENT)
+  sourceLocationId      String
+  destinationLocationId String
+  dueAt                 DateTime              @db.Timestamptz(3)
+  notes                 String?
+  // Warehouse worker who prepares it (taken in turn, changeable by Sales).
+  assigneeId            String
+  // Retry of the same send (double click, lost answer) creates nothing new.
+  createOperationKey    String                @unique
+  createdById           String
+  createdAt             DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime              @updatedAt @db.Timestamptz(3)
+  shipOperationKey      String?               @unique
+  shippedAt             DateTime?             @db.Timestamptz(3)
+  shippedById           String?
+  receivedAt            DateTime?             @db.Timestamptz(3)
+  receivedById          String?
+  receptionNote         String?
+  cancelledAt           DateTime?             @db.Timestamptz(3)
+  cancelledById         String?
+  cancelReason          String?
+
+  source      InventoryLocation     @relation("MaterialRequestSource", fields: [sourceLocationId], references: [id], onDelete: Restrict)
+  destination InventoryLocation     @relation("MaterialRequestDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  assignee    User                  @relation("MaterialRequestAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy   User                  @relation("MaterialRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  shippedBy   User?                 @relation("MaterialRequestShipper", fields: [shippedById], references: [id], onDelete: Restrict)
+  receivedBy  User?                 @relation("MaterialRequestReceiver", fields: [receivedById], references: [id], onDelete: Restrict)
+  cancelledBy User?                 @relation("MaterialRequestCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  lines       MaterialRequestLine[]
+  picks       MaterialRequestPick[]
+  tasks       Task[]
+  movements   InventoryMovement[]
+
+  @@index([status, createdAt])
+  @@index([sourceLocationId, createdAt])
+  @@index([createdById, createdAt])
+  @@index([assigneeId, status])
+  @@map("material_requests")
+}
+
+// What is asked: profiles of a reference and colour with the origin (and
+// supplier, when required) the material must have.
+model MaterialRequestLine {
+  id                   String         @id @default(cuid())
+  requestId            String
+  lineNo               Int
+  referenceId          String
+  finishId             String
+  origin               MaterialOrigin
+  supplierId           String?
+  // Profiles asked (not bundles).
+  quantity             Int
+  referenceCode        String
+  referenceDescription String?
+  finishCode           String
+  finishDescription    String?
+  supplierName         String?
+
+  request      MaterialRequest       @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  reference    Reference             @relation(fields: [referenceId], references: [id], onDelete: Restrict)
+  finish       Finish                @relation(fields: [finishId], references: [id], onDelete: Restrict)
+  supplier     Supplier?             @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  picks        MaterialRequestPick[]
+  reservations StockReservation[]
+
+  @@unique([requestId, lineNo])
+  @@map("material_request_lines")
+}
+
+// A whole bundle prepared for a line (its quantity when picked); reserved
+// entirely until shipped or removed.
+model MaterialRequestPick {
+  id            String   @id @default(cuid())
+  requestId     String
+  requestLineId String
+  bundleId      String
+  quantity      Int
+  createdById   String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  request     MaterialRequest     @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  requestLine MaterialRequestLine @relation(fields: [requestLineId], references: [id], onDelete: Restrict)
+  bundle      Bundle              @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  createdBy   User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, bundleId])
+  @@index([bundleId])
+  @@index([requestLineId])
+  @@map("material_request_picks")
 }

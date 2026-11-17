@@ -2,8 +2,10 @@ import { useState } from 'react'
 import type { Page } from '../api/types'
 import { Empty, Field, Loading, Notice, PageHeader, Pagination } from '../components/ui'
 import type { AdminUser } from '../lib/admin'
-import { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, formatMoney, type OrderStatus, type PaymentStatus } from '../lib/commerce'
+import { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, formatMoney, hasLabour, type OrderStatus, type PaymentStatus } from '../lib/commerce'
 import { formatDateTime } from '../lib/format'
+import { RequestUpdatesNotice } from '../components/RequestUpdatesNotice'
+import { useRequestUpdates } from '../lib/requestUpdates'
 import { useLoad } from '../lib/useLoad'
 import { useSession } from '../session/session-context'
 import type { Navigate } from './navigation'
@@ -14,6 +16,9 @@ interface QuoteRow {
   customerName: string
   status: 'DRAFT' | 'CONVERTED' | 'CANCELLED'
   total: string
+  saleType?: 'RETAIL' | 'WINDOWS'
+  assemblyAmount?: string
+  installationAmount?: string
   createdAt: string
   order: { id: string; number: string } | null
   // ADMIN only (the API omits it for other roles).
@@ -97,6 +102,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
   const users = useLoad<AdminUser[]>(tab === 'orders' && isAdmin ? '/users' : null)
   const sellers = (users.data ?? []).filter((u) => u.role === 'SALES' || u.role === 'ADMIN').sort((a, b) => a.name.localeCompare(b.name))
   const current = tab === 'quotes' ? quotes : orders
+  const requestUpdates = useRequestUpdates(true)
   const setFilter = (patch: Partial<OrderFilters>) => {
     setFilters((value) => ({ ...value, ...patch }))
     setPage(1)
@@ -114,6 +120,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
           </button>
         }
       />
+      <RequestUpdatesNotice updates={requestUpdates.data} onOpen={(id) => navigate({ name: 'quote', id })} />
       <div className="tabs" role="tablist">
         {(['quotes', 'orders'] as const).map((id) => (
           <button
@@ -215,7 +222,10 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
               <li key={quote.id}>
                 <button type="button" className="doc-row" onClick={() => navigate({ name: 'quote', id: quote.id })}>
                   <span className="doc-main">
-                    <strong>{quote.number}</strong>
+                    <strong>
+                      {quote.number}
+                      {quote.saleType === 'WINDOWS' ? <span className="badge badge-windows">Ventanería{hasLabour(quote) ? ' · con mano de obra' : ''}</span> : null}
+                    </strong>
                     <small>
                       {quote.customerName} · {quote._count.lines} renglones · {formatDateTime(quote.createdAt)}
                       {quote.createdBy ? ` · creada por ${quote.createdBy.name}` : ''}

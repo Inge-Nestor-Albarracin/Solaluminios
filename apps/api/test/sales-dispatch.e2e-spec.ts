@@ -509,9 +509,9 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
         .expect((res) => expect([400, 403]).toContain(res.status));
     }
     expect(await prisma.quote.count({ where: { customerId: ids.customer } })).toBe(0);
-    // The payment method is required and must be one of the agreed options.
+    // The payment method is optional in a quote (required to convert it), but
+    // when given it must be one of the agreed options.
     const onlyLine = [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 1 })];
-    await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, lines: onlyLine }).expect(400);
     await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, paymentMethod: 'BITCOIN', lines: onlyLine }).expect(400);
     await http().post('/quotes').set(as('SALES')).send({ customerId: ids.customer, paymentMethod: 'CASH', paymentTerms: 'x'.repeat(301), lines: onlyLine }).expect(400);
     const quote = await http()
@@ -613,18 +613,25 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
 
 
   it('ADMIN converting a seller\'s quote: the seller keeps the order, ADMIN is recorded as who converted it', async () => {
+    // A quote may be only an inquiry: no payment method yet.
     const quote = await http()
       .post('/quotes')
       .set(as('SALES'))
-      .send({ customerId: ids.customer, paymentMethod: 'PARTIAL', paymentTerms: 'Anticipo del 50 %', lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 1 })] })
+      .send({ customerId: ids.customer, lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 1 })] })
       .expect(201);
-    // A quote without payment method (saved before it existed) cannot be converted.
-    await prisma.quote.update({ where: { id: quote.body.id }, data: { paymentMethod: null } });
-    const blocked = await http().post(`/quotes/${quote.body.id}/convert`).set(as('ADMIN')).send({ operationKey: randomUUID() }).expect(409);
-    expect(blocked.body.message).toMatch(/forma de pago/);
+    expect(quote.body.paymentMethod).toBeNull();
+    // Converting it requires choosing one.
+    const blocked = await http().post(`/quotes/${quote.body.id}/convert`).set(as('ADMIN')).send({ operationKey: randomUUID() }).expect(400);
+    expect(blocked.body.message).toMatch(/Elige la forma de pago/);
+    await http().post(`/quotes/${quote.body.id}/convert`).set(as('ADMIN')).send({ operationKey: randomUUID(), paymentMethod: 'LAYAWAY' }).expect(400);
     expect(await prisma.salesOrder.count({ where: { quoteId: quote.body.id } })).toBe(0);
-    await prisma.quote.update({ where: { id: quote.body.id }, data: { paymentMethod: 'PARTIAL' } });
-    const converted = await http().post(`/quotes/${quote.body.id}/convert`).set(as('ADMIN')).send({ operationKey: randomUUID() }).expect(200);
+    const converted = await http()
+      .post(`/quotes/${quote.body.id}/convert`)
+      .set(as('ADMIN'))
+      .send({ operationKey: randomUUID(), paymentMethod: 'PARTIAL', paymentTerms: 'Anticipo del 50 %' })
+      .expect(200);
+    // The quote keeps what was agreed.
+    expect(await prisma.quote.findUniqueOrThrow({ where: { id: quote.body.id } })).toMatchObject({ paymentMethod: 'PARTIAL', paymentTerms: 'Anticipo del 50 %' });
     expect(converted.body).toMatchObject({ paymentMethod: 'PARTIAL', paymentTerms: 'Anticipo del 50 %', createdBy: { id: U.SALES }, convertedBy: { id: U.ADMIN } });
     // The seller still sees and owns it, without the authors.
     const asSeller = await http().get(`/sales-orders/${converted.body.id}`).set(as('SALES')).expect(200);

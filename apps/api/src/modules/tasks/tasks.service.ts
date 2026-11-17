@@ -31,6 +31,8 @@ const taskInclude = {
   dispatch: { select: { id: true, number: true, status: true } },
   // Discount approval tasks: the request and its quote (no prices here).
   discountRequest: { select: { id: true, kind: true, status: true, requestedPercent: true, quote: { select: { id: true, number: true } } } },
+  // Material request tasks (prepare / receive): link only.
+  materialRequest: { select: { id: true, number: true, status: true } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed
@@ -203,6 +205,13 @@ export class TasksService {
     if (task.kind === 'DISPATCH') {
       throw new ConflictException(
         'Las tareas de despacho se completan al confirmar la salida del despacho, no desde aquí',
+      );
+    }
+    if (task.kind === 'MATERIAL_REQUEST' || task.kind === 'MATERIAL_RECEPTION') {
+      throw new ConflictException(
+        task.kind === 'MATERIAL_REQUEST'
+          ? 'Las solicitudes de materiales se completan al confirmar su salida desde la solicitud'
+          : 'La recepción se completa al marcar la solicitud como recibida',
       );
     }
     if (task.kind === 'DISCOUNT_APPROVAL') {

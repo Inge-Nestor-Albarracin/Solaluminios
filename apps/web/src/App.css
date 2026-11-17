@@ -4301,3 +4301,144 @@ button.doc-row:focus-visible {
     align-items: stretch;
   }
 }
+
+/* Payment method chosen when a quote without one becomes an order. */
+.actions > .convert-payment {
+  flex-basis: 100%;
+}
+
+.convert-payment p {
+  margin: 0;
+}
+
+/* «Respuestas a tus solicitudes» (RequestUpdatesNotice): answers of an
+   administrator to the seller's discount / manual price requests. */
+.request-updates {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius);
+  background: var(--info-bg);
+}
+
+.request-updates .subtitle {
+  margin: 0;
+}
+
+.request-updates ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.request-updates li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--success-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.request-updates li.rejected {
+  border-left-color: var(--error-border);
+}
+
+.request-updates li > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.request-update-text {
+  color: var(--text);
+}
+
+.request-updates small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .request-updates li .button {
+    width: 100%;
+  }
+}
+
+/* Kind of sale of a quote: «Detal» / «Ventanería». */
+.sale-type {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.sale-type legend {
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.sale-type-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.sale-type-option.selected {
+  border-color: var(--brand-cyan);
+  box-shadow: inset 0 0 0 1px var(--brand-cyan);
+}
+
+.sale-type-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.sale-type-option small {
+  color: var(--muted);
+}
+
+.sale-type:disabled .sale-type-option {
+  cursor: default;
+}
+
+/* Labour of a «Ventanería» quote (assembly / installation). */
+.card.labour .subtitle {
+  margin-top: 0;
+}
+
+.badge-windows {
+  margin-left: 8px;
+  background: var(--info-bg);
+  border: 1px solid var(--info-border);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+/* Material requests: bundles the worker can take, by line. */
+.request-suggestions h3 {
+  margin: 16px 0 6px;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.request-suggestions .transfer-list {
+  margin-bottom: 10px;
+}

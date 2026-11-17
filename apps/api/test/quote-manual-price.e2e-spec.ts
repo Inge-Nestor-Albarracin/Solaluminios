@@ -221,7 +221,7 @@ describe('Manual prices of quotes and their authorisation (e2e)', () => {
     expectConsistent(approved);
     expect(Number(approved.total)).toBeGreaterThan(Number(q.total));
     expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).completedAt).not.toBeNull();
-    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: 'price-resolved' } })).toBeGreaterThan(0);
+    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: { in: ['price-approved', 'price-rejected'] } } })).toBeGreaterThan(0);
     const event = await prisma.auditEvent.findFirstOrThrow({ where: { entityId: q.id, action: 'MANUAL_PRICE_APPROVED' } });
     expect(event).toMatchObject({ userId: U.ADMIN, data: { corrected: true, lines: [{ lineNo: 2, proposedUnitPrice: '12000.00', approvedUnitPrice: '12500.00' }] } });
     // Repeated approval: same answer, applied once; a rejection now: refused.

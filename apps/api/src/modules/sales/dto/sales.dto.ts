@@ -19,8 +19,11 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { MaterialOrigin, PaymentMethod, PaymentStatus } from '../../../generated/prisma/client.js';
+import { MaterialOrigin, PaymentMethod, SaleType, PaymentStatus } from '../../../generated/prisma/client.js';
 import { DECIMAL_PATTERN } from '../../../shared/money.js';
+
+// Assembly / installation: pesos with up to 2 decimals (no VAT, no discount).
+const SERVICE_AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
 import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -180,9 +183,12 @@ export class SaveQuoteDto {
   @MaxLength(1000)
   notes?: string;
 
-  // Contado (efectivo / transferencia), abono or cartera (crédito).
+  // Contado (efectivo / transferencia), abono or cartera (crédito). Optional
+  // in a quote (it may be just an inquiry); required when it becomes an
+  // order (ConvertQuoteDto).
+  @IsOptional()
   @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, abono o cartera (crédito)' })
-  paymentMethod!: PaymentMethod;
+  paymentMethod?: PaymentMethod;
 
   // Details agreed with the customer, e.g. advance amount or credit days.
   @Transform(trim)
@@ -190,6 +196,22 @@ export class SaveQuoteDto {
   @IsString()
   @MaxLength(300)
   paymentTerms?: string;
+
+  // «Detal» (RETAIL, default) or «Ventanería» (WINDOWS).
+  @IsOptional()
+  @IsEnum(SaleType, { message: 'La modalidad es Detal (RETAIL) o Ventanería (WINDOWS)' })
+  saleType?: SaleType;
+
+  // Ventanería only: assembly in the workshop and installation, whole
+  // amounts typed by the seller (pesos, up to 2 decimals), without VAT nor
+  // discounts. Omitted = 0.
+  @IsOptional()
+  @Matches(SERVICE_AMOUNT_PATTERN, { message: 'El valor del ensamble debe ser un monto en pesos, con máximo 2 decimales' })
+  assemblyAmount?: string;
+
+  @IsOptional()
+  @Matches(SERVICE_AMOUNT_PATTERN, { message: 'El valor de la instalación debe ser un monto en pesos, con máximo 2 decimales' })
+  installationAmount?: string;
 
   // Discount on the whole quote, after line discounts and before VAT: 0 or
   // 0.1–100 % with up to 2 decimals. SALES: up to 3 % (or what an
@@ -311,6 +333,19 @@ export class OrderListQueryDto extends ListQueryDto {
 export class ConvertQuoteDto {
   @IsUUID('4', { message: 'operationKey debe ser un UUID generado por el cliente' })
   operationKey!: string;
+
+  // Chosen when the customer confirms the purchase. Omitted: the one saved in
+  // the quote; a quote without one cannot become an order.
+  @IsOptional()
+  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, abono o cartera (crédito)' })
+  paymentMethod?: PaymentMethod;
+
+  // Omitted: the terms saved in the quote; empty clears them.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  paymentTerms?: string;
 }
 
 export class ConfirmOrderDto {

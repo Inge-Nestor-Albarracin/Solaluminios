@@ -220,7 +220,7 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     expect(approved.total).toBe(projected);
     expectConsistent(approved);
     expect((await prisma.task.findUniqueOrThrow({ where: { id: task!.id } })).completedAt).not.toBeNull();
-    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: 'discount-resolved', dedupeKey: { contains: requestId } } })).toBe(1);
+    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: 'discount-approved', dedupeKey: { contains: requestId } } })).toBe(1);
     // Repeated approval: same answer, applied once; a later rejection: refused.
     await answer(q.id, requestId, 'approve').expect(200);
     expect(await prisma.auditEvent.count({ where: { entityId: q.id, action: 'DISCOUNT_APPROVED' } })).toBe(1);
@@ -356,5 +356,78 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     await prisma.quoteLine.update({ where: { id: old.lines[0].id }, data: { discountPercent: '10' } });
     await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('10')).expect(200);
     await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('12')).expect(400);
+  });
+
+  it('the seller is told the answer: push approved/rejected and an in-app notice until it opens the quote', async () => {
+    const updates = async (who = 'SALES') =>
+      (await http().get('/sales/request-updates').set(as(who)).expect(200)).body as { count: number; items: { id: string; status: string; kind: string; quote: { id: string; number: string }; approver: { name: string }; resolution: string | null }[] };
+    const approvedQuote = await newQuote();
+    await ask(approvedQuote.id, '5').expect(200);
+    const approvedId = await pendingOf(approvedQuote.id);
+    expect((await updates()).items.some((item) => item.id === approvedId)).toBe(false); // still pending
+    await answer(approvedQuote.id, approvedId, 'approve').expect(200);
+    const rejectedQuote = await newQuote();
+    await ask(rejectedQuote.id, '6').expect(200);
+    const rejectedId = await pendingOf(rejectedQuote.id);
+    await answer(rejectedQuote.id, rejectedId, 'reject', 'ADMIN', { resolution: 'Máximo 3 % para este cliente' }).expect(200);
+
+    // Push: what the answer was (the device text depends on the kind).
+    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: 'discount-approved', dedupeKey: { contains: approvedId } } })).toBe(1);
+    expect(await prisma.notificationOutbox.count({ where: { userId: U.SALES, kind: 'discount-rejected', dedupeKey: { contains: rejectedId } } })).toBe(1);
+
+    // In-app: both answers, with who answered and why it was rejected; only the seller sees them.
+    const mine = await updates();
+    const approvedItem = mine.items.find((item) => item.id === approvedId);
+    const rejectedItem = mine.items.find((item) => item.id === rejectedId);
+    expect(approvedItem).toMatchObject({ status: 'APPROVED', kind: 'GLOBAL_DISCOUNT', quote: { id: approvedQuote.id, number: approvedQuote.number }, approver: { name: expect.any(String) } });
+    expect(rejectedItem).toMatchObject({ status: 'REJECTED', resolution: 'Máximo 3 % para este cliente' });
+    expect((await updates('SALES2')).items.some((item) => item.id === approvedId)).toBe(false);
+
+    // Opening the quote marks its answers as seen; another seller cannot mark them.
+    expect((await http().post(`/quotes/${approvedQuote.id}/request-updates/seen`).set(as('SALES2')).expect(200)).body.seen).toBe(0);
+    expect((await http().post(`/quotes/${approvedQuote.id}/request-updates/seen`).set(as('SALES')).expect(200)).body.seen).toBe(1);
+    expect((await http().post(`/quotes/${approvedQuote.id}/request-updates/seen`).set(as('SALES')).expect(200)).body.seen).toBe(0);
+    const after = await updates();
+    expect(after.items.some((item) => item.id === approvedId)).toBe(false);
+    expect(after.items.some((item) => item.id === rejectedId)).toBe(true);
+    expect(after.count).toBe(mine.count - 1);
+    await http().get('/sales/request-updates').set(as('WAREHOUSE')).expect(403);
+  });
+
+  it('«Ventanería»: assembly and installation add to the total with no VAT nor discount; «Detal» never carries them', async () => {
+    const d = (value: string) => new Decimal(value);
+    type Windows = QuoteBody & { saleType: string; assemblyAmount: string; installationAmount: string; lines: { lineTotal: string }[] };
+    const linesTotal = (q: { lines: { lineTotal: string }[] }) => q.lines.reduce((total, line) => total.plus(line.lineTotal), d('0'));
+    // Default: «Detal» without services (as every quote before).
+    const plain = (await http().post('/quotes').set(as('SALES')).send(body('3')).expect(201)).body as Windows;
+    expect(plain).toMatchObject({ saleType: 'RETAIL', assemblyAmount: '0', installationAmount: '0' });
+    expect(linesTotal(plain).equals(plain.total)).toBe(true);
+    // «Detal» with labour is refused, not silently dropped.
+    const refused = await http().post('/quotes').set(as('SALES')).send({ ...body(), saleType: 'RETAIL', assemblyAmount: '1000' }).expect(400);
+    expect(refused.body.message).toMatch(/En Detal no se cobran ensamble ni instalación/);
+    await http().post('/quotes').set(as('SALES')).send({ ...body(), saleType: 'WINDOWS', assemblyAmount: '-5' }).expect(400);
+
+    // Only assembly; the global discount (3 %) applies to the materials only.
+    const windows = (await http().post('/quotes').set(as('SALES')).send({ ...body('3'), saleType: 'WINDOWS', assemblyAmount: '150000' }).expect(201)).body as Windows;
+    expect(windows).toMatchObject({ saleType: 'WINDOWS', assemblyAmount: '150000', installationAmount: '0' });
+    expect(windows.globalDiscountAmount).toBe(plain.globalDiscountAmount);
+    expect(windows.taxTotal).toBe(plain.taxTotal);
+    expect(d(windows.total).minus(linesTotal(windows)).toFixed(2)).toBe('150000.00');
+    // An approved discount keeps the services in the total.
+    await ask(windows.id, '5').expect(200);
+    const approved = (await answer(windows.id, await pendingOf(windows.id), 'approve').expect(200)).body as Windows;
+    expect(Number(approved.globalDiscountPercent)).toBe(5);
+    expect(d(approved.total).minus(linesTotal(approved)).toFixed(2)).toBe('150000.00');
+    // Both services; then back to «Detal» with them cleared.
+    const both = (await http().patch(`/quotes/${windows.id}`).set(as('SALES')).send({ ...body('5'), saleType: 'WINDOWS', assemblyAmount: '150000', installationAmount: '90000.50' }).expect(200)).body as Windows;
+    expect(d(both.total).minus(linesTotal(both)).toFixed(2)).toBe('240000.50');
+
+    // The order keeps the services; its lines (what is reserved and dispatched) are only materials.
+    const order = (await convert(windows.id).expect(200)).body as Windows & { lines: { referenceId: string }[] };
+    expect(order).toMatchObject({ saleType: 'WINDOWS', assemblyAmount: '150000', installationAmount: '90000.5', total: both.total });
+    expect(order.lines).toHaveLength(2);
+    // The database refuses labour in «Detal» even outside the API.
+    await expect(prisma.quote.update({ where: { id: plain.id }, data: { installationAmount: '5000' } })).rejects.toThrow();
+    await expect(prisma.salesOrder.update({ where: { id: order.id }, data: { saleType: 'RETAIL' } })).rejects.toThrow();
   });
 });

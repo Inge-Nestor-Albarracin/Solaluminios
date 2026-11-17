@@ -141,6 +141,20 @@ export class SalesController {
     return this.sales.discountApprovers();
   }
 
+  // Answers to the session user's requests it has not seen (menu notice).
+  @Roles('ADMIN', 'SALES')
+  @Get('sales/request-updates')
+  requestUpdates(@Req() request: AuthenticatedRequest) {
+    return this.sales.requestUpdates(sessionUser(request));
+  }
+
+  @Roles('ADMIN', 'SALES')
+  @Post('quotes/:id/request-updates/seen')
+  @HttpCode(HttpStatus.OK)
+  markRequestUpdatesSeen(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.sales.markRequestUpdatesSeen(id, sessionUser(request));
+  }
+
   @Roles('ADMIN', 'SALES')
   @Post('quotes/:id/discount-requests')
   @HttpCode(HttpStatus.OK)

@@ -153,6 +153,10 @@ export interface Quote {
   discountTotal: string
   globalDiscountPercent: string
   globalDiscountAmount: string
+  // «Detal» / «Ventanería»: assembly and installation (no VAT, no discount).
+  saleType: SaleType
+  assemblyAmount: string
+  installationAmount: string
   // Highest global discount the viewer may apply without asking.
   globalDiscountLimit: string
   discountRequests: DiscountRequest[]
@@ -245,6 +249,10 @@ export interface SalesOrder {
   discountTotal: string
   globalDiscountPercent: string
   globalDiscountAmount: string
+  // «Detal» / «Ventanería»: assembly and installation (no VAT, no discount).
+  saleType: SaleType
+  assemblyAmount: string
+  installationAmount: string
   taxTotal: string
   total: string
   createdAt: string
@@ -382,15 +390,36 @@ export function formatPercent(value: string | number): string {
 
 // Totals line of a quote or order: subtotal, line discounts, global discount
 // (only when there is one), VAT and total.
-export function totalsParts(document: { subtotal: string; discountTotal: string; globalDiscountPercent: string; globalDiscountAmount: string; taxTotal: string }) {
+export function totalsParts(document: {
+  subtotal: string
+  discountTotal: string
+  globalDiscountPercent: string
+  globalDiscountAmount: string
+  taxTotal: string
+  assemblyAmount?: string
+  installationAmount?: string
+}) {
   const global = Number(document.globalDiscountAmount) > 0
+  const assembly = Number(document.assemblyAmount ?? 0)
+  const installation = Number(document.installationAmount ?? 0)
+  const labour = assembly > 0 || installation > 0
   return [
-    `Subtotal ${formatMoney(document.subtotal)}`,
+    `${labour ? 'Materiales' : 'Subtotal'} ${formatMoney(document.subtotal)}`,
     `${global ? 'Descuentos por renglón' : 'Descuentos'} ${formatMoney(document.discountTotal)}`,
     ...(global ? [`Descuento global ${formatPercent(document.globalDiscountPercent)} −${formatMoney(document.globalDiscountAmount)}`] : []),
     `IVA ${formatMoney(document.taxTotal)}`,
+    ...(assembly > 0 ? [`Ensamble ${formatMoney(assembly)} (sin IVA)`] : []),
+    ...(installation > 0 ? [`Instalación ${formatMoney(installation)} (sin IVA)`] : []),
   ].join(' · ')
 }
+
+// Kind of sale of a quote / order.
+export type SaleType = 'RETAIL' | 'WINDOWS'
+export const SALE_TYPE_LABEL: Record<SaleType, string> = { RETAIL: 'Detal', WINDOWS: 'Ventanería' }
+
+// Whether a quote / order charges labour (assembly or installation).
+export const hasLabour = (document: { assemblyAmount?: string; installationAmount?: string }) =>
+  Number(document.assemblyAmount ?? 0) > 0 || Number(document.installationAmount ?? 0) > 0
 
 export function materialLabel(line: { referenceCode: string; finishCode: string; finishDescription?: string | null }) {
   return `${line.referenceCode} · ${line.finishDescription ?? line.finishCode}`

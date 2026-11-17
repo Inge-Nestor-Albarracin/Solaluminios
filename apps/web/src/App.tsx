@@ -21,6 +21,8 @@ import { ROLE_LABELS, canDispatch, canOperate, canSell, useSession } from './ses
 import { AdminView } from './views/AdminView'
 import { BulkReadView, type BulkChips } from './views/BulkReadView'
 import { ViewErrorBoundary } from './components/ViewErrorBoundary'
+import { RequestUpdatesNotice } from './components/RequestUpdatesNotice'
+import { useRequestUpdates } from './lib/requestUpdates'
 import { BundleDetailView } from './views/BundleDetailView'
 import { BundlesView } from './views/BundlesView'
 import { HomeView } from './views/HomeView'
@@ -30,6 +32,8 @@ import type { View } from './views/navigation'
 import { RegisterBundleView } from './views/RegisterBundleView'
 import { SummaryView } from './views/SummaryView'
 import { TasksView } from './views/TasksView'
+import { MaterialRequestsView } from './views/MaterialRequestsView'
+import { MaterialRequestView } from './views/MaterialRequestView'
 
 function App() {
   const { user } = useSession()
@@ -135,6 +139,9 @@ function Workspace() {
     return () => window.clearInterval(id)
   }, [reloadTaskSummary])
   const openTasks = taskSummary.data?.pending ?? 0
+  // Answers of an administrator to this user's requests not seen yet.
+  const requestUpdates = useRequestUpdates(canSell(user?.role))
+  const newAnswers = requestUpdates.data?.count ?? 0
 
   // Views this user may open from a URL, a shortcut or a notification.
   const allowed = (name: LaunchView) =>
@@ -206,6 +213,9 @@ function Workspace() {
     { name: 'tasks', label: 'Tareas', short: 'Tareas', icon: IconTasks },
     ...(canSell(user?.role) ? [{ name: 'sales' as const, label: 'Ventas', short: 'Ventas', icon: IconChart, bottom: false as const }] : []),
     ...(canDispatch(user?.role) ? [{ name: 'dispatches' as const, label: 'Despachos', short: 'Despachos', icon: IconList, bottom: false as const }] : []),
+    ...(user && ['ADMIN', 'SALES', 'WAREHOUSE'].includes(user.role)
+      ? [{ name: 'requests' as const, label: 'Solicitudes a bodega', short: 'Solicitudes', icon: IconList, bottom: false as const }]
+      : []),
     ...(operator ? [{ name: 'receive' as const, label: 'Recepción China', short: 'Recepción', icon: IconScan, bottom: false as const }] : []),
     // UI hint only: the API enforces ADMIN on every admin endpoint.
     ...(user?.role === 'ADMIN' ? [{ name: 'admin' as const, label: 'Administración', short: 'Admin', icon: IconSettings }] : []),
@@ -232,6 +242,12 @@ function Workspace() {
             <span className="nav-badge" title={`${pending} paquetes sin guardar`}>
               {pending}
               <span className="sr-only"> sin guardar</span>
+            </span>
+          ) : null}
+          {tab.name === 'sales' && newAnswers > 0 ? (
+            <span className="nav-badge nav-badge-info" title={`${newAnswers} respuestas nuevas a tus solicitudes`}>
+              {newAnswers}
+              <span className="sr-only"> respuestas nuevas</span>
             </span>
           ) : null}
           {tab.name === 'tasks' && openTasks > 0 ? (
@@ -303,6 +319,9 @@ function Workspace() {
         ) : null}
         <ViewErrorBoundary key={viewKey(view)} onHome={() => navigate({ name: 'home' })}>
         {view.name === 'home' ? (
+          <RequestUpdatesNotice updates={requestUpdates.data} onOpen={(id) => navigate({ name: 'quote', id })} />
+        ) : null}
+        {view.name === 'home' ? (
           <HomeView
             name={user?.name ?? ''}
             operator={operator}
@@ -323,7 +342,16 @@ function Workspace() {
           <BundlesView key={remountKey} navigate={navigate} initialCatalog={view.catalog} />
         ) : null}
         {view.name === 'summary' ? <SummaryView navigate={navigate} /> : null}
-        {view.name === 'tasks' ? <TasksView onChanged={reloadTaskSummary} onOpenDispatch={(id) => navigate({ name: 'dispatch', id })} onOpenQuote={(id) => navigate({ name: 'quote', id })} /> : null}
+        {view.name === 'tasks' ? (
+          <TasksView
+            onChanged={reloadTaskSummary}
+            onOpenDispatch={(id) => navigate({ name: 'dispatch', id })}
+            onOpenQuote={(id) => navigate({ name: 'quote', id })}
+            onOpenRequest={(id) => navigate({ name: 'request', id })}
+          />
+        ) : null}
+        {view.name === 'requests' ? <MaterialRequestsView navigate={navigate} /> : null}
+        {view.name === 'request' ? <MaterialRequestView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
         {view.name === 'receive' && operator ? <ReceiveView navigate={navigate} /> : null}
         {view.name === 'sales' && canSell(user?.role) ? <SalesView key={view.tab ?? 'quotes'} navigate={navigate} initialTab={view.tab} /> : null}
         {view.name === 'quote' ? <QuoteView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}

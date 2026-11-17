@@ -2291,6 +2291,263 @@ llave pública) y las 9 pruebas e2e de push pasan con un emisor simulado. En
 el navegador integrado el permiso está bloqueado y la app lo explica. La
 entrega real a un celular no se verificó.
 
+## Forma de pago al convertir, no al cotizar (13/11/2026)
+
+**Problema.** Una cotización puede ser solo una consulta, así que la forma de
+pago pasa a ser **opcional en la cotización** y **obligatoria al convertirla
+en orden de venta**. No hace falta migración: las columnas ya admitían NULL.
+
+**API.**
+- `SaveQuoteDto.paymentMethod` es opcional.
+- `ConvertQuoteDto` acepta `paymentMethod` y `paymentTerms` opcionales.
+  - Al convertir se usa la forma enviada o la guardada en la cotización.
+  - Si no hay ninguna, responde 400: «Elige la forma de pago para convertir
+    la cotización en orden de venta».
+  - Lo elegido también queda guardado en la cotización, y la auditoría
+    `CONVERTED` registra la forma de pago.
+  - Abono y crédito siguen naciendo con pago pendiente.
+- El PDF de una cotización sin forma de pago omite esa línea.
+
+**Web.**
+- El campo de la cotización se llama «Forma de pago (opcional)», con la
+  opción «Por definir». Ya no bloquea el guardado.
+- La cabecera muestra «por definir (se elige al convertir en orden de venta)».
+- «Convertir en orden de venta» en una cotización sin forma de pago abre un
+  paso con forma (obligatoria) y condiciones, con la sugerencia según la
+  forma elegida.
+- Si la cotización ya tiene forma de pago, convierte directo, como antes.
+
+**Pruebas.**
+- `sales-dispatch`: una cotización sin forma de pago se guarda y no se
+  convierte (400); con una forma inválida también responde 400; con
+  forma y condiciones se convierte y la cotización las conserva.
+- Se quitó la aserción antigua que exigía la forma de pago al cotizar.
+- API: unitarias 43/43, e2e 204/204 y `oxlint`. Web: `tsc`, `oxlint` y build.
+- Navegador (BD de pruebas, `seed11` con limpieza):
+  - cotización guardada sin forma de pago, con cabecera «por definir»;
+  - el paso de conversión exige elegir;
+  - con Abono y «Anticipo del 50 %», doble clic → una sola orden
+    (OV-010164) con pago pendiente.
+
+## Aviso al vendedor cuando el administrador responde (13/11/2026)
+
+**Objetivo.** El proceso de solicitudes (descuento global y precio manual) no
+cambia. Ya existía un push «Respondieron tu solicitud…», pero solo llega con
+la app compilada y el dispositivo suscrito. Ahora el vendedor también se
+entera dentro de la app.
+
+**Migración nueva:** `20261113120000_request_answer_seen`.
+- Agrega `quote_discount_requests."requesterSeenAt"` (TIMESTAMPTZ, nulo) y
+  el índice (`requestedById`, `requesterSeenAt`).
+- Las solicitudes ya respondidas se marcan vistas en su `resolvedAt`, para no
+  anunciarlas de nuevo.
+- Se verificó con `prisma migrate diff` (sin diferencias) en la BD de
+  pruebas.
+- **Pendiente aplicarla en desarrollo y en el servidor** (`prisma migrate
+  deploy`).
+
+**API.**
+- Push con el resultado: `discount-approved`, `discount-rejected`,
+  `price-approved` y `price-rejected`. Se conservan los `*-resolved` para
+  avisos ya encolados.
+- `GET /sales/request-updates` (ADMIN, SALES) devuelve las respuestas no vistas
+  de las solicitudes del usuario de la sesión: cuántas y las 20 más recientes,
+  con cotización, cliente, estado, quién respondió y motivo.
+- `POST /quotes/:id/request-updates/seen` las marca vistas. Solo actúa sobre
+  las del propio usuario y repetirlo no cambia nada.
+
+**Web.**
+- `lib/requestUpdates.ts` las carga cada minuto, al volver a la ventana y al
+  marcarlas vistas.
+- Contador en «Ventas» del menú.
+- Aviso «Tienes N respuestas nuevas a tus solicitudes» (`RequestUpdatesNotice`)
+  en Inicio y en Ventas:
+  - aprobado: «Descuento global de 5 % aprobado por …: ya quedó aplicado»;
+  - rechazado: «… rechazado por …: «motivo»»;
+  - con «Ver cotización».
+- Al abrir la cotización, sus respuestas quedan vistas y el aviso desaparece.
+- Textos push en `sw.ts`, discretos para la pantalla bloqueada.
+
+**Pruebas.**
+- Nueva e2e en `quote-discounts`:
+  - push aprobado y rechazado;
+  - aviso con motivo, visible solo para el vendedor;
+  - otro vendedor no puede marcarlo como visto;
+  - visto al abrir;
+  - WAREHOUSE recibe 403.
+- Se actualizaron los tipos en `quote-discounts` y `quote-manual-price`.
+- API: unitarias 43/43, e2e 205/205 y `oxlint`. Web: `tsc`, `oxlint` y build.
+- Navegador (BD de pruebas, `seed11` con limpieza):
+  - la vendedora pide 5 % y un precio manual;
+  - la administradora aprueba el descuento y rechaza el precio con motivo;
+  - la vendedora ve «2» en Ventas y las dos respuestas en Inicio;
+  - «Ver cotización» limpia el contador y el aviso;
+  - el outbox tiene `discount-approved` y `price-rejected`.
+
+## Cotizaciones de Detal y Ventanería (17/11/2026)
+
+**Decisiones del usuario.**
+- Ensamble e instalación **sin IVA** y **sin descuentos**.
+- Sin tope, pero desde $1.000.000 se pide confirmar.
+- **No cuentan en la base de comisión.**
+- La lista de cotizaciones marca las que tienen mano de obra.
+- Las cotizaciones existentes quedan como Detal.
+
+**Migración** `20261117120000_quote_sale_type_services`:
+- Enum `SaleType` (RETAIL/WINDOWS).
+- En `quotes` y `sales_orders`: `saleType` (por defecto RETAIL) y
+  `assemblyAmount`/`installationAmount` (decimal, por defecto 0).
+- CHECK `*_services_valid`: valores ≥ 0, y RETAIL ⇒ ambos en 0.
+- Los valores existentes no cambian.
+
+**API.**
+- `documentTotals(lines, services)`: total = Σ líneas + ensamble +
+  instalación. El servicio es obligatorio en la firma, así que el compilador
+  obliga a pasarlo en guardar, recalcular, aplicar el descuento global y
+  proyectar la solicitud (`servicesOf`).
+- `saleOf`: Detal con servicios responde 400; no se descarta en silencio.
+- La conversión copia la modalidad y los servicios a la orden. Los servicios
+  no son renglones, así que no se reservan ni se despachan.
+- El PDF agrega el bloque «SERVICIOS DE VENTANERÍA (SIN IVA, SIN DESCUENTO)»
+  y separa materiales, IVA de materiales, ensamble e instalación.
+- La base de comisión sigue siendo subtotal − descuentos.
+
+**Web.**
+- Selector de modalidad.
+- Tarjeta «Mano de obra (Ventanería)» con `parseMoney`.
+- Pasar a Detal limpia los valores con un aviso visible.
+- Confirmación desde $1.000.000.
+- Vista previa con servicios; `totalsParts` los muestra.
+- Marca «Ventanería · con mano de obra» en la lista.
+- Modalidad visible en la cotización y en la orden («no se despacha»).
+
+**Pruebas.**
+- `pricing.spec`: servicios sin IVA ni descuento.
+- `sales-pdf.spec`: bloque de servicios, solo los cobrados.
+- e2e en `quote-discounts`:
+  - Detal con servicios responde 400;
+  - el descuento global de 3 % no toca los servicios;
+  - la aprobación conserva el total con servicios;
+  - la orden hereda modalidad y servicios, con solo los renglones de
+    material;
+  - CHECK en la BD.
+- Navegador:
+  - COT con ensamble $150.000 e instalación $1.200.000 (pidió
+    confirmación): total $1.439.285,11, igual en la vista previa y en el
+    servidor;
+  - pasar a Detal mostró el aviso;
+  - la orden conservó los servicios.
+
+## Solicitud de materiales Ventas → Bodega → 7 de agosto (17/11/2026)
+
+**Decisiones del usuario.**
+- Paquetes completos, que pasan a sueltos al enviarse al almacén.
+- Los bodegueros preparan por **turnos**; Ventas puede cambiar al
+  responsable.
+- El 7 de agosto tiene una tarea para marcar el pedido como recibido.
+- El material queda disponible en el almacén **desde que sale** de bodega.
+
+**Diseño.** Es un flujo propio, porque el despacho de ventas asume salidas
+parciales por línea de orden y «preparado = autorizado». Reutiliza:
+- `stock_reservations` y su trigger por paquete;
+- `matchBundle` (referencia, color, origen, proveedor, ubicación);
+- `moveBundle`, extraída de los traslados (TRANSFER y apertura en el
+  almacén);
+- tareas y outbox.
+
+**Migración** `20261117130000_material_requests`. Se generó con
+`prisma migrate diff` y se le agregaron reglas propias:
+- tablas `material_requests`, `material_request_lines` y
+  `material_request_picks`;
+- secuencia `material_request_number_seq` (`SM-000001`);
+- `TaskKind` + `MATERIAL_REQUEST`/`MATERIAL_RECEPTION`, con
+  `tasks.materialRequestId` (único por solicitud y tipo);
+- `stock_reservations.salesOrderLineId` pasa a admitir NULL, más
+  `materialRequestLineId`, con CHECK «exactamente uno»;
+- `inventory_movements.materialRequestId`;
+- CHECK de coherencia de estados, origen ≠ destino, cantidades > 0 y
+  longitudes;
+- los datos existentes no cambian.
+
+**API** (`modules/material-requests`).
+- `GET /material-requests/workers?sourceLocationId` da los bodegueros de esa
+  bodega y a quién le toca. El turno se calcula con la última solicitud de la
+  misma bodega, con un bloqueo de asesoría para que dos envíos simultáneos no
+  le lleguen a la misma persona.
+- `POST /material-requests` crea y envía. El origen es una bodega y el
+  destino un almacén.
+  - No mueve ni reserva nada.
+  - Crea la tarea `MATERIAL_REQUEST` y el push `material-request-assigned`.
+  - Es idempotente con `operationKey`.
+- Lista y detalle con alcance por rol: ADMIN todo; SALES las propias;
+  WAREHOUSE las que prepara o recibe y las de su ubicación. El detalle trae
+  solicitado / preparado / despachado / pendiente por renglón, sugerencias de
+  paquetes libres (sueltos primero) y permisos.
+- `POST :id/picks` (bodeguero asignado o ADMIN):
+  - por chip, o sueltos de un paquete abierto por id;
+  - valida con `matchBundle`;
+  - rechaza paquetes con reservas;
+  - reserva el paquete **completo**;
+  - lo preparado puede superar lo pedido, y se avisa cuánto sobra.
+  `POST :id/picks/:pickId/remove` libera la reserva.
+- `POST :id/ship` (idempotente):
+  - verifica cantidad, ubicación y reserva de cada paquete;
+  - consume las reservas;
+  - registra TRANSFER y OPENING con `materialRequestId`;
+  - completa la tarea de preparación;
+  - crea la tarea `MATERIAL_RECEPTION` para el personal del almacén, por
+    turnos (o para quien la pidió si no hay personal);
+  - envía push a quien recibe y a quien la pidió.
+- `POST :id/receive` (personal del almacén o ADMIN; nota opcional) completa
+  la tarea y avisa a quien la pidió.
+- `POST :id/assignee` y `POST :id/cancel`: solo quien la creó o ADMIN, antes
+  de la salida. Cancelar libera las reservas y cancela la tarea.
+- Las tareas de estos tipos no se cierran con la ruta genérica (409).
+
+**Web.**
+- Menú «Solicitudes a bodega» y mosaico «Solicitudes» en Inicio (para
+  celular).
+- `MaterialRequestsView`: pestañas por estado.
+- `MaterialRequestView`:
+  - crear: bodega y almacén preseleccionados cuando hay uno, bodeguero por
+    turno («(turno)») cambiable, fecha límite, renglones con catálogo, origen,
+    proveedor opcional y disponibilidad en la bodega;
+  - detalle: preparar por chip o «Tomar sueltos», quitar, confirmar salida,
+    recibir con novedades, cambiar responsable y cancelar.
+- `TaskCard` con «Preparar solicitud» y «Revisar y marcar recibido».
+- Textos push en `sw.ts`.
+
+**Pruebas.**
+- Nueva `material-requests.e2e-spec.ts` (7 pruebas):
+  - turnos e idempotencia;
+  - validaciones y alcance;
+  - cambio de responsable;
+  - preparación (origen, material, inexistente, repetido, excedente,
+    reservado, sueltos, quitar);
+  - salida concurrente con la misma clave: un solo TRANSFER y OPENING por
+    paquete, reservas consumidas, `ledgerProblems` vacío, tareas y push;
+  - recepción;
+  - cancelación y el CHECK de reservas.
+- Crea su paquete de China con su lote directamente, sin tocar el ajuste
+  global del proveedor de China, que revisa la suite `sales-dispatch` en
+  paralelo.
+- API: unitarias 45/45, e2e 213/213 (26 suites) y `oxlint`. Web: `tsc`,
+  `oxlint`, `pnpm test` y build.
+- Navegador (BD de pruebas, `seed11` con limpieza ampliada):
+  - SM-000007 de 50 perfiles, sin chips, asignada por turno;
+  - el bodeguero rechazó un chip de China, no sumó la lectura repetida y
+    preparó 60 de 50;
+  - doble clic al confirmar → un solo TRANSFER y OPENING por paquete;
+  - la cotera recibió la tarea y la marcó recibida con nota;
+  - a 375 px sin desbordes.
+- Un intento intermedio de la prueba creó el ajuste global del proveedor de
+  China. Al limpiar, quedaron restos de una ejecución fallida de
+  `sales-dispatch` (sufijo `855BB9D1`). Se borraron solo sus dos filas de
+  `settings`; sus demás registros siguen en la BD de pruebas.
+
+**Pendiente.** Aplicar las migraciones `20261117120000` y `20261117130000` en
+desarrollo y en el servidor (`prisma migrate deploy`).
+
 **Pendientes de QA (no corregidos).**
 - Contraseñas solo con regla de longitud; no hay cambio de contraseña.
 - Avisos viejos que no se limpian.

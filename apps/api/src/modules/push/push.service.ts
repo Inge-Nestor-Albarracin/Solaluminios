@@ -45,9 +45,17 @@ const MESSAGES: Record<PushKind, PushMessageOptions> = {
   'dispatch-confirmed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'dispatch-confirmed' },
   'dispatch-overdue': { ttlSeconds: 12 * 3600, urgency: 'normal', topic: 'dispatch-overdue' },
   'discount-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-requested' },
+  'discount-approved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-resolved' },
+  'discount-rejected': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-resolved' },
   'discount-resolved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'discount-resolved' },
   'price-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-requested' },
+  'price-approved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-resolved' },
+  'price-rejected': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-resolved' },
   'price-resolved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'price-resolved' },
+  'material-request-assigned': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-assigned' },
+  'material-request-shipped': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-shipped' },
+  'material-request-received': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-received' },
+  'material-request-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-cancelled' },
 };
 
 export interface DeliveryReport {

@@ -55,9 +55,17 @@ const MESSAGES: Record<string, { body: string; view: View }> = {
   'dispatch-confirmed': { body: 'Se confirmó la salida de un despacho de tu orden.', view: 'sales' },
   'dispatch-overdue': { body: 'Un despacho está atrasado. Revísalo en la aplicación.', view: 'dispatches' },
   'discount-requested': { body: 'Te pidieron autorizar un descuento. Revísalo en Tareas.', view: 'tasks' },
+  'discount-approved': { body: 'Aprobaron tu solicitud de descuento. Revisa la cotización en Ventas.', view: 'sales' },
+  'discount-rejected': { body: 'Rechazaron tu solicitud de descuento. Revisa la cotización en Ventas.', view: 'sales' },
   'discount-resolved': { body: 'Respondieron tu solicitud de descuento. Revisa la cotización.', view: 'sales' },
   'price-requested': { body: 'Te pidieron autorizar un precio manual. Revísalo en Tareas.', view: 'tasks' },
+  'price-approved': { body: 'Aprobaron tu precio manual. Revisa la cotización en Ventas.', view: 'sales' },
+  'price-rejected': { body: 'Rechazaron tu precio manual. Revisa la cotización en Ventas.', view: 'sales' },
   'price-resolved': { body: 'Respondieron tu solicitud de precio manual. Revisa la cotización.', view: 'sales' },
+  'material-request-assigned': { body: 'Tienes una solicitud de materiales por preparar. Ábrela en Tareas.', view: 'tasks' },
+  'material-request-shipped': { body: 'Salió de bodega una solicitud de materiales. Revísala en Tareas.', view: 'tasks' },
+  'material-request-received': { body: 'El almacén recibió una solicitud de materiales.', view: 'home' },
+  'material-request-cancelled': { body: 'Se canceló una solicitud de materiales que tenías asignada.', view: 'tasks' },
 }
 const FALLBACK = { body: 'Tienes un aviso nuevo en Solualuminios.', view: 'home' as View }
 const ALLOWED_VIEWS = new Set<View>(['home', 'tasks', 'sales', 'dispatches'])

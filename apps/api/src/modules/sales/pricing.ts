@@ -67,13 +67,26 @@ export function withGlobalDiscount(
 }
 
 // Document totals: total = subtotal − line discounts − global discount + VAT
-// = Σ line totals.
-export function documentTotals(lines: LineAmounts[]) {
+// = Σ line totals, plus the services of a «Ventanería» sale (assembly and
+// installation: no VAT and no discount, so they are simply added).
+export function documentTotals(lines: LineAmounts[], services: Services) {
   return {
     subtotal: sum(lines.map((line) => line.lineSubtotal)),
     discountTotal: sum(lines.map((line) => line.discountAmount)),
     globalDiscountAmount: sum(lines.map((line) => line.globalDiscountAmount)),
     taxTotal: sum(lines.map((line) => line.taxAmount)),
-    total: sum(lines.map((line) => line.lineTotal)),
+    total: sum([...lines.map((line) => line.lineTotal), servicesTotal(services)]),
   };
+}
+
+// Assembly and installation of a «Ventanería» sale (0 in «Detal»).
+export interface Services {
+  assemblyAmount: string | number | Decimal;
+  installationAmount: string | number | Decimal;
+}
+
+export const NO_SERVICES: Services = { assemblyAmount: ZERO, installationAmount: ZERO };
+
+export function servicesTotal(services: Services): Decimal {
+  return money(new Decimal(services.assemblyAmount).plus(services.installationAmount));
 }

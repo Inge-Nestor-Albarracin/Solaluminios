@@ -42,6 +42,9 @@ export interface SalesPdfData {
   globalDiscountPercent?: Amount;
   globalDiscountAmount?: Amount;
   taxTotal: Amount;
+  // «Ventanería»: assembly and installation (no VAT, no discount), shown apart
+  // from the materials. null / both 0: a materials-only document.
+  services?: { assembly: Amount; installation: Amount } | null;
   total: Amount;
   notes: string | null;
 }
@@ -175,9 +178,32 @@ export function renderSalesPdf(data: SalesPdfData): Promise<Buffer> {
     doc.moveTo(LEFT, y).lineTo(LEFT + WIDTH, y).lineWidth(0.4).strokeColor(RULE).stroke();
   });
 
+  // --- Services («Ventanería») ----------------------------------------------------
+  const positive = (value: Amount | undefined) => value !== undefined && Number(value.toString()) > 0;
+  const services = data.services && (positive(data.services.assembly) || positive(data.services.installation)) ? data.services : null;
+  if (services) {
+    const rows: [string, Amount][] = [
+      ...(positive(services.assembly) ? [['Ensamble de la ventana en taller', services.assembly] as [string, Amount]] : []),
+      ...(positive(services.installation) ? [['Instalación', services.installation] as [string, Amount]] : []),
+    ];
+    if (y + 30 + rows.length * 18 > BOTTOM) {
+      doc.addPage();
+      y = 40;
+    }
+    y += 10;
+    doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8).text('SERVICIOS DE VENTANERÍA (SIN IVA, SIN DESCUENTO)', LEFT, y, { width: WIDTH });
+    y += 13;
+    for (const [label, value] of rows) {
+      doc.fillColor(INK).font('Helvetica').fontSize(9).text(label, LEFT + 4, y + 4, { width: WIDTH - 120 });
+      doc.text(money(value), LEFT + WIDTH - 110, y + 4, { width: 106, align: 'right' });
+      y += 18;
+      doc.moveTo(LEFT, y).lineTo(LEFT + WIDTH, y).lineWidth(0.4).strokeColor(RULE).stroke();
+    }
+  }
+
   // --- Totals ------------------------------------------------------------------
   const global = data.globalDiscountAmount && Number(data.globalDiscountAmount.toString()) > 0 ? data.globalDiscountAmount : null;
-  if (y + (global ? 128 : 96) > BOTTOM) {
+  if (y + (global ? 128 : 96) + (services ? 32 : 0) > BOTTOM) {
     doc.addPage();
     y = 40;
   }
@@ -189,10 +215,12 @@ export function renderSalesPdf(data: SalesPdfData): Promise<Buffer> {
   }
   y += 12;
   const totals: [string, string][] = [
-    ['Subtotal sin IVA', money(data.subtotal)],
+    [services ? 'Materiales sin IVA' : 'Subtotal sin IVA', money(data.subtotal)],
     [global ? 'Descuentos por renglón' : 'Descuentos', money(data.discountTotal)],
     ...(global ? [[`Descuento global (${percent(data.globalDiscountPercent ?? 0)})`, `− ${money(global)}`] as [string, string]] : []),
-    ['IVA', money(data.taxTotal)],
+    [services ? 'IVA de materiales' : 'IVA', money(data.taxTotal)],
+    ...(services && positive(services.assembly) ? [['Ensamble (sin IVA)', money(services.assembly)] as [string, string]] : []),
+    ...(services && positive(services.installation) ? [['Instalación (sin IVA)', money(services.installation)] as [string, string]] : []),
   ];
   const labelX = LEFT + WIDTH - 230;
   doc.font('Helvetica').fontSize(9.5);

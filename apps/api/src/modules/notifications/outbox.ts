@@ -10,12 +10,23 @@ export type NotificationKind =
   | 'dispatch-incident'
   | 'dispatch-confirmed'
   | 'dispatch-overdue'
-  // Global discount of a quote: to the chosen administrator / to the seller.
+  // Global discount of a quote: to the chosen administrator / to the seller
+  // (approved or rejected; «resolved» only for notices queued before).
   | 'discount-requested'
+  | 'discount-approved'
+  | 'discount-rejected'
   | 'discount-resolved'
   // Manual prices of a quote: to the chosen administrator / to the seller.
   | 'price-requested'
-  | 'price-resolved';
+  | 'price-approved'
+  | 'price-rejected'
+  | 'price-resolved'
+  // Material requests: to the worker who prepares it / the store and the
+  // requester when it leaves / the requester when it arrives / the worker.
+  | 'material-request-assigned'
+  | 'material-request-shipped'
+  | 'material-request-received'
+  | 'material-request-cancelled';
 
 export interface OutboxItem {
   userId: string;

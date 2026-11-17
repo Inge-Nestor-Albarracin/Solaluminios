@@ -42,6 +42,7 @@ import type {
 } from './dto/sales.dto.js';
 import {
   GLOBAL_DISCOUNT_MIN,
+  NO_SERVICES,
   SELLER_GLOBAL_DISCOUNT_LIMIT,
   SELLER_LINE_DISCOUNT_LIMIT,
   documentTotals,
@@ -205,6 +206,19 @@ const ORDER_STATUS = {
 // Quotes never reserve stock. Confirming an order reserves the full
 // quantities of every line or nothing (shortages are reported and the order
 // waits for supply); a partial delivery needs an explicit partial dispatch.
+// Kind of sale and services of a quote being saved. «Detal» never carries
+// labour: amounts sent with it are refused, not silently dropped, so nothing
+// is charged that the screen does not show.
+function saleOf(dto: SaveQuoteDto) {
+  const saleType = dto.saleType ?? 'RETAIL';
+  const assemblyAmount = new Decimal(dto.assemblyAmount ?? '0');
+  const installationAmount = new Decimal(dto.installationAmount ?? '0');
+  if (saleType === 'RETAIL' && (assemblyAmount.greaterThan(0) || installationAmount.greaterThan(0))) {
+    throw new BadRequestException('En Detal no se cobran ensamble ni instalación: cambia la modalidad a Ventanería o deja esos valores en 0');
+  }
+  return { saleType, assemblyAmount, installationAmount };
+}
+
 @Injectable()
 export class SalesService {
   constructor(
@@ -346,7 +360,7 @@ export class SalesService {
     const discountRequests = quote.discountRequests.map((request) => ({
       ...request,
       projected:
-        request.status === 'PENDING' && request.requestedPercent ? documentTotals(withGlobalDiscount(quote.lines, request.requestedPercent)) : null,
+        request.status === 'PENDING' && request.requestedPercent ? documentTotals(withGlobalDiscount(quote.lines, request.requestedPercent), quote) : null,
     }));
     // Manual lines (and whether their price is authorised) for every role.
     const lines = quote.lines.map((line) => ({ ...line, manualPrice: line.pricingMethod === 'MANUAL' }));
@@ -409,8 +423,9 @@ export class SalesService {
           customerName: customer.name,
           validUntil: dto.validUntil ? new Date(`${dto.validUntil}T00:00:00.000Z`) : null,
           notes: dto.notes || null,
-          paymentMethod: dto.paymentMethod,
+          paymentMethod: dto.paymentMethod ?? null,
           paymentTerms: dto.paymentTerms || null,
+          ...saleOf(dto),
           createdById: user.id,
         },
       });
@@ -438,8 +453,9 @@ export class SalesService {
           customerName: customer.name,
           validUntil: dto.validUntil ? new Date(`${dto.validUntil}T00:00:00.000Z`) : null,
           notes: dto.notes || null,
-          paymentMethod: dto.paymentMethod,
+          paymentMethod: dto.paymentMethod ?? null,
           paymentTerms: dto.paymentTerms || null,
+          ...saleOf(dto),
         },
       });
       const lost = await this.writeQuoteLines(tx, id, dto.lines, globalDiscount, user, previous);
@@ -625,7 +641,7 @@ export class SalesService {
     // The global discount needs every line: it is split over them by base.
     const amounts = withGlobalDiscount(bases, globalDiscountPercent);
     for (const [index, row] of rows.entries()) await tx.quoteLine.create({ data: { ...row, ...amounts[index] } });
-    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts), globalDiscountPercent } });
+    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts, await this.servicesOf(tx, quoteId)), globalDiscountPercent } });
     if (appliedByAdmin.length > 0) {
       const applied = await tx.quoteLine.findMany({ where: { quoteId, lineNo: { in: appliedByAdmin } }, orderBy: { lineNo: 'asc' } });
       await audit(tx, { entity: 'Quote', entityId: quoteId, action: 'MANUAL_PRICE_APPLIED', userId: user.id, data: { lines: applied.map(describeManual) } });
@@ -648,7 +664,7 @@ export class SalesService {
       quote.globalDiscountPercent,
     );
     for (const [index, line] of lines.entries()) await tx.quoteLine.update({ where: { id: line.id }, data: amounts[index] });
-    await tx.quote.update({ where: { id: quoteId }, data: documentTotals(amounts) });
+    await tx.quote.update({ where: { id: quoteId }, data: documentTotals(amounts, await this.servicesOf(tx, quoteId)) });
   }
 
   // Applies a global discount to the saved lines (prices and line discounts
@@ -660,7 +676,12 @@ export class SalesService {
       const { globalDiscountAmount, taxAmount, lineTotal } = amounts[index];
       await tx.quoteLine.update({ where: { id: line.id }, data: { globalDiscountAmount, taxAmount, lineTotal } });
     }
-    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts), globalDiscountPercent } });
+    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts, await this.servicesOf(tx, quoteId)), globalDiscountPercent } });
+  }
+
+  // Assembly and installation saved in the quote (added to its total).
+  private async servicesOf(tx: Tx, quoteId: string) {
+    return (await tx.quote.findUnique({ where: { id: quoteId }, select: { assemblyAmount: true, installationAmount: true } })) ?? NO_SERVICES;
   }
 
   // --- Global discount requests -------------------------------------------------
@@ -668,6 +689,46 @@ export class SalesService {
   // Administrators a seller may ask (active ADMIN users).
   discountApprovers() {
     return this.prisma.user.findMany({ where: { role: 'ADMIN', active: true }, select: { id: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] });
+  }
+
+  // In-app notice of the sales menu: the answers to the session user's own
+  // requests (approved or rejected) it has not seen yet, newest first. It
+  // works without push notifications enabled on the device.
+  async requestUpdates(user: SafeUser) {
+    const where: Prisma.QuoteDiscountRequestWhereInput = {
+      requestedById: user.id,
+      status: { in: ['APPROVED', 'REJECTED'] },
+      requesterSeenAt: null,
+    };
+    const [count, items] = await Promise.all([
+      this.prisma.quoteDiscountRequest.count({ where }),
+      this.prisma.quoteDiscountRequest.findMany({
+        where,
+        orderBy: [{ resolvedAt: 'desc' }, { id: 'desc' }],
+        take: 20,
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          requestedPercent: true,
+          resolution: true,
+          resolvedAt: true,
+          approver: { select: { id: true, name: true } },
+          quote: { select: { id: true, number: true, customerName: true } },
+        },
+      }),
+    ]);
+    return { count, items };
+  }
+
+  // The seller opened the quote: its answered requests are seen. Only its
+  // own requests; repeating it changes nothing.
+  async markRequestUpdatesSeen(quoteId: string, user: SafeUser) {
+    const { count } = await this.prisma.quoteDiscountRequest.updateMany({
+      where: { quoteId, requestedById: user.id, status: { in: ['APPROVED', 'REJECTED'] }, requesterSeenAt: null },
+      data: { requesterSeenAt: new Date() },
+    });
+    return { seen: count };
   }
 
   // SALES asks the administrator it chooses for a global discount above its
@@ -745,7 +806,8 @@ export class SalesService {
       if (locked.status !== 'DRAFT') throw new ConflictException('La cotización ya no está vigente');
       await this.closeRequest(tx, request, decision, decision === 'REJECTED' ? resolution || null : null, user);
       if (decision === 'APPROVED') await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent!);
-      await enqueue(tx, [{ userId: request.requestedById, kind: 'discount-resolved', dedupeKey: `discount-resolved:${request.id}` }]);
+      const kind = decision === 'APPROVED' ? 'discount-approved' : 'discount-rejected';
+      await enqueue(tx, [{ userId: request.requestedById, kind, dedupeKey: `${kind}:${request.id}` }]);
     });
     return this.getQuote(quoteId, user);
   }
@@ -949,7 +1011,8 @@ export class SalesService {
           corrected: corrections.size > 0,
         });
       }
-      await enqueue(tx, [{ userId: request.requestedById, kind: 'price-resolved', dedupeKey: `price-resolved:${request.id}` }]);
+      const kind = decision === 'APPROVED' ? 'price-approved' : 'price-rejected';
+      await enqueue(tx, [{ userId: request.requestedById, kind, dedupeKey: `${kind}:${request.id}` }]);
     });
     return this.getQuote(quoteId, user);
   }
@@ -988,8 +1051,16 @@ export class SalesService {
         if (quote.lines.some((line) => line.pricingMethod === 'MANUAL' && !line.manualApprovedById)) {
           throw new ConflictException('La cotización tiene precios manuales sin autorizar: envía la solicitud a un administrador antes de convertir');
         }
-        // Quotes saved before the payment method existed must choose one first.
-        if (!quote.paymentMethod) throw new ConflictException('Indica la forma de pago y guarda la cotización antes de convertirla en orden');
+        // The payment method is agreed when the customer buys: sent with the
+        // conversion, or the one saved in the quote. It stays in the quote too.
+        const paymentMethod = dto.paymentMethod ?? quote.paymentMethod;
+        if (!paymentMethod) {
+          throw new BadRequestException('Elige la forma de pago para convertir la cotización en orden de venta');
+        }
+        const paymentTerms = dto.paymentTerms !== undefined ? dto.paymentTerms || null : quote.paymentTerms;
+        if (paymentMethod !== quote.paymentMethod || paymentTerms !== quote.paymentTerms) {
+          await tx.quote.update({ where: { id }, data: { paymentMethod, paymentTerms } });
+        }
         const order = await tx.salesOrder.create({
           data: {
             number: await nextNumber(tx, 'sales_order_number_seq', 'OV'),
@@ -1002,12 +1073,17 @@ export class SalesService {
             globalDiscountPercent: quote.globalDiscountPercent,
             globalDiscountAmount: quote.globalDiscountAmount,
             taxTotal: quote.taxTotal,
+            // Services travel with the order; they are not lines, so they
+            // are never reserved nor dispatched.
+            saleType: quote.saleType,
+            assemblyAmount: quote.assemblyAmount,
+            installationAmount: quote.installationAmount,
             total: quote.total,
             notes: quote.notes,
-            paymentMethod: quote.paymentMethod,
-            paymentTerms: quote.paymentTerms,
+            paymentMethod,
+            paymentTerms,
             // Abono / credit: pending until someone records the payment.
-            paymentStatus: COLLECTED_LATER.includes(quote.paymentMethod) ? 'PENDING' : null,
+            paymentStatus: COLLECTED_LATER.includes(paymentMethod) ? 'PENDING' : null,
             convertOperationKey: dto.operationKey,
             // The seller of the quote keeps owning the order; who converted it is recorded.
             createdById: quote.createdById,
@@ -1048,7 +1124,7 @@ export class SalesService {
           entityId: id,
           action: 'CONVERTED',
           userId: user.id,
-          data: { orderId: order.id, orderNumber: order.number, ...(manual.length > 0 ? { manualPrices: manual.map(describeManual) } : {}) },
+          data: { orderId: order.id, orderNumber: order.number, paymentMethod, ...(manual.length > 0 ? { manualPrices: manual.map(describeManual) } : {}) },
         });
         return order.id;
       });
@@ -1329,6 +1405,7 @@ export class SalesService {
       globalDiscountPercent: quote.globalDiscountPercent,
       globalDiscountAmount: quote.globalDiscountAmount,
       taxTotal: quote.taxTotal,
+      services: { assembly: quote.assemblyAmount, installation: quote.installationAmount },
       total: quote.total,
       notes: quote.notes,
     });
@@ -1353,6 +1430,7 @@ export class SalesService {
       globalDiscountPercent: order.globalDiscountPercent,
       globalDiscountAmount: order.globalDiscountAmount,
       taxTotal: order.taxTotal,
+      services: { assembly: order.assemblyAmount, installation: order.installationAmount },
       total: order.total,
       notes: order.notes,
     });

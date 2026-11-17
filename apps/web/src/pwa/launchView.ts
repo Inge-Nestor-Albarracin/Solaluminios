@@ -3,7 +3,7 @@ import type { View } from '../views/navigation'
 // Views that a URL (?view=…, manifest shortcuts, a reload) or a notification
 // may open. Anything else is ignored; the role checks of each view and of the
 // API still apply after login.
-export type LaunchView = Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch'>
+export type LaunchView = Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch' | 'request' | 'requests'>
 
 const ALLOWED = new Set<LaunchView>(['home', 'register', 'lookup', 'bulk', 'bundles', 'summary', 'tasks', 'admin', 'receive', 'sales', 'dispatches'])
 

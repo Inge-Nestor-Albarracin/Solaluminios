@@ -12,11 +12,12 @@ import { PushModule } from './modules/push/push.module.js';
 import { SupplyModule } from './modules/supply/supply.module.js';
 import { SalesModule } from './modules/sales/sales.module.js';
 import { DispatchModule } from './modules/dispatch/dispatch.module.js';
+import { MaterialRequestsModule } from './modules/material-requests/material-requests.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { ReadersModule } from './modules/readers/readers.js';
 
 @Module({
-  imports: [DatabaseModule,AuthModule,CatalogModule,LocationsModule,UsersModule,InventoryModule,TasksModule,PushModule,SupplyModule,SalesModule,DispatchModule,NotificationsModule,ReadersModule,],
+  imports: [DatabaseModule,AuthModule,CatalogModule,LocationsModule,UsersModule,InventoryModule,TasksModule,PushModule,SupplyModule,SalesModule,DispatchModule,MaterialRequestsModule,NotificationsModule,ReadersModule,],
   controllers: [AppController],
   providers: [AppService],
   
