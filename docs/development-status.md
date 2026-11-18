@@ -2562,6 +2562,253 @@ desarrollo y en el servidor (`prisma migrate deploy`).
 - El resumen no separa los sueltos por origen. Las reservas y despachos sí
   los separan.
 
+## Exportación a Excel de ventas para comisiones (17/11/2026)
+
+**Decisiones del usuario.** Solo el administrador exporta. La comisión la
+calculan ellos; el archivo trae la base. La segunda hoja trae el detalle de
+cada renglón. Las órdenes canceladas se incluyen, marcadas en rojo.
+
+**API.**
+- `GET /sales-orders/export` (`@Roles('ADMIN')`, declarada antes de
+  `sales-orders/:id`) acepta los mismos filtros que la lista y el resumen
+  (`OrderListQueryDto`: vendedor, desde, hasta, pago, estado) y devuelve un
+  `.xlsx` con nombre `ventas[_vendedor]_<desde|inicio>_a_<hasta|hoy>.xlsx`.
+- `sales-export.ts` genera el libro con ExcelJS 4.4.0 (nueva dependencia del
+  API, versión fija):
+  - «Órdenes»: una fila por orden con vendedor, quién la convirtió, cliente y
+    NIT, modalidad, forma y estado de pago, estado de la orden, cotización,
+    materiales antes de descuentos, descuentos, **base de comisión** (sin IVA,
+    sin ensamble ni instalación), IVA, ensamble, instalación, total y motivo
+    de cancelación;
+  - «Renglones»: una fila por renglón con referencia, color, origen,
+    proveedor, cantidad, precio (y si fue manual), descuentos, base, IVA y
+    total;
+  - «Resumen»: filtros usados, quién generó el archivo y los totales por
+    vendedor de `ordersSummary` (sin canceladas, salvo filtro «Cancelada»);
+  - montos como celdas numéricas con formato de pesos; fechas a la hora de
+    Bogotá; encabezado fijo con autofiltro; canceladas con fondo rojo en
+    «Órdenes» y «Renglones».
+- Tope de 10.000 órdenes por archivo: por encima responde 400 pidiendo acotar
+  fechas.
+- CORS expone `Content-Disposition` para que la web lea el nombre del archivo
+  (también aplica al PDF).
+
+**Web.** Ventas → Órdenes (administrador): botón «Exportar a Excel» bajo los
+filtros. `DownloadPdfButton.tsx` ahora exporta un `DownloadButton` genérico.
+
+**Pruebas.**
+- `sales-export.spec.ts` (6): hojas y orden, montos numéricos, hora de
+  Bogotá, rojo solo en canceladas, texto con «=» queda como texto, resumen.
+- `sales-commissions.e2e-spec.ts`: exportación filtrada por vendedor y día,
+  cancelada en rojo, renglones, resumen, 400 por fechas invertidas y 403 para
+  SALES.
+- API: unitarias 51/51, e2e 214/214 (26 suites), `oxlint` y build. Web:
+  `tsc`, `oxlint`, `pnpm test` y build.
+- Navegador (BD de pruebas, administrador temporal creado y borrado): descarga
+  sin filtros (12 órdenes, 6 canceladas en rojo) y con filtro de vendedor; a
+  375 px sin desbordes.
+- `pnpm audit`: ExcelJS solo añade un aviso moderado de `uuid@8` (funciones
+  v3/v5/v6 con buffer, que ExcelJS no usa).
+
+## Catálogo de accesorios (17/11/2026)
+
+**Decisiones del usuario.** Dos familias, «Accesorios» y «Accesorios Yale».
+El código de cada accesorio es interno e inventado; en pantalla se ve el
+código del proveedor o, si no tiene, solo la descripción. Se guarda la marca.
+Alcance: **solo catálogo**. Venderlos o inventariarlos queda pendiente de
+definir color y unidad (unidad, metro o rollo).
+
+**Cambio de alcance explícito.** AGENTS.md describe la referencia como perfil.
+Los accesorios entran como referencias de familias de tipo `ACCESSORY` y no
+participan en operaciones. No se añadió Product, SKU ni unidad.
+
+**Migración `20261117140000_accessory_catalog`** (aditiva; aplicada en la BD
+local de desarrollo el 17/11/2026):
+- enum `ProductKind` (`PROFILE`, `ACCESSORY`);
+- `product_families.kind`, por defecto `PROFILE`, así que las familias
+  existentes no cambian;
+- `references.supplierCode` (puede repetirse; conserva ceros iniciales) y
+  `references.brand`.
+
+**API.**
+- `catalog-kind.ts`: `withFamilyKind`, `isAccessory` y el mensaje común.
+- Rechazan referencias de accesorios (400): registro de paquetes, prerregistro
+  de China, lotes de apertura, compras, cotizaciones y solicitudes de
+  materiales.
+- Catálogo:
+  - la búsqueda incluye código de proveedor y marca;
+  - las referencias aceptan `supplierCode` y `brand` al crear y editar;
+  - las familias aceptan `kind` al crearse; no se cambia después.
+- Importador: columnas opcionales `familyKind,supplierCode,brand`. Un valor
+  vacío no borra nada. Un código de proveedor o una marca distintos son
+  conflicto, y el tipo de una familia existente solo cambia con `--overwrite`.
+
+**Datos.**
+- `prisma/data/catalog-accessories.csv`, generado del libro
+  `Catalogo_Accesorios_Solualuminios.xlsx`:
+  - 100 en ACCESORIOS (`ACC-001`…`ACC-100`) y 28 en ACCESORIOS-YALE
+    (`YALE-001`…`YALE-028`), en el orden del libro;
+  - 61 sin código de proveedor.
+- Cargado en la BD local con
+  `pnpm catalog:import --file prisma/data/catalog-accessories.csv --apply`.
+  Una segunda corrida da 0 cambios.
+- Notas del libro conservadas tal cual:
+  - UA-138 y UA138 están por validar;
+  - las filas 91 y 97 se consolidaron;
+  - hay erratas de origen, como «DUMI SENCIILA» y «NAYLON».
+
+**Web.**
+- `CatalogSelectors` no ofrece familias ni referencias de accesorios, así que
+  quedan fuera de todos los selectores operativos.
+- Administración → Familias: columna Tipo y tipo al crear.
+- Administración → Referencias: código del proveedor o «Sin código», con el
+  código interno en pequeño; marca junto a la descripción; edición del código
+  de proveedor y la marca; búsqueda por esos campos.
+- `referenceLabel(ref, accessory)` arma la etiqueta sin el código interno.
+
+**Pruebas.**
+- `catalog-accessories.e2e-spec.ts` (6): archivo real válido; importación
+  idempotente; conflictos y tipo; búsqueda; rechazo en paquetes y
+  cotizaciones; creación de familia y edición.
+- API: unitarias 51/51, e2e 220/220 (27 suites), `oxlint` y build. Web:
+  `tsc`, `oxlint` y build.
+- Navegador sobre la BD local (API aparte en el puerto 3101): Referencias
+  muestra «S38312F · BISAGRA REVERSIBLE · PRODUCTOS EUROPEOS» y «Sin código ·
+  BRAZOS DE 8"». Los filtros de Paquetes no ofrecen accesorios.
+
+**Pendiente.**
+- En el servidor: `prisma migrate deploy` y la importación del CSV.
+- Para venderlos: color (o «sin color»), unidad (unidad, metro o rollo) y
+  cómo se muestran en cotizaciones y PDF.
+
+## Rol Facturación (18/11/2026)
+
+**Decisiones del usuario.**
+- La factura electrónica se hace en otro software; la app solo centraliza la
+  información.
+- El vendedor marca «Requiere facturación» al convertir la cotización o
+  después en la orden.
+- Hay una sola persona de facturación.
+- Al marcarla, el cliente necesita NIT o cédula y correo.
+- El número de factura es obligatorio al marcar la orden como facturada.
+
+**Migración `20261118120000_order_billing`** (aditiva; aplicada en la BD local
+de desarrollo el 18/11/2026):
+- `UserRole.BILLING` y `TaskKind.BILLING`;
+- en `sales_orders`: `requiresBilling`, `billingRequestedAt`, `invoiceNumber`,
+  `billedAt` y `billedById`, más un índice por `(requiresBilling, billedAt)`;
+- `tasks.salesOrderId`, único por `(salesOrderId, kind)`;
+- CHECK `tasks_sales_order_link` y `sales_orders_billing_valid`. La factura
+  solo existe si se requiere, y número, fecha y autor van juntos.
+
+**API.**
+- `RolesGuard`: BILLING, como CHINA_OPERATOR, solo entra a rutas que lo
+  nombran. Se añadieron roles explícitos a las lecturas de tareas y a
+  `push/config`. No ve inventario, cotizaciones, resumen ni usuarios.
+- Rutas:
+  - `GET /sales-orders`, `/:id` y `/:id/pdf` admiten BILLING, que solo ve
+    las órdenes con `requiresBilling`;
+  - filtro `billing=PENDING|BILLED`;
+  - `PATCH /sales-orders/:id/billing {required}` (ADMIN, SALES dueño);
+  - `POST /sales-orders/:id/invoice {invoiceNumber}` (ADMIN, BILLING):
+    completa la tarea y avisa al vendedor;
+  - `PATCH /customers/:id/billing-data {taxId, email}`: solo esos dos campos.
+- `ConvertQuoteDto.requiresBilling`. Sin NIT y correo del cliente responde
+  400 y no crea la orden.
+- Asignación de la tarea:
+  - al único usuario activo de facturación;
+  - si hay varios, por turno;
+  - si no hay ninguno, al administrador activo más antiguo, con una nota en
+    la tarea.
+- Desmarcar antes de facturar cancela la tarea y avisa a facturación. Volver
+  a marcar reabre la misma tarea. No se desmarca una orden ya facturada (409).
+- Cancelar la orden:
+  - sin factura, cancela la tarea;
+  - ya facturada, crea una tarea GENERAL «Anular factura …» para facturación,
+    con aviso.
+- El mismo número de factura dos veces no cambia nada; uno distinto da 409.
+- Avisos: `billing-requested`, `billing-cancelled`, `billing-void-needed` y
+  `order-billed`.
+- El Excel de comisiones suma las columnas «Requiere facturación», «N° de
+  factura» (o «Pendiente») y «Facturada el».
+
+**Web.**
+- Rol «Facturación» con menú propio (Inicio, Facturación y Tareas) y vista
+  `BillingView`, con las pestañas «Por facturar» y «Facturadas».
+- Orden:
+  - tarjeta «Facturación electrónica», con la casilla «Requiere facturación»
+    para el vendedor o el administrador y el registro del número de factura
+    para facturación;
+  - si faltan datos del cliente, los pide ahí mismo;
+  - facturación no ve las acciones de confirmar, despachar, cobrar ni
+    cancelar.
+- Conversión: el diálogo siempre se abre (forma de pago precargada) e incluye
+  la casilla, con NIT y correo si faltan.
+- Lista de órdenes: etiquetas «Por facturar» y «Factura FE-…».
+- Tarea BILLING: «Ver orden y facturar».
+
+**Pruebas.**
+- `order-billing.e2e-spec.ts` (5): datos del cliente obligatorios; tarea
+  asignada; alcance de facturación (403 o 404 fuera de sus órdenes); factura
+  idempotente y 409; anulación al cancelar una orden facturada; marcar,
+  desmarcar y reabrir; tareas propias.
+- `sales-export.spec.ts`: columnas de facturación (7 en total).
+- API: unitarias 52/52, e2e 225/225 (28 suites), `oxlint` y build. Web:
+  `tsc`, `oxlint`, `pnpm test` y build.
+- Navegador (BD de pruebas, `seed11` con un usuario de facturación, ya
+  limpiada):
+  - la vendedora convirtió COT-016292 con «Requiere facturación»; pidió el
+    correo y dejó el NIT precargado;
+  - facturación vio solo su menú y la tarea, descargó el PDF de OV-014439 y
+    registró FE-20931;
+  - la vendedora ve «Factura FE-20931»;
+  - a 375 px sin desbordes.
+
+**Pendiente.**
+- Crear el usuario real con rol Facturación (Administración → Usuarios).
+- En el servidor: `prisma migrate deploy`.
+
+## Disponibilidad por ubicación en la cotización (18/11/2026)
+
+**Problema.** La 177 negro pintura mostraba «Disponible China: 18 perfiles»
+a Wesales, cuya ubicación es Bodega de prueba. Los 18 estaban en Almacén 7 de
+agosto (1 paquete, lote China). `GET /sales/availability` sin
+`inventoryLocationId` sumaba todas las ubicaciones. La orden se reserva en una
+sola ubicación al confirmarla, así que el sistema no reservaba lo que no hay,
+pero la cifra de la cotización confundía. No hubo error de datos.
+
+**API.** Sin cambios en el contrato: cada grupo (origen + proveedor)
+conserva sus totales y agrega `locations` con `id`, `name`, `type`,
+`bundles`, `physical`, `reserved` y `available`. Las ubicaciones se ordenan
+de mayor a menor disponible.
+
+**Web (cotización).**
+- La cifra principal es la de la ubicación predeterminada del vendedor:
+  «Disponible China en Bodega de prueba (tu ubicación): 0 perfiles».
+- El resto aparece aparte: «En otras ubicaciones: Almacén 7 de agosto: 18».
+- **Aviso** cuando la cantidad pedida supera lo que hay en su ubicación:
+  - si hay en otras ubicaciones: se reserva en una sola; elegir la ubicación
+    al confirmar o pedir un traslado;
+  - si no hay en ninguna: la orden quedaría pendiente de abastecimiento.
+- **Sin ubicación predeterminada** (p. ej. un administrador): el total, con
+  el desglose entre paréntesis.
+- El origen desconocido se cuenta en el mismo alcance.
+
+**Archivos.** `sales/reservations.service.ts`; `web/lib/commerce.ts`
+(`locations`, `availableByLocation`); `web/views/QuoteView.tsx`; `App.css`
+(`.stock-warning`); `test/sales-dispatch.e2e-spec.ts`.
+
+**Pruebas.**
+- e2e `sales-dispatch`: 27/27. Comprueba el desglose filtrado (solo esa
+  ubicación) y sin filtro (la suma por ubicación cuadra con el grupo).
+- API: unitarias 52/52, `oxlint` y build. Web: `tsc` y `oxlint`.
+- **Navegador** (BD de desarrollo, vendedor temporal en Bodega de prueba;
+  se abrió una cotización sin guardar y el vendedor se borró por su id):
+  - 177 negro pintura: tu ubicación 0, Almacén 7 de agosto 18;
+  - con 5 perfiles aparece el aviso;
+  - sin ubicación: «18 perfiles (Almacén 7 de agosto: 18)»;
+  - a 375 px sin desbordes.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

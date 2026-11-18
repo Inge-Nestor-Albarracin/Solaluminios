@@ -18,6 +18,7 @@ import {
 } from '../../shared/db.js';
 import type { SafeUser } from '../auth/auth.types.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
+import { ACCESSORY_CATALOG_ONLY, isAccessory, withFamilyKind } from '../catalog/catalog-kind.js';
 import { bundleListInclude, requirePlace, storeOpeningReason } from '../inventory/inventory.shared.js';
 import type { CreateShipmentDto, PreRegisterDto, PreRegistrationQueryDto, ReceiveDto } from './dto/supply.dto.js';
 import { LotsService } from './lots.service.js';
@@ -120,8 +121,9 @@ export class InboundService {
           if (dto.shipmentId && shipment.id !== dto.shipmentId) {
             throw new ConflictException(`The open shipment changed (now ${shipment.code}). Reload the page; nothing was saved.`);
           }
-          const reference = await tx.reference.findUnique({ where: { id: dto.referenceId } });
+          const reference = await tx.reference.findUnique({ where: { id: dto.referenceId }, include: withFamilyKind });
           if (!reference?.active) throw new BadRequestException('Unknown or inactive reference');
+          if (isAccessory(reference)) throw new BadRequestException(`La referencia ${ACCESSORY_CATALOG_ONLY}`);
           const finish = await tx.finish.findUnique({ where: { id: dto.finishId } });
           if (!finish?.active) throw new BadRequestException('Unknown or inactive finish / color');
 

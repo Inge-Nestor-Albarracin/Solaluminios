@@ -339,6 +339,23 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
     const availability = await http().get(`/sales/availability?referenceId=${ids.r1730}&finishId=${ids.bm}&inventoryLocationId=${ids.locA}`).set(as('SALES')).expect(200);
     const summary = Object.fromEntries(availability.body.map((g: { origin: string; supplier: { code: string } | null; physical: number }) => [`${g.origin}:${g.supplier?.code ?? '-'}`, g.physical]));
     expect(summary).toEqual({ [`CHINA:CN-${S}`]: 24, [`NATIONAL:N1-${S}`]: 40, [`NATIONAL:N2-${S}`]: 15, 'UNKNOWN:-': 50 });
+    // Each provenance is broken down by location (an order reserves in one):
+    // filtered, only that location; unfiltered, the locations add up to the
+    // group and the location's share equals the filtered figure.
+    type Totals = { bundles: number; physical: number; reserved: number; available: number };
+    type Group = Totals & { origin: string; supplier: { code: string } | null; locations: (Totals & { id: string; name: string; type: string })[] };
+    const filtered = availability.body as Group[];
+    for (const group of filtered) {
+      expect(group.locations).toEqual([{ id: ids.locA, name: 'Bodega A', type: 'WAREHOUSE', bundles: group.bundles, physical: group.physical, reserved: group.reserved, available: group.available }]);
+    }
+    const everywhere = (await http().get(`/sales/availability?referenceId=${ids.r1730}&finishId=${ids.bm}`).set(as('SALES')).expect(200)).body as Group[];
+    for (const group of everywhere) {
+      for (const field of ['bundles', 'physical', 'reserved', 'available'] as const) {
+        expect(group.locations.reduce((total, location) => total + location[field], 0)).toBe(group[field]);
+      }
+      const inA = filtered.find((g) => g.origin === group.origin && g.supplier?.code === group.supplier?.code);
+      expect(group.locations.find((location) => location.id === ids.locA)).toEqual(inA?.locations[0]);
+    }
 
     // «Paquetes» filtered by provenance (other tests add bundles of this
     // material, so membership is checked, not totals).

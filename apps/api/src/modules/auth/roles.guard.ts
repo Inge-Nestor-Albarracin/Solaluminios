@@ -17,9 +17,10 @@ export class RolesGuard implements CanActivate {
     const allowed = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, targets);
     if (allowed) {
       if (allowed.includes(request.user.role)) return true;
-    } else if (request.user.role === 'CHINA_OPERATOR') {
-      // Supplier-side accounts only reach routes that name them explicitly
-      // (never inventory, costs, sales or users, not even for reading).
+    } else if (request.user.role === 'CHINA_OPERATOR' || request.user.role === 'BILLING') {
+      // Supplier-side and billing accounts only reach routes that name them
+      // explicitly (China: never inventory, costs, sales or users; billing:
+      // its tasks and the orders sent to billing), not even for reading.
       throw new ForbiddenException('No tienes permisos para esta operación');
     } else {
       // Existing catalog/location reads: authenticated users.

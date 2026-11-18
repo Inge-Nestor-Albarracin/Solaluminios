@@ -21,8 +21,10 @@ import {
   AvailabilityQueryDto,
   ConfirmOrderDto,
   ConvertQuoteDto,
+  CustomerBillingDataDto,
   CustomerQueryDto,
   DiscountRequestDto,
+  InvoiceDto,
   ListQueryDto,
   OrderListQueryDto,
   PriceRequestDto,
@@ -31,6 +33,7 @@ import {
   SalePriceQueryDto,
   SaveCustomerDto,
   SaveQuoteDto,
+  SetBillingDto,
   UpdateOrderLineDto,
   UpdatePaymentStatusDto,
 } from './dto/sales.dto.js';
@@ -73,6 +76,13 @@ export class SalesController {
   @Patch('customers/:id')
   updateCustomer(@Param('id') id: string, @Body() dto: SaveCustomerDto) {
     return this.sales.updateCustomer(id, dto);
+  }
+
+  // Only NIT / ID and e-mail (what an invoice needs); other fields unchanged.
+  @Roles('ADMIN', 'SALES')
+  @Patch('customers/:id/billing-data')
+  updateCustomerBillingData(@Param('id') id: string, @Body() dto: CustomerBillingDataDto) {
+    return this.sales.updateCustomerBillingData(id, dto);
   }
 
   @Roles('ADMIN', 'SALES', 'WAREHOUSE')
@@ -213,7 +223,8 @@ export class SalesController {
     return this.sales.cancelDiscountRequest(id, requestId, sessionUser(request), 'MANUAL_PRICE');
   }
 
-  @Roles('ADMIN', 'SALES')
+  // BILLING: only the orders sent to billing.
+  @Roles('ADMIN', 'SALES', 'BILLING')
   @Get('sales-orders')
   listOrders(@Query() query: OrderListQueryDto, @Req() request: AuthenticatedRequest) {
     return this.sales.listOrders(query, sessionUser(request));
@@ -226,13 +237,26 @@ export class SalesController {
     return this.sales.ordersSummary(query);
   }
 
-  @Roles('ADMIN', 'SALES')
+  // Excel of the filtered orders for commissions (declared before :id).
+  @Roles('ADMIN')
+  @Get('sales-orders/export')
+  async exportOrders(@Query() query: OrderListQueryDto, @Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
+    const { filename, file } = await this.sales.exportOrders(query, sessionUser(request));
+    response.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename.replace(/[^A-Za-z0-9._-]/g, '_')}"`,
+      'Cache-Control': 'no-store',
+    });
+    return new StreamableFile(file);
+  }
+
+  @Roles('ADMIN', 'SALES', 'BILLING')
   @Get('sales-orders/:id')
   getOrder(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.sales.getOrder(id, sessionUser(request));
   }
 
-  @Roles('ADMIN', 'SALES')
+  @Roles('ADMIN', 'SALES', 'BILLING')
   @Get('sales-orders/:id/pdf')
   async orderPdf(@Param('id') id: string, @Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
     return pdfResponse(response, await this.sales.orderPdf(id, sessionUser(request)));
@@ -260,6 +284,21 @@ export class SalesController {
   @Patch('sales-orders/:id/payment-status')
   setPaymentStatus(@Param('id') id: string, @Body() dto: UpdatePaymentStatusDto, @Req() request: AuthenticatedRequest) {
     return this.sales.setPaymentStatus(id, dto.status, sessionUser(request));
+  }
+
+  // The seller (own orders) or ADMIN marks whether the order needs an invoice.
+  @Roles('ADMIN', 'SALES')
+  @Patch('sales-orders/:id/billing')
+  setBilling(@Param('id') id: string, @Body() dto: SetBillingDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.setBilling(id, dto.required, sessionUser(request));
+  }
+
+  // The billing user (or ADMIN) records the invoice made in the other software.
+  @Roles('ADMIN', 'BILLING')
+  @Post('sales-orders/:id/invoice')
+  @HttpCode(HttpStatus.OK)
+  recordInvoice(@Param('id') id: string, @Body() dto: InvoiceDto, @Req() request: AuthenticatedRequest) {
+    return this.sales.recordInvoice(id, dto.invoiceNumber, sessionUser(request));
   }
 
   @Roles('ADMIN', 'SALES')

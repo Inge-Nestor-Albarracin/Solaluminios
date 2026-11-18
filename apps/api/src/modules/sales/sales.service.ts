@@ -14,6 +14,7 @@ import type {
   QuoteLine,
   QuoteRequestKind,
   QuoteStatus,
+  SalesOrder,
   SalesOrderStatus,
 } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
@@ -24,11 +25,13 @@ import { ACCENT_FOLD_FROM, ACCENT_FOLD_TO, escapeLike, foldAccents } from '../..
 import type { SafeUser } from '../auth/auth.types.js';
 import { cancelOpenDispatches } from '../dispatch/dispatch-cancel.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
+import { ACCESSORY_CATALOG_ONLY, isAccessory, withFamilyKind } from '../catalog/catalog-kind.js';
 import { enqueue } from '../notifications/outbox.js';
 import type {
   ConfirmOrderDto,
   ApprovePriceDto,
   ConvertQuoteDto,
+  CustomerBillingDataDto,
   CustomerQueryDto,
   DiscountRequestDto,
   ListQueryDto,
@@ -50,15 +53,17 @@ import {
   withGlobalDiscount,
   type LineAmounts,
 } from './pricing.js';
+import { renderSalesExport } from './sales-export.js';
 import { renderSalesPdf } from './sales-pdf.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
 
 const orderInclude = {
-  customer: { select: { id: true, name: true, taxId: true } },
+  customer: { select: { id: true, name: true, taxId: true, email: true } },
   inventoryLocation: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   convertedBy: { select: { id: true, name: true } },
   paymentStatusBy: { select: { id: true, name: true } },
+  billedBy: { select: { id: true, name: true } },
   quote: { select: { id: true, number: true } },
   lines: {
     orderBy: { lineNo: 'asc' },
@@ -99,7 +104,8 @@ export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
 // `convertedBy` and `paymentStatusBy` (SALES only sees its own documents
 // anyway). Printable documents keep the seller's name.
 function forViewer<T extends object>(document: T, user: SafeUser): T {
-  if (user.role === 'ADMIN') return document;
+  // Billing sees who sold the orders it invoices.
+  if (user.role === 'ADMIN' || user.role === 'BILLING') return document;
   const { createdBy: _createdBy, convertedBy: _convertedBy, paymentStatusBy: _paymentStatusBy, ...rest } = document as T & {
     createdBy?: unknown;
     convertedBy?: unknown;
@@ -196,6 +202,28 @@ const ORDER_STATUS = {
   CANCELLED: 'Cancelada',
 } as const;
 
+// «$ 1.234.567,89» (Colombian format) for task texts.
+const formatPesos = (value: Decimal) => {
+  const amount = Number(value.toString());
+  const decimals = Number.isInteger(amount) ? 0 : 2;
+  return `$ ${amount.toLocaleString('es-CO', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+};
+
+// Excel export of orders: above this, the admin narrows the dates.
+export const MAX_EXPORT_ORDERS = 10_000;
+const EXPORT_PAYMENT_FILTER = { PAID: 'Pagadas', PENDING: 'Pago pendiente', NONE: 'De contado' } as const;
+// Day in Bogotá (UTC-05:00, no daylight saving time) as AAAA-MM-DD.
+const bogotaDay = (date: Date) => new Date(date.getTime() - 5 * 3_600_000).toISOString().slice(0, 10);
+// ASCII file-name fragment: «José Pérez» → «jose_perez».
+const slug = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'vendedor';
+
 // Sales: customers, quotes, orders and their reservations.
 //
 // Access: ADMIN sees every document; SALES only the documents it created.
@@ -276,6 +304,13 @@ export class SalesService {
     if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException('El cliente no existe');
     await this.requireNewTaxId(dto.taxId, id);
     return this.prisma.customer.update({ where: { id }, data: this.customerData(dto) });
+  }
+
+  // Only what an invoice needs (NIT / ID and e-mail); the rest is kept.
+  async updateCustomerBillingData(id: string, dto: CustomerBillingDataDto) {
+    if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException('El cliente no existe');
+    await this.requireNewTaxId(dto.taxId, id);
+    return this.prisma.customer.update({ where: { id }, data: { taxId: dto.taxId, email: dto.email } });
   }
 
   private customerData(dto: SaveCustomerDto) {
@@ -519,8 +554,9 @@ export class SalesService {
     }
     const appliedByAdmin: number[] = [];
     for (const [index, line] of lines.entries()) {
-      const reference = await tx.reference.findUnique({ where: { id: line.referenceId } });
+      const reference = await tx.reference.findUnique({ where: { id: line.referenceId }, include: withFamilyKind });
       if (!reference?.active) throw new BadRequestException(`Renglón ${index + 1}: la referencia no existe o está inactiva`);
+      if (isAccessory(reference)) throw new BadRequestException(`Renglón ${index + 1}: la referencia ${ACCESSORY_CATALOG_ONLY}`);
       const finish = await tx.finish.findUnique({ where: { id: line.finishId } });
       if (!finish?.active) throw new BadRequestException(`Renglón ${index + 1}: el color no existe o está inactivo`);
       let supplierName: string | null = null;
@@ -1058,6 +1094,7 @@ export class SalesService {
           throw new BadRequestException('Elige la forma de pago para convertir la cotización en orden de venta');
         }
         const paymentTerms = dto.paymentTerms !== undefined ? dto.paymentTerms || null : quote.paymentTerms;
+        if (dto.requiresBilling) await this.requireBillingData(tx, quote.customerId);
         if (paymentMethod !== quote.paymentMethod || paymentTerms !== quote.paymentTerms) {
           await tx.quote.update({ where: { id }, data: { paymentMethod, paymentTerms } });
         }
@@ -1085,6 +1122,7 @@ export class SalesService {
             // Abono / credit: pending until someone records the payment.
             paymentStatus: COLLECTED_LATER.includes(paymentMethod) ? 'PENDING' : null,
             convertOperationKey: dto.operationKey,
+            ...(dto.requiresBilling ? { requiresBilling: true, billingRequestedAt: new Date() } : {}),
             // The seller of the quote keeps owning the order; who converted it is recorded.
             createdById: quote.createdById,
             convertedById: user.id,
@@ -1118,13 +1156,20 @@ export class SalesService {
           },
         });
         await tx.quote.update({ where: { id }, data: { status: 'CONVERTED' } });
+        if (dto.requiresBilling) await this.openBillingTask(tx, order, user);
         const manual = quote.lines.filter((line) => line.pricingMethod === 'MANUAL');
         await audit(tx, {
           entity: 'Quote',
           entityId: id,
           action: 'CONVERTED',
           userId: user.id,
-          data: { orderId: order.id, orderNumber: order.number, paymentMethod, ...(manual.length > 0 ? { manualPrices: manual.map(describeManual) } : {}) },
+          data: {
+            orderId: order.id,
+            orderNumber: order.number,
+            paymentMethod,
+            requiresBilling: Boolean(dto.requiresBilling),
+            ...(manual.length > 0 ? { manualPrices: manual.map(describeManual) } : {}),
+          },
         });
         return order.id;
       });
@@ -1142,8 +1187,11 @@ export class SalesService {
 
   // --- Orders ---------------------------------------------------------------
 
+  // ADMIN: every order. BILLING: the orders sent to billing. SALES: its own.
   orderScope(user: SafeUser): Prisma.SalesOrderWhereInput {
-    return user.role === 'ADMIN' ? {} : { createdById: user.id };
+    if (user.role === 'ADMIN') return {};
+    if (user.role === 'BILLING') return { requiresBilling: true };
+    return { createdById: user.id };
   }
 
   // Filters of the order list and the seller summary (combined with AND).
@@ -1159,11 +1207,18 @@ export class SalesService {
     const from = query.dateFrom ? day(query.dateFrom, 'Desde') : undefined;
     const to = query.dateTo ? new Date(day(query.dateTo, 'Hasta').getTime() + 86_400_000) : undefined;
     if (from && to && from >= to) throw new BadRequestException('La fecha «desde» es posterior a la fecha «hasta»');
+    const billing: Prisma.SalesOrderWhereInput =
+      query.billing === 'PENDING'
+        ? { requiresBilling: true, billedAt: null, NOT: { status: 'CANCELLED' } }
+        : query.billing === 'BILLED'
+          ? { billedAt: { not: null } }
+          : {};
     return {
       ...(query.status ? { status: query.status as SalesOrderStatus } : {}),
       ...(query.sellerId ? { createdById: query.sellerId } : {}),
       ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
       ...(query.payment ? { paymentStatus: query.payment === 'NONE' ? null : query.payment } : {}),
+      ...(query.billing ? { AND: [billing] } : {}),
     };
   }
 
@@ -1201,6 +1256,79 @@ export class SalesService {
       .map((row) => ({ seller: row.seller, all: text(row.all), paid: text(row.paid), pending: text(row.pending), cash: text(row.cash) }));
   }
 
+  // Excel of the filtered orders (same filters as the list), for commissions.
+  // Cancelled orders are included and marked; the summary sheet is the same
+  // as on screen (without cancelled orders unless filtered by them).
+  async exportOrders(query: OrderListQueryDto, user: SafeUser) {
+    const where = this.orderFilters(query);
+    const count = await this.prisma.salesOrder.count({ where });
+    if (count > MAX_EXPORT_ORDERS) {
+      throw new BadRequestException(
+        `Hay ${count.toLocaleString('es-CO')} órdenes con estos filtros; el máximo por archivo es ${MAX_EXPORT_ORDERS.toLocaleString('es-CO')}. Acota el rango de fechas.`,
+      );
+    }
+    const [orders, summary, seller] = await Promise.all([
+      this.prisma.salesOrder.findMany({
+        where,
+        include: {
+          customer: { select: { taxId: true } },
+          createdBy: authorSelect,
+          convertedBy: authorSelect,
+          quote: { select: { number: true } },
+          lines: { orderBy: { lineNo: 'asc' } },
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+      this.ordersSummary(query),
+      query.sellerId ? this.prisma.user.findUnique({ where: { id: query.sellerId }, select: { name: true } }) : null,
+    ]);
+    const now = new Date();
+    const filters: [string, string][] = [
+      ['Vendedor', query.sellerId ? (seller?.name ?? 'Usuario no encontrado') : 'Todos'],
+      ['Desde', query.dateFrom ?? 'Sin límite'],
+      ['Hasta', query.dateTo ?? 'Sin límite'],
+      ['Estado de la orden', query.status ? (ORDER_STATUS[query.status as keyof typeof ORDER_STATUS] ?? query.status) : 'Todos (canceladas en rojo)'],
+      ['Estado de pago', query.payment ? EXPORT_PAYMENT_FILTER[query.payment] : 'Todos'],
+      ['Órdenes', String(orders.length)],
+    ];
+    const file = await renderSalesExport({
+      generatedAt: now,
+      generatedBy: user.name,
+      filters,
+      summary,
+      orders: orders.map((order) => ({
+        number: order.number,
+        createdAt: order.createdAt,
+        seller: order.createdBy.name,
+        convertedBy: order.convertedBy?.name ?? null,
+        customerName: order.customerName,
+        customerTaxId: order.customer.taxId,
+        saleType: order.saleType === 'WINDOWS' ? 'Ventanería' : 'Detal',
+        paymentMethod: order.paymentMethod ? PAYMENT_METHOD_LABEL[order.paymentMethod] : null,
+        paymentTerms: order.paymentTerms,
+        status: ORDER_STATUS[order.status],
+        cancelled: order.status === 'CANCELLED',
+        paymentStatus: order.paymentStatus === 'PAID' ? 'Pagada' : order.paymentStatus === 'PENDING' ? 'Pago pendiente' : 'De contado',
+        quoteNumber: order.quote?.number ?? null,
+        subtotal: order.subtotal,
+        discountTotal: order.discountTotal,
+        globalDiscountAmount: order.globalDiscountAmount,
+        taxTotal: order.taxTotal,
+        assemblyAmount: order.assemblyAmount,
+        installationAmount: order.installationAmount,
+        total: order.total,
+        cancelReason: order.cancelReason,
+        requiresBilling: order.requiresBilling,
+        invoiceNumber: order.invoiceNumber,
+        billedAt: order.billedAt,
+        lines: order.lines.map((line) => ({ ...line, origin: line.origin === 'CHINA' ? 'China' : 'Nacional' })),
+      })),
+    });
+    const who = seller ? `_${slug(seller.name)}` : '';
+    const range = `${query.dateFrom ?? 'inicio'}_a_${query.dateTo ?? bogotaDay(now)}`;
+    return { filename: `ventas${who}_${range}.xlsx`, file };
+  }
+
   async listOrders(query: OrderListQueryDto, user: SafeUser) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -1210,7 +1338,11 @@ export class SalesService {
       this.prisma.salesOrder.count({ where }),
       this.prisma.salesOrder.findMany({
         where,
-        include: { ...(user.role === 'ADMIN' ? { createdBy: authorSelect, convertedBy: authorSelect } : {}), _count: { select: { lines: true, dispatches: true } } },
+        include: {
+          ...(user.role === 'ADMIN' || user.role === 'BILLING' ? { createdBy: authorSelect, convertedBy: authorSelect } : {}),
+          billedBy: authorSelect,
+          _count: { select: { lines: true, dispatches: true } },
+        },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -1375,8 +1507,126 @@ export class SalesService {
       });
       await tx.salesOrder.update({ where: { id }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason } });
       await audit(tx, { entity: 'SalesOrder', entityId: id, action: 'CANCELLED', userId: user.id, reason });
+      if (order.requiresBilling) await this.billingAfterCancel(tx, order, reason, user);
     });
     return this.getOrder(id, user);
+  }
+
+  // --- Billing (the invoice itself is made in another software) -------------------
+
+  // The customer must have what an electronic invoice needs.
+  private async requireBillingData(tx: Tx, customerId: string) {
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { name: true, taxId: true, email: true } });
+    const missing = [!customer.taxId?.trim() ? 'NIT o cédula' : null, !customer.email?.trim() ? 'correo electrónico' : null].filter(Boolean);
+    if (missing.length > 0) {
+      throw new BadRequestException(`Para enviarla a facturación, el cliente «${customer.name}» necesita ${missing.join(' y ')}. Complétalos y vuelve a intentarlo.`);
+    }
+  }
+
+  // Active BILLING user (in turn if there are several). Without one, the
+  // oldest active administrator, so the request is never lost.
+  private async billingAssignee(tx: Tx): Promise<{ id: string; fallback: boolean }> {
+    const users = await tx.user.findMany({ where: { active: true, role: 'BILLING' }, select: { id: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+    if (users.length === 1) return { id: users[0].id, fallback: false };
+    if (users.length > 1) {
+      const last = await tx.task.findFirst({ where: { kind: 'BILLING' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { assigneeId: true } });
+      const index = last ? users.findIndex((u) => u.id === last.assigneeId) : -1;
+      return { id: users[(index + 1) % users.length].id, fallback: false };
+    }
+    const admin = await tx.user.findFirst({ where: { active: true, role: 'ADMIN' }, select: { id: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+    if (!admin) throw new ConflictException('No hay un usuario de facturación ni un administrador activo para recibir la orden');
+    return { id: admin.id, fallback: true };
+  }
+
+  // Creates the BILLING task of the order, or reopens it (requested again
+  // after being unmarked), and notifies the billing user.
+  private async openBillingTask(tx: Tx, order: { id: string; number: string; customerName: string; total: Decimal }, user: SafeUser) {
+    const assignee = await this.billingAssignee(tx);
+    const now = new Date();
+    const data = {
+      title: `Facturar ${order.number}`,
+      description:
+        `${order.customerName} · total ${formatPesos(order.total)}. Descarga el PDF de la orden, genera la factura en el software de facturación y registra aquí su número.` +
+        (assignee.fallback ? ' (No hay un usuario de Facturación activo: la recibe un administrador.)' : ''),
+      dueAt: new Date(now.getTime() + 24 * 3_600_000),
+      assigneeId: assignee.id,
+      createdById: user.id,
+    };
+    const existing = await tx.task.findUnique({ where: { salesOrderId_kind: { salesOrderId: order.id, kind: 'BILLING' } }, select: { id: true } });
+    if (existing) await tx.task.update({ where: { id: existing.id }, data: { ...data, completedAt: null, cancelledAt: null } });
+    else await tx.task.create({ data: { ...data, kind: 'BILLING', salesOrderId: order.id } });
+    await enqueue(tx, [{ userId: assignee.id, kind: 'billing-requested', dedupeKey: `billing-requested:${order.id}:${now.getTime()}` }]);
+  }
+
+  // The seller (own orders) or ADMIN marks whether the order needs an
+  // invoice. Unmarking is possible until it is invoiced.
+  async setBilling(id: string, required: boolean, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id, user);
+      if (order.requiresBilling === required) return;
+      if (order.status === 'CANCELLED') throw new ConflictException('La orden está cancelada');
+      if (!required && order.billedAt) {
+        throw new ConflictException(`La orden ya está facturada (factura ${order.invoiceNumber}): ya no se puede desmarcar`);
+      }
+      if (required) {
+        await this.requireBillingData(tx, order.customerId);
+        await tx.salesOrder.update({ where: { id }, data: { requiresBilling: true, billingRequestedAt: new Date() } });
+        await this.openBillingTask(tx, order, user);
+      } else {
+        await tx.salesOrder.update({ where: { id }, data: { requiresBilling: false, billingRequestedAt: null } });
+        const task = await tx.task.findUnique({ where: { salesOrderId_kind: { salesOrderId: id, kind: 'BILLING' } } });
+        if (task && !task.completedAt && !task.cancelledAt) {
+          await tx.task.update({ where: { id: task.id }, data: { cancelledAt: new Date() } });
+          await enqueue(tx, [{ userId: task.assigneeId, kind: 'billing-cancelled', dedupeKey: `billing-cancelled:${id}:${Date.now()}` }]);
+        }
+      }
+      await audit(tx, { entity: 'SalesOrder', entityId: id, action: required ? 'BILLING_REQUESTED' : 'BILLING_UNREQUESTED', userId: user.id });
+    });
+    return this.getOrder(id, user);
+  }
+
+  // The billing user (or ADMIN) records the number of the invoice made in
+  // the billing software. Repeating the same number changes nothing.
+  async recordInvoice(id: string, invoiceNumber: string, user: SafeUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id, user);
+      if (order.billedAt) {
+        if (order.invoiceNumber === invoiceNumber) return;
+        throw new ConflictException(`La orden ya está facturada con la factura ${order.invoiceNumber}`);
+      }
+      if (!order.requiresBilling) throw new ConflictException('La orden no está marcada para facturación');
+      if (order.status === 'CANCELLED') throw new ConflictException('La orden está cancelada: no se factura');
+      const now = new Date();
+      await tx.salesOrder.update({ where: { id }, data: { invoiceNumber, billedAt: now, billedById: user.id } });
+      await tx.task.updateMany({ where: { salesOrderId: id, kind: 'BILLING', completedAt: null }, data: { completedAt: now, cancelledAt: null } });
+      await enqueue(tx, [{ userId: order.createdById, kind: 'order-billed', dedupeKey: `order-billed:${id}` }]);
+      await audit(tx, { entity: 'SalesOrder', entityId: id, action: 'INVOICED', userId: user.id, data: { invoiceNumber } });
+    });
+    return this.getOrder(id, user);
+  }
+
+  // Cancelling an order sent to billing: the pending task is cancelled; if
+  // it was already invoiced, billing gets a task to void the invoice.
+  private async billingAfterCancel(tx: Tx, order: SalesOrder, reason: string, user: SafeUser) {
+    const task = await tx.task.findUnique({ where: { salesOrderId_kind: { salesOrderId: order.id, kind: 'BILLING' } } });
+    if (!order.billedAt) {
+      if (task && !task.completedAt && !task.cancelledAt) {
+        await tx.task.update({ where: { id: task.id }, data: { cancelledAt: new Date() } });
+        await enqueue(tx, [{ userId: task.assigneeId, kind: 'billing-cancelled', dedupeKey: `billing-cancelled:${order.id}:${Date.now()}` }]);
+      }
+      return;
+    }
+    const assigneeId = order.billedById ?? task?.assigneeId ?? (await this.billingAssignee(tx)).id;
+    await tx.task.create({
+      data: {
+        title: `Anular factura ${order.invoiceNumber} (${order.number} cancelada)`,
+        description: `La orden ${order.number} de ${order.customerName} se canceló después de facturarse. Motivo: ${reason}. Haz la anulación o nota crédito en el software de facturación y marca esta tarea como completada.`,
+        dueAt: new Date(Date.now() + 3 * 24 * 3_600_000),
+        assigneeId,
+        createdById: user.id,
+      },
+    });
+    await enqueue(tx, [{ userId: assigneeId, kind: 'billing-void-needed', dedupeKey: `billing-void-needed:${order.id}` }]);
   }
 
   // --- Printable documents ------------------------------------------------------

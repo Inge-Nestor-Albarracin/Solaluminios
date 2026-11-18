@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsISO8601,
   IsNotEmpty,
   IsOptional,
@@ -32,6 +33,12 @@ export class CreateFamilyDto {
   @IsNotEmpty({ message: 'El nombre de la familia es obligatorio' })
   @MaxLength(100)
   name!: string;
+
+  // What the family groups; fixed once created. Default PROFILE. ACCESSORY
+  // families are catalog only for now.
+  @IsOptional()
+  @IsIn(['PROFILE', 'ACCESSORY'], { message: 'kind debe ser PROFILE (perfiles) o ACCESSORY (accesorios)' })
+  kind?: 'PROFILE' | 'ACCESSORY';
 }
 
 export class UpdateFamilyDto {

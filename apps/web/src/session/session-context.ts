@@ -31,4 +31,5 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   SALES: 'Ventas',
   READ_ONLY: 'Solo consulta',
   CHINA_OPERATOR: 'Operador China',
+  BILLING: 'Facturación',
 }

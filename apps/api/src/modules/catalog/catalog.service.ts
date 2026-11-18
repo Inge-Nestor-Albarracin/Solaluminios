@@ -35,6 +35,8 @@ export class CatalogService {
           description: dto.description || null,
           familyId: dto.familyId || null,
           familyHint: dto.familyHint || null,
+          supplierCode: dto.supplierCode || null,
+          brand: dto.brand || null,
         },
       });
     } catch (error: unknown) {
@@ -67,9 +69,9 @@ export class CatalogService {
       });
     }
 
-    // By code or description, ignoring case and accents. The exact code
-    // first, then codes that start with the text (shorter first: «38» → 386
-    // before 3809), then the rest.
+    // By code, supplier's code, description or brand, ignoring case and
+    // accents. The exact code first, then codes that start with the text
+    // (shorter first: «38» → 386 before 3809), then the rest.
     const code = normalizeReferenceCode(search);
     const text = foldAccents(search);
     const matches = await this.prisma.$queryRaw<{ id: string }[]>`
@@ -77,9 +79,10 @@ export class CatalogService {
       WHERE (${query.familyId ?? null}::text IS NULL OR "familyId" = ${query.familyId ?? null})
         AND (
           upper(code) LIKE ${`%${escapeLike(code)}%`}
-          OR translate(lower(coalesce(description, '')), ${ACCENT_FOLD_FROM}, ${ACCENT_FOLD_TO}) LIKE ${`%${escapeLike(text)}%`}
+          OR upper(coalesce("supplierCode", '')) LIKE ${`%${escapeLike(code)}%`}
+          OR translate(lower(coalesce(description, '') || ' ' || coalesce(brand, '')), ${ACCENT_FOLD_FROM}, ${ACCENT_FOLD_TO}) LIKE ${`%${escapeLike(text)}%`}
         )
-      ORDER BY (upper(code) = ${code}) DESC, (upper(code) LIKE ${`${escapeLike(code)}%`}) DESC, length(code), code, id
+      ORDER BY (upper(code) = ${code} OR upper(coalesce("supplierCode", '')) = ${code}) DESC, (upper(code) LIKE ${`${escapeLike(code)}%`}) DESC, length(code), code, id
       LIMIT 50`;
     const found = await this.prisma.reference.findMany({ where: { id: { in: matches.map((m) => m.id) } } });
     const order = new Map(matches.map((m, index) => [m.id, index]));
@@ -106,10 +109,12 @@ export class CatalogService {
       dto.description === undefined &&
       dto.active === undefined &&
       dto.familyId === undefined &&
-      dto.familyHint === undefined
+      dto.familyHint === undefined &&
+      dto.supplierCode === undefined &&
+      dto.brand === undefined
     ) {
       throw new BadRequestException(
-        'Debes enviar una descripción, un estado, una familia o una pista de familia',
+        'Debes enviar una descripción, un estado, una familia, una pista de familia, un código de proveedor o una marca',
       );
     }
 
@@ -134,6 +139,14 @@ export class CatalogService {
 
     if (dto.familyHint !== undefined) {
       data.familyHint = dto.familyHint || null;
+    }
+
+    if (dto.supplierCode !== undefined) {
+      data.supplierCode = dto.supplierCode || null;
+    }
+
+    if (dto.brand !== undefined) {
+      data.brand = dto.brand || null;
     }
 
     const { count } = await this.prisma.reference.updateMany({
@@ -169,6 +182,7 @@ export class CatalogService {
         data: {
           code: dto.code,
           name: dto.name,
+          kind: dto.kind ?? 'PROFILE',
         },
       });
     } catch (error: unknown) {

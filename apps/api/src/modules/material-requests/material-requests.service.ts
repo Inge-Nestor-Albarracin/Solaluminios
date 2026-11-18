@@ -12,6 +12,7 @@ import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, ty
 import type { SafeUser } from '../auth/auth.types.js';
 import { matchBundle, type DispatchLineRequirement } from '../dispatch/validation.js';
 import { moveBundle, requirePlace } from '../inventory/inventory.shared.js';
+import { ACCESSORY_CATALOG_ONLY, isAccessory, withFamilyKind } from '../catalog/catalog-kind.js';
 import { enqueue } from '../notifications/outbox.js';
 import type {
   AssigneeDto,
@@ -131,8 +132,9 @@ export class MaterialRequestsService {
             const key = [line.referenceId, line.finishId, line.origin, line.supplierId ?? ''].join('|');
             if (seen.has(key)) throw new BadRequestException(`Renglón ${index + 1}: repite el material del renglón ${seen.get(key)}; suma las cantidades en uno`);
             seen.set(key, index + 1);
-            const reference = await tx.reference.findUnique({ where: { id: line.referenceId } });
+            const reference = await tx.reference.findUnique({ where: { id: line.referenceId }, include: withFamilyKind });
             if (!reference?.active) throw new BadRequestException(`Renglón ${index + 1}: la referencia no existe o está inactiva`);
+            if (isAccessory(reference)) throw new BadRequestException(`Renglón ${index + 1}: la referencia ${ACCESSORY_CATALOG_ONLY}`);
             const finish = await tx.finish.findUnique({ where: { id: line.finishId } });
             if (!finish?.active) throw new BadRequestException(`Renglón ${index + 1}: el color no existe o está inactivo`);
             let supplierName: string | null = null;

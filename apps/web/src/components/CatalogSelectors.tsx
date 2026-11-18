@@ -53,13 +53,17 @@ export function CatalogSelectors({
   const onlyActive = <T extends { active: boolean }>(list: T[] | null) =>
     (list ?? []).filter((item) => mode === 'filter' || item.active)
 
-  const referenceOptions = requireFamily
-    ? onlyActive(references.data).sort((a, b) => natural(a.code, b.code))
-    : onlyActive(references.data)
+  // Accessories are catalog only for now (no colour, no bundles nor sales):
+  // their families and references are not offered here. Until the families
+  // arrive, no reference is listed (it could be an accessory).
+  const accessoryFamilies = new Set((families.data ?? []).filter((f) => f.kind === 'ACCESSORY').map((f) => f.id))
+  const profileReferences = families.data
+    ? onlyActive(references.data).filter((r) => r.familyId === null || !accessoryFamilies.has(r.familyId))
+    : []
+  const referenceOptions = requireFamily ? profileReferences.sort((a, b) => natural(a.code, b.code)) : profileReferences
   const finishOptions = onlyActive(finishes.data)
-  const familyOptions = requireFamily
-    ? onlyActive(families.data).sort((a, b) => natural(a.name, b.name))
-    : onlyActive(families.data)
+  const profileFamilies = onlyActive(families.data).filter((f) => f.kind !== 'ACCESSORY')
+  const familyOptions = requireFamily ? profileFamilies.sort((a, b) => natural(a.name, b.name)) : profileFamilies
 
   // requireFamily: a text box narrows the family list (name or code); empty,
   // every family. The chosen family stays listed while it does not match.

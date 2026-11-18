@@ -369,6 +369,20 @@
   align-items: start;
 }
 
+/* Ventas → Órdenes: Excel export of the filtered orders (ADMIN). */
+.export-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 0 4px;
+}
+
+.export-row .field-hint {
+  flex: 1 1 240px;
+  margin: 0;
+}
+
 .field-wide {
   grid-column: 1 / -1;
 }
@@ -3550,6 +3564,13 @@ button.doc-row:focus-visible {
   }
 }
 
+/* Stock of the line that the seller's own location cannot cover. */
+.quote-line-info > span.stock-warning {
+  background: var(--warning-bg);
+  box-shadow: inset 0 0 0 1px var(--warning-border);
+  font-size: 15px;
+}
+
 .quote-line-info strong {
   color: var(--ink-strong);
   font-size: 18px;
@@ -4441,4 +4462,15 @@ button.doc-row:focus-visible {
 
 .request-suggestions .transfer-list {
   margin-bottom: 10px;
+}
+
+/* Sales order → electronic invoice (made in another software). */
+.billing-check {
+  margin: 12px 0 4px;
+  font-weight: 600;
+}
+
+.billing-customer,
+.billing-invoice {
+  margin-top: 12px;
 }

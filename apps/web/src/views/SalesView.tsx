@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Page } from '../api/types'
+import { DownloadButton } from '../components/DownloadPdfButton'
 import { Empty, Field, Loading, Notice, PageHeader, Pagination } from '../components/ui'
 import type { AdminUser } from '../lib/admin'
 import { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, formatMoney, hasLabour, type OrderStatus, type PaymentStatus } from '../lib/commerce'
@@ -38,6 +39,9 @@ interface OrderRow {
   // the order) and who converted the quote.
   createdBy?: { id: string; name: string }
   convertedBy?: { id: string; name: string } | null
+  // Electronic invoice (made in another software).
+  requiresBilling?: boolean
+  invoiceNumber?: string | null
   _count: { lines: number; dispatches: number }
 }
 
@@ -176,6 +180,12 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
           {Object.values(filters).some(Boolean) ? (
             <button type="button" className="text-button" onClick={() => { setFilters(NO_FILTERS); setPage(1) }}>Quitar filtros</button>
           ) : null}
+          <div className="export-row">
+            <DownloadButton path={`/sales-orders/export?${query.slice(1)}`} fallbackName="ventas.xlsx" label="Exportar a Excel" busyLabel="Generando Excel…" />
+            <small className="field-hint">
+              Con los filtros de arriba: hoja de órdenes, hoja con el detalle de cada renglón y resumen por vendedor. Las canceladas salen en rojo.
+            </small>
+          </div>
           {summary.error ? <Notice kind="error">{summary.error}</Notice> : null}
           {summary.data ? (
             summary.data.length === 0 ? (
@@ -264,6 +274,11 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                   <span className="doc-side">
                     <strong>{formatMoney(order.total)}</strong>
                     <span className={`badge status-${order.status.toLowerCase()}`}>{ORDER_STATUS_LABEL[order.status]}</span>
+                    {order.invoiceNumber ? (
+                      <span className="badge badge-paid">Factura {order.invoiceNumber}</span>
+                    ) : order.requiresBilling && order.status !== 'CANCELLED' ? (
+                      <span className="badge badge-warning">Por facturar</span>
+                    ) : null}
                     {order.paymentStatus ? (
                       <span className={`badge ${order.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-warning'}`}>{PAYMENT_STATUS_LABEL[order.paymentStatus]}</span>
                     ) : isAdmin ? (

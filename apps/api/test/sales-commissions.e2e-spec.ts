@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
+import ExcelJS from 'exceljs';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { PrismaService } from '../src/infrastructure/database/prisma.service.js';
@@ -161,6 +162,47 @@ describe('Sales by seller and payment state (e2e)', () => {
     // Same filters as the list.
     expect(await summary(`sellerId=${U.SALES}&dateFrom=${tomorrow}`)).toEqual([]);
     expect((await summary(`sellerId=${U.SALES}&payment=PAID`))[0].all.orders).toBe(1);
+  });
+
+  it('admin exports the filtered orders to Excel: lines sheet, cancelled ones in red', async () => {
+    // Keep the body as raw bytes (supertest would otherwise try to parse it).
+    const response = await http()
+      .get(`/sales-orders/export?sellerId=${U.SALES2}&dateFrom=${today}`)
+      .set(as('ADMIN'))
+      .buffer(true)
+      .parse((res, done) => {
+        const stream = res as unknown as NodeJS.ReadableStream;
+        const chunks: Buffer[] = [];
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => done(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    expect(response.headers['content-type']).toContain('spreadsheetml.sheet');
+    expect(response.headers['content-disposition']).toMatch(new RegExp(`filename="ventas_e2e_sales_sc${S.toLowerCase()}b_${today}_a_${today}\\.xlsx"`));
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(response.body as ArrayBuffer);
+    expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Órdenes', 'Renglones', 'Resumen']);
+    const sheet = workbook.getWorksheet('Órdenes')!;
+    const titles = (sheet.getRow(1).values as unknown[]).slice(1);
+    const rows = [2, 3].map((n) => sheet.getRow(n));
+    const cell = (row: ExcelJS.Row, title: string) => row.getCell(titles.indexOf(title) + 1);
+    // Both SALES2 orders, the cancelled one included and painted red.
+    expect(rows.map((row) => cell(row, 'Orden').value)).toEqual(expect.arrayContaining([orders.other.number, orders.cancelled.number]));
+    const cancelled = rows.find((row) => cell(row, 'Orden').value === orders.cancelled.number)!;
+    const pending = rows.find((row) => cell(row, 'Orden').value === orders.other.number)!;
+    expect(cell(cancelled, 'Estado de la orden').value).toBe('Cancelada');
+    expect(cell(cancelled, 'Motivo de cancelación').value).toBe('Cliente desistió');
+    expect((cell(cancelled, 'Orden').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFFC7CE');
+    expect(cell(pending, 'Orden').fill).toBeUndefined();
+    expect(cell(pending, 'Estado de pago').value).toBe('Pago pendiente');
+    expect(cell(pending, 'Total').value).toBe(Number(orders.other.total));
+    // One line per order line; the summary leaves the cancelled order out.
+    expect(workbook.getWorksheet('Renglones')!.rowCount).toBe(3);
+    const summaryRows = (workbook.getWorksheet('Resumen')!.getSheetValues() as unknown[][]).filter(Boolean).map((row) => row.slice(1));
+    expect(summaryRows).toContainEqual(expect.arrayContaining([`E2E SALES SC${S}B`, 1]));
+    // Same validation as the list; ADMIN only.
+    await http().get(`/sales-orders/export?dateFrom=${tomorrow}&dateTo=${today}`).set(as('ADMIN')).expect(400);
+    await http().get('/sales-orders/export').set(as('SALES')).expect(403);
   });
 
   it('sales only sees its own orders and no summary', async () => {

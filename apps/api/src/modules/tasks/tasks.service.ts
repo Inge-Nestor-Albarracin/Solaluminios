@@ -33,6 +33,8 @@ const taskInclude = {
   discountRequest: { select: { id: true, kind: true, status: true, requestedPercent: true, quote: { select: { id: true, number: true } } } },
   // Material request tasks (prepare / receive): link only.
   materialRequest: { select: { id: true, number: true, status: true } },
+  // Billing tasks: the order to invoice (link only).
+  salesOrder: { select: { id: true, number: true, customerName: true, invoiceNumber: true } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed
@@ -218,6 +220,9 @@ export class TasksService {
       throw new ConflictException(
         'Las solicitudes de descuento se completan al aprobarlas o rechazarlas desde la cotización',
       );
+    }
+    if (task.kind === 'BILLING') {
+      throw new ConflictException('La tarea de facturación se completa al registrar el número de factura en la orden');
     }
     if (task.assigneeId !== user.id) {
       throw new ForbiddenException('Solo la persona asignada puede completar la tarea');

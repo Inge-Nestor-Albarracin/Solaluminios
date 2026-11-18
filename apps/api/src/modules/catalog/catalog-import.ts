@@ -1,4 +1,4 @@
-import type { PrismaClient } from '../../generated/prisma/client.js';
+import type { PrismaClient, ProductKind } from '../../generated/prisma/client.js';
 import { CATALOG_CODE_PATTERN, REFERENCE_CODE_PATTERN, normalizeReferenceCode } from './catalog-codes.js';
 
 // Reconciled import of the product catalog (families and references) from
@@ -10,6 +10,9 @@ import { CATALOG_CODE_PATTERN, REFERENCE_CODE_PATTERN, normalizeReferenceCode } 
 //   - any invalid row stops the whole import (nothing is written);
 //   - running it twice gives the same result (the second run changes nothing).
 // Finishes are not part of the import (they stay as they are).
+// Optional columns (all three or none): familyKind (PROFILE / ACCESSORY),
+// supplierCode and brand, used by the accessory catalog. An empty value
+// means "not given": it never clears what the database has.
 
 export interface CatalogRow {
   line: number;
@@ -21,17 +24,27 @@ export interface CatalogRow {
   familyHint: string | null;
   // The workbook marks the family as still to be validated.
   familyToValidate: boolean;
+  // Optional columns (null: not given).
+  familyKind: ProductKind | null;
+  supplierCode: string | null;
+  brand: string | null;
 }
 
 export interface CatalogImportReport {
   applied: boolean;
   errors: { line: number; message: string }[];
-  families: { create: string[]; rename: { code: string; from: string; to: string }[]; unchanged: number };
+  families: {
+    create: string[];
+    rename: { code: string; from: string; to: string }[];
+    // Existing family of another kind (changed only with `overwrite`).
+    kind: { code: string; from: ProductKind; to: ProductKind }[];
+    unchanged: number;
+  };
   references: {
     create: string[];
     // Empty fields filled in from the catalog (family, description, hint).
     fill: { code: string; fields: string[] }[];
-    conflicts: { code: string; field: 'family' | 'description'; current: string; catalog: string }[];
+    conflicts: { code: string; field: 'family' | 'description' | 'supplierCode' | 'brand'; current: string; catalog: string }[];
     unchanged: number;
     inactive: string[];
   };
@@ -39,6 +52,9 @@ export interface CatalogImportReport {
 }
 
 const HEADER = ['familyCode', 'familyName', 'referenceCode', 'description', 'familyHint', 'familyToValidate'];
+const OPTIONAL_HEADER = ['familyKind', 'supplierCode', 'brand'];
+const KINDS: readonly string[] = ['PROFILE', 'ACCESSORY'];
+const optionalText = (value: string | undefined) => (value ?? '').trim().replace(/\s+/g, ' ') || null;
 
 // RFC 4180 CSV (quoted fields may contain commas, quotes and new lines).
 function parseCsv(text: string): string[][] {
@@ -83,8 +99,10 @@ function parseCsv(text: string): string[][] {
 
 export function parseCatalogCsv(text: string): { rows: CatalogRow[]; errors: { line: number; message: string }[] } {
   const [header, ...data] = parseCsv(text);
-  if (!header || HEADER.some((name, index) => header[index]?.trim() !== name)) {
-    return { rows: [], errors: [{ line: 1, message: `Encabezado esperado: ${HEADER.join(',')}` }] };
+  const optional = (header?.length ?? 0) > HEADER.length;
+  const expected = optional ? [...HEADER, ...OPTIONAL_HEADER] : HEADER;
+  if (!header || header.length > expected.length || expected.some((name, index) => header[index]?.trim() !== name)) {
+    return { rows: [], errors: [{ line: 1, message: `Encabezado esperado: ${HEADER.join(',')} (y opcionalmente ,${OPTIONAL_HEADER.join(',')})` }] };
   }
   return {
     rows: data.map((values, index) => ({
@@ -95,6 +113,9 @@ export function parseCatalogCsv(text: string): { rows: CatalogRow[]; errors: { l
       description: (values[3] ?? '').trim().replace(/\s+/g, ' '),
       familyHint: (values[4] ?? '').trim() || null,
       familyToValidate: /^(si|sí|true|1)$/i.test((values[5] ?? '').trim()),
+      familyKind: (optionalText(values[6])?.toUpperCase() ?? null) as ProductKind | null,
+      supplierCode: optionalText(values[7]),
+      brand: optionalText(values[8]),
     })),
     errors: [],
   };
@@ -103,6 +124,7 @@ export function parseCatalogCsv(text: string): { rows: CatalogRow[]; errors: { l
 function validate(rows: CatalogRow[]) {
   const errors: { line: number; message: string }[] = [];
   const families = new Map<string, string>();
+  const kinds = new Map<string, ProductKind>();
   const references = new Map<string, number>();
   for (const row of rows) {
     const problems: string[] = [];
@@ -111,6 +133,14 @@ function validate(rows: CatalogRow[]) {
     if (!REFERENCE_CODE_PATTERN.test(row.referenceCode) || row.referenceCode.length > 50) problems.push(`código de referencia inválido «${row.referenceCode}»`);
     if (row.description.length > 255) problems.push('descripción de más de 255 caracteres');
     if (row.familyHint && row.familyHint.length > 200) problems.push('pista de familia de más de 200 caracteres');
+    if (row.familyKind && !KINDS.includes(row.familyKind)) problems.push(`tipo de familia inválido «${row.familyKind}» (PROFILE o ACCESSORY)`);
+    if (row.supplierCode && row.supplierCode.length > 50) problems.push('código de proveedor de más de 50 caracteres');
+    if (row.brand && row.brand.length > 100) problems.push('marca de más de 100 caracteres');
+    if (row.familyKind) {
+      const kind = kinds.get(row.familyCode);
+      if (kind !== undefined && kind !== row.familyKind) problems.push(`la familia ${row.familyCode} aparece con dos tipos (${kind} y ${row.familyKind})`);
+      kinds.set(row.familyCode, row.familyKind);
+    }
     const name = families.get(row.familyCode);
     if (name !== undefined && name !== row.familyName) problems.push(`la familia ${row.familyCode} aparece con dos nombres («${name}» y «${row.familyName}»)`);
     families.set(row.familyCode, row.familyName);
@@ -133,7 +163,7 @@ export async function importCatalog(
   const report: CatalogImportReport = {
     applied: false,
     errors: validate(rows),
-    families: { create: [], rename: [], unchanged: 0 },
+    families: { create: [], rename: [], kind: [], unchanged: 0 },
     references: { create: [], fill: [], conflicts: [], unchanged: 0, inactive: [] },
     toValidate: rows.filter((row) => row.familyToValidate).map((row) => row.referenceCode),
   };
@@ -143,20 +173,27 @@ export async function importCatalog(
   const run = async (tx: Tx, write: boolean) => {
     const familyIds = new Map<string, string>();
     const families = new Map(rows.map((row) => [row.familyCode, row.familyName]));
+    const kinds = new Map(rows.filter((row) => row.familyKind).map((row) => [row.familyCode, row.familyKind!]));
     const existingFamilies = await tx.productFamily.findMany({ where: { code: { in: [...families.keys()] } } });
     for (const [code, name] of families) {
       const current = existingFamilies.find((family) => family.code === code);
       if (!current) {
         report.families.create.push(code);
-        if (write) familyIds.set(code, (await tx.productFamily.create({ data: { code, name } })).id);
+        if (write) familyIds.set(code, (await tx.productFamily.create({ data: { code, name, kind: kinds.get(code) ?? 'PROFILE' } })).id);
         continue;
       }
       familyIds.set(code, current.id);
+      const kind = kinds.get(code);
+      if (kind && current.kind !== kind) {
+        // What the family groups decides which operations accept it.
+        report.families.kind.push({ code, from: current.kind, to: kind });
+        if (write && options.overwrite) await tx.productFamily.update({ where: { id: current.id }, data: { kind } });
+      }
       if (current.name !== name) {
         // Renaming is only reported unless `overwrite`: the name is what people see.
         report.families.rename.push({ code, from: current.name, to: name });
         if (write && options.overwrite) await tx.productFamily.update({ where: { id: current.id }, data: { name } });
-      } else {
+      } else if (!kind || current.kind === kind) {
         report.families.unchanged += 1;
       }
     }
@@ -172,13 +209,20 @@ export async function importCatalog(
         report.references.create.push(row.referenceCode);
         if (write) {
           await tx.reference.create({
-            data: { code: row.referenceCode, description: row.description || null, familyId, familyHint: row.familyHint },
+            data: {
+              code: row.referenceCode,
+              description: row.description || null,
+              familyId,
+              familyHint: row.familyHint,
+              supplierCode: row.supplierCode,
+              brand: row.brand,
+            },
           });
         }
         continue;
       }
       if (!current.active) report.references.inactive.push(row.referenceCode);
-      const data: { familyId?: string; description?: string | null; familyHint?: string | null } = {};
+      const data: { familyId?: string; description?: string | null; familyHint?: string | null; supplierCode?: string; brand?: string } = {};
       const filled: string[] = [];
       if (!current.familyId) {
         data.familyId = familyId;
@@ -193,6 +237,17 @@ export async function importCatalog(
       } else if (row.description && current.description !== row.description) {
         report.references.conflicts.push({ code: row.referenceCode, field: 'description', current: current.description ?? '', catalog: row.description });
         if (options.overwrite) data.description = row.description;
+      }
+      for (const [field, label] of [['supplierCode', 'código de proveedor'], ['brand', 'marca']] as const) {
+        const value = row[field];
+        if (!value) continue;
+        if (!current[field]) {
+          data[field] = value;
+          filled.push(label);
+        } else if (current[field] !== value) {
+          report.references.conflicts.push({ code: row.referenceCode, field, current: current[field] ?? '', catalog: value });
+          if (options.overwrite) data[field] = value;
+        }
       }
       // The hint is catalog information: it always follows the catalog.
       if ((current.familyHint ?? null) !== row.familyHint) {
@@ -221,6 +276,7 @@ export async function importCatalog(
           data: {
             familiesCreated: report.families.create,
             familiesRenamed: options.overwrite ? report.families.rename : [],
+            familiesKindChanged: options.overwrite ? report.families.kind : [],
             referencesCreated: report.references.create,
             referencesFilled: report.references.fill,
             conflicts: report.references.conflicts,

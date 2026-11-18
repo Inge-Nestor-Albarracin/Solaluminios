@@ -328,6 +328,11 @@ export class OrderListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsIn(['PAID', 'PENDING', 'NONE'], { message: 'payment debe ser PAID, PENDING o NONE' })
   payment?: 'PAID' | 'PENDING' | 'NONE';
+
+  // Electronic invoice: PENDING (to invoice, not cancelled) or BILLED.
+  @IsOptional()
+  @IsIn(['PENDING', 'BILLED'], { message: 'billing debe ser PENDING o BILLED' })
+  billing?: 'PENDING' | 'BILLED';
 }
 
 export class ConvertQuoteDto {
@@ -346,6 +351,43 @@ export class ConvertQuoteDto {
   @IsString()
   @MaxLength(300)
   paymentTerms?: string;
+
+  // The order needs an electronic invoice (made in another software): a task
+  // goes to the billing user. The customer needs NIT / ID and e-mail.
+  @IsOptional()
+  @IsBoolean({ message: 'requiresBilling debe ser verdadero o falso' })
+  requiresBilling?: boolean;
+}
+
+// Marks or unmarks an existing order as needing an invoice.
+export class SetBillingDto {
+  @IsBoolean({ message: 'required debe ser verdadero o falso' })
+  required!: boolean;
+}
+
+// Number of the invoice made in the billing software.
+export class InvoiceDto {
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty({ message: 'Escribe el número de la factura' })
+  @MaxLength(40, { message: 'El número de factura tiene como máximo 40 caracteres' })
+  @Matches(/^[\p{L}\p{N}][\p{L}\p{N} ._/-]*$/u, { message: 'El número de factura solo admite letras, números, espacios y . _ / -' })
+  invoiceNumber!: string;
+}
+
+// What an invoice needs from the customer (completed from the order or the
+// conversion when it is missing).
+export class CustomerBillingDataDto {
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty({ message: 'El NIT o la cédula es obligatorio para facturar' })
+  @MaxLength(30)
+  taxId!: string;
+
+  @Transform(trim)
+  @IsEmail({}, { message: 'Escribe un correo electrónico válido para la factura' })
+  @MaxLength(150)
+  email!: string;
 }
 
 export class ConfirmOrderDto {

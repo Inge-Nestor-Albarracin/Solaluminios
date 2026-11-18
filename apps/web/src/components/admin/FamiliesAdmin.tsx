@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import type { Family } from '../../api/types'
+import type { Family, ProductKind } from '../../api/types'
 import { matches } from '../../lib/admin'
 import { useLoad } from '../../lib/useLoad'
 import { useMutation } from '../../lib/useMutation'
@@ -96,6 +96,7 @@ export function FamiliesAdmin() {
                 <tr>
                   <th>Código</th>
                   <th>Nombre</th>
+                  <th>Tipo</th>
                   <th>Estado</th>
                   <th>
                     <span className="sr-only">Acciones</span>
@@ -121,6 +122,15 @@ export function FamiliesAdmin() {
                         </span>
                       ) : (
                         family.name
+                      )}
+                    </td>
+                    <td data-label="Tipo">
+                      {family.kind === 'ACCESSORY' ? (
+                        <span className="badge badge-muted" title="Por ahora solo catálogo: no se registran, compran, cotizan ni solicitan">
+                          Accesorios · solo catálogo
+                        </span>
+                      ) : (
+                        'Perfiles'
                       )}
                     </td>
                     <td data-label="Estado">
@@ -197,6 +207,7 @@ function NewFamilyForm({ onCreated }: { onCreated: (family: Family) => void }) {
   const { request } = useSession()
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
+  const [kind, setKind] = useState<ProductKind>('PROFILE')
   const create = useMutation()
   useUnsavedWork(code.trim() || name.trim() ? 'Formulario de familia sin guardar' : null)
   const normalized = code.trim().toUpperCase()
@@ -208,12 +219,13 @@ function NewFamilyForm({ onCreated }: { onCreated: (family: Family) => void }) {
     if (!name.trim()) return create.setError('Escribe el nombre de la familia.')
     const result: { family?: Family } = {}
     const ok = await create.run(async () => {
-      const { data } = await request<Family>('/catalog/families', { method: 'POST', body: { code: normalized, name: name.trim() } })
+      const { data } = await request<Family>('/catalog/families', { method: 'POST', body: { code: normalized, name: name.trim(), kind } })
       result.family = data
     })
     if (ok && result.family) {
       setCode('')
       setName('')
+      setKind('PROFILE')
       onCreated(result.family)
     }
   }
@@ -249,6 +261,15 @@ function NewFamilyForm({ onCreated }: { onCreated: (family: Family) => void }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+        </Field>
+        <Field
+          label="Tipo"
+          hint={kind === 'ACCESSORY' ? 'Por ahora los accesorios solo están en el catálogo: no se registran, compran, cotizan ni solicitan.' : 'No se puede cambiar después.'}
+        >
+          <select value={kind} disabled={create.pending} onChange={(e) => setKind(e.target.value as ProductKind)}>
+            <option value="PROFILE">Perfiles</option>
+            <option value="ACCESSORY">Accesorios</option>
+          </select>
         </Field>
         <button type="submit" className="cta" disabled={create.pending}>
           <span>{create.pending ? 'Guardando…' : 'Crear familia'}</span>

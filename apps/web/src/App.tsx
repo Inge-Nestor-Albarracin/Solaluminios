@@ -32,6 +32,7 @@ import type { View } from './views/navigation'
 import { RegisterBundleView } from './views/RegisterBundleView'
 import { SummaryView } from './views/SummaryView'
 import { TasksView } from './views/TasksView'
+import { BillingView } from './views/BillingView'
 import { MaterialRequestsView } from './views/MaterialRequestsView'
 import { MaterialRequestView } from './views/MaterialRequestView'
 
@@ -111,6 +112,8 @@ const VIEW_LABELS: Record<LaunchView, string> = {
 function Workspace() {
   const { user, logout, request } = useSession()
   const operator = canOperate(user?.role)
+  // Billing role: its orders to invoice and its tasks, nothing else.
+  const billing = user?.role === 'BILLING'
   // Pending registration list (not saved yet), shared by the register view,
   // the menu badge and the logout prompt.
   const queue = useRegistrationQueue(user?.id ?? 'anonymous')
@@ -145,6 +148,7 @@ function Workspace() {
 
   // Views this user may open from a URL, a shortcut or a notification.
   const allowed = (name: LaunchView) =>
+    (!billing || name === 'home' || name === 'tasks') &&
     (name !== 'register' || operator) &&
     (name !== 'receive' || operator) &&
     (name !== 'sales' || canSell(user?.role)) &&
@@ -201,7 +205,13 @@ function Workspace() {
   })
   useEffect(() => onOpenView((name) => openRequested(name)), [])
 
-  const tabs: NavTab[] = [
+  const tabs: NavTab[] = billing
+    ? [
+        { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
+        { name: 'billing', label: 'Facturación', short: 'Facturación', icon: IconList },
+        { name: 'tasks', label: 'Tareas', short: 'Tareas', icon: IconTasks },
+      ]
+    : [
     { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
     ...(operator ? [{ name: 'register' as const, label: 'Registrar paquete', short: 'Registrar', icon: IconRegister }] : []),
     { name: 'lookup', label: 'Consultar chip', short: 'Chip', icon: IconScan },
@@ -222,7 +232,15 @@ function Workspace() {
   ]
   // The bundle detail belongs to the section the user came from; highlight lookup.
   const current =
-    view.name === 'bundle' ? 'lookup' : view.name === 'quote' || view.name === 'order' ? 'sales' : view.name === 'dispatch' ? 'dispatches' : view.name
+    view.name === 'bundle'
+      ? 'lookup'
+      : view.name === 'order' && billing
+        ? 'billing'
+        : view.name === 'quote' || view.name === 'order'
+          ? 'sales'
+          : view.name === 'dispatch'
+            ? 'dispatches'
+            : view.name
 
   const navButtons = (variant: 'side' | 'bottom' | 'top') =>
     tabs.filter((tab) => variant !== 'bottom' || tab.bottom !== false).map((tab) => {
@@ -328,6 +346,7 @@ function Workspace() {
             admin={user?.role === 'ADMIN'}
             seller={canSell(user?.role)}
             dispatcher={canDispatch(user?.role)}
+            billing={billing}
             pendingQueue={pending}
             openTasks={openTasks}
             navigate={navigate}
@@ -348,14 +367,16 @@ function Workspace() {
             onOpenDispatch={(id) => navigate({ name: 'dispatch', id })}
             onOpenQuote={(id) => navigate({ name: 'quote', id })}
             onOpenRequest={(id) => navigate({ name: 'request', id })}
+            onOpenOrder={(id) => navigate({ name: 'order', id })}
           />
         ) : null}
+        {view.name === 'billing' && billing ? <BillingView navigate={navigate} /> : null}
         {view.name === 'requests' ? <MaterialRequestsView navigate={navigate} /> : null}
         {view.name === 'request' ? <MaterialRequestView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
         {view.name === 'receive' && operator ? <ReceiveView navigate={navigate} /> : null}
         {view.name === 'sales' && canSell(user?.role) ? <SalesView key={view.tab ?? 'quotes'} navigate={navigate} initialTab={view.tab} /> : null}
         {view.name === 'quote' ? <QuoteView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
-        {view.name === 'order' ? <OrderView key={view.id} id={view.id} navigate={navigate} /> : null}
+        {view.name === 'order' ? <OrderView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'dispatches' ? <DispatchesView navigate={navigate} /> : null}
         {view.name === 'dispatch' ? <DispatchView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'admin' && user?.role === 'ADMIN' ? <AdminView /> : null}

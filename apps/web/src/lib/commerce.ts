@@ -35,6 +35,21 @@ export interface AvailabilityGroup {
   physical: number
   reserved: number
   available: number
+  // The same stock by location: an order reserves in one location only.
+  locations: { id: string; name: string; type: 'WAREHOUSE' | 'RETAIL_STORE'; bundles: number; physical: number; reserved: number; available: number }[]
+}
+
+// Available profiles per location of the given groups, most stock first.
+export function availableByLocation(groups: AvailabilityGroup[]): { id: string; name: string; available: number }[] {
+  const places = new Map<string, { id: string; name: string; available: number }>()
+  for (const group of groups) {
+    for (const location of group.locations) {
+      const place = places.get(location.id) ?? { id: location.id, name: location.name, available: 0 }
+      place.available += location.available
+      places.set(location.id, place)
+    }
+  }
+  return [...places.values()].sort((a, b) => b.available - a.available || a.name.localeCompare(b.name))
 }
 
 export type PricingMethod = 'MARKUP_ON_COST' | 'GROSS_MARGIN' | 'MANUAL'
@@ -143,8 +158,8 @@ export interface Quote {
   number: string
   customerId: string
   customerName: string
-  // Current customer record (for its NIT).
-  customer?: { taxId: string | null }
+  // Current customer record (for its NIT; e-mail for billing).
+  customer?: { taxId: string | null; email?: string | null }
   status: 'DRAFT' | 'CONVERTED' | 'CANCELLED'
   validUntil: string | null
   notes: string | null
@@ -261,6 +276,14 @@ export interface SalesOrder {
   lines: OrderLine[]
   dispatches: DispatchSummary[]
   cancelReason: string | null
+  // Customer record (what an electronic invoice needs).
+  customer?: { id: string; name: string; taxId: string | null; email: string | null }
+  // Electronic invoice, made in another software (see BillingView).
+  requiresBilling?: boolean
+  billingRequestedAt?: string | null
+  invoiceNumber?: string | null
+  billedAt?: string | null
+  billedBy?: { id: string; name: string } | null
 }
 
 export interface Shortage {

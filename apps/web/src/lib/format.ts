@@ -50,7 +50,17 @@ export function formatArrival(bundle: Arrival): string {
   }
 }
 
-export function referenceLabel(reference: { code: string; description: string | null }): string {
+// `accessory`: the reference belongs to an accessory family, whose code is
+// internal: it shows the supplier's code (when there is one), the
+// description and the brand instead.
+export function referenceLabel(
+  reference: { code: string; description: string | null; supplierCode?: string | null; brand?: string | null },
+  accessory = false,
+): string {
+  if (accessory) {
+    const text = [reference.supplierCode, reference.description ?? reference.code].filter(Boolean).join(' — ')
+    return reference.brand ? `${text} · ${reference.brand}` : text
+  }
   return reference.description ? `${reference.code} — ${reference.description}` : reference.code
 }
 

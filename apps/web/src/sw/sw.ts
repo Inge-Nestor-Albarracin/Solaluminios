@@ -66,6 +66,10 @@ const MESSAGES: Record<string, { body: string; view: View }> = {
   'material-request-shipped': { body: 'Salió de bodega una solicitud de materiales. Revísala en Tareas.', view: 'tasks' },
   'material-request-received': { body: 'El almacén recibió una solicitud de materiales.', view: 'home' },
   'material-request-cancelled': { body: 'Se canceló una solicitud de materiales que tenías asignada.', view: 'tasks' },
+  'billing-requested': { body: 'Tienes una orden de venta por facturar. Ábrela en Tareas.', view: 'tasks' },
+  'billing-cancelled': { body: 'Una orden que tenías por facturar ya no requiere factura.', view: 'tasks' },
+  'billing-void-needed': { body: 'Se canceló una orden ya facturada: revisa la anulación en Tareas.', view: 'tasks' },
+  'order-billed': { body: 'Facturaron una de tus órdenes de venta.', view: 'sales' },
 }
 const FALLBACK = { body: 'Tienes un aviso nuevo en Solualuminios.', view: 'home' as View }
 const ALLOWED_VIEWS = new Set<View>(['home', 'tasks', 'sales', 'dispatches'])

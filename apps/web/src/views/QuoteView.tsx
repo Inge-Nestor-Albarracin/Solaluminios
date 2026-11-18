@@ -18,6 +18,7 @@ import {
   totalsParts,
   SALE_TYPE_LABEL,
   hasLabour,
+  availableByLocation,
   type AvailabilityGroup,
   type Customer,
   type DiscountRequest,
@@ -435,6 +436,7 @@ function LineEditor({
   unitPrice,
   enabledPrice,
   authorisedBy,
+  myLocation,
   onChange,
   onPrice,
   onRemove,
@@ -442,6 +444,8 @@ function LineEditor({
   line: LineDraft
   index: number
   suppliers: Supplier[]
+  // The seller's location (where an order is normally reserved), if any.
+  myLocation: { id: string; name: string } | null
   // Price used by the line (manual or enabled) and the enabled one.
   unitPrice: string | null
   enabledPrice: string | null
@@ -466,8 +470,19 @@ function LineEditor({
   useEffect(() => onPrice(loadedPrice), [loadedPrice]) // eslint-disable-line react-hooks/exhaustive-deps
   const set = (patch: Partial<LineDraft>) => onChange({ ...line, ...patch })
   const forOrigin = (availability.data ?? []).filter((g) => g.origin === line.origin && (!line.supplierId || g.supplier?.id === line.supplierId))
-  const available = forOrigin.reduce((total, g) => total + g.available, 0)
-  const unknown = (availability.data ?? []).filter((g) => g.origin === 'UNKNOWN').reduce((total, g) => total + g.available, 0)
+  const unknownGroups = (availability.data ?? []).filter((g) => g.origin === 'UNKNOWN')
+  // An order reserves in ONE location: the seller sees their own location
+  // first and the rest apart, never one total that mixes them.
+  const places = availableByLocation(forOrigin)
+  const here = myLocation ? (places.find((p) => p.id === myLocation.id)?.available ?? 0) : null
+  const elsewhere = places.filter((p) => p.id !== myLocation?.id && p.available > 0)
+  const available = here ?? places.reduce((total, p) => total + p.available, 0)
+  const unknown = availableByLocation(unknownGroups)
+    .filter((p) => !myLocation || p.id === myLocation.id)
+    .reduce((total, p) => total + p.available, 0)
+  const wanted = Number(line.quantity)
+  const shortHere = myLocation && here !== null && Number.isInteger(wanted) && wanted > here ? wanted : null
+  const elsewhereText = elsewhere.map((p) => `${p.name}: ${p.available.toLocaleString('es-CO')}`).join(' · ')
   // Kept from a saved quote (the API still accepts it); not chosen by sales.
   const requiredSupplier = line.supplierId ? suppliers.find((s) => s.id === line.supplierId)?.name ?? 'proveedor exigido' : null
   const vatPercent = Number(decimal(line.taxRatePercent))
@@ -536,8 +551,19 @@ function LineEditor({
       <div className="quote-line-info">
         {availability.data ? (
           <span>
-            Disponible {ORIGIN_LABEL[line.origin]}{line.supplierId ? ' de ese proveedor' : ''}: <strong>{available}</strong> perfiles
-            {unknown > 0 ? ` · ${unknown} más de origen desconocido (no se usan sin clasificar)` : ''}
+            Disponible {ORIGIN_LABEL[line.origin]}{line.supplierId ? ' de ese proveedor' : ''}
+            {myLocation ? ` en ${myLocation.name} (tu ubicación)` : ''}: <strong>{available.toLocaleString('es-CO')}</strong> perfiles
+            {unknown > 0 ? ` · ${unknown.toLocaleString('es-CO')} más de origen desconocido (no se usan sin clasificar)` : ''}
+            {!myLocation && elsewhere.length > 0 ? ` (${elsewhereText})` : ''}
+          </span>
+        ) : null}
+        {availability.data && myLocation && elsewhere.length > 0 ? <span>En otras ubicaciones: {elsewhereText}</span> : null}
+        {availability.data && shortHere && myLocation ? (
+          <span className="stock-warning">
+            En {myLocation.name} no alcanza para {shortHere.toLocaleString('es-CO')} perfiles.{' '}
+            {elsewhere.length > 0
+              ? 'La orden se reserva en una sola ubicación: al confirmarla elige de dónde sale el material o pide un traslado.'
+              : 'Si se confirma así, la orden queda pendiente de abastecimiento.'}
           </span>
         ) : null}
         {requiredSupplier ? <span>Proveedor exigido: {requiredSupplier}</span> : null}
@@ -585,6 +611,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const { request, user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
   const suppliers = useLoad<Supplier[]>('/suppliers?active=true')
+  const myLocationId = user?.defaultInventoryLocationId ?? null
+  const locations = useLoad<{ id: string; name: string }[]>(myLocationId ? '/locations/inventory-locations' : null)
+  const myLocationName = locations.data?.find((l) => l.id === myLocationId)?.name
+  const myLocation = myLocationId && myLocationName ? { id: myLocationId, name: myLocationName } : null
   const [customer, setCustomer] = useState<Pick<Customer, 'id' | 'name' | 'taxId'> | null>(
     quote ? { id: quote.customerId, name: quote.customerName, taxId: quote.customer?.taxId ?? null } : null,
   )
@@ -635,8 +665,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const convertKey = useRef<string | null>(null)
-  // Converting a quote without payment method: it is chosen at this step.
-  const [converting, setConverting] = useState<{ method: PaymentMethod | ''; terms: string } | null>(null)
+  // Converting: payment method (required for the order) and whether it
+  // needs an electronic invoice (then the customer needs NIT / ID and e-mail).
+  const [converting, setConverting] = useState<{ method: PaymentMethod | ''; terms: string; billing: boolean; taxId: string; email: string } | null>(null)
   // One request at a time: a double click must not create two quotes (the
   // state update of `busy` arrives one render too late to stop it).
   const inFlight = useRef(false)
@@ -820,15 +851,23 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     }
   })
 
-  const convert = (payment?: { method: PaymentMethod; terms: string }) => once(async () => {
+  const convert = (payment: { method: PaymentMethod; terms: string; billing: boolean; customerData: { taxId: string; email: string } | null }) => once(async () => {
     if (!id) return
     setBusy(true)
     setError(null)
     convertKey.current ??= uuid()
     try {
+      if (payment.billing && payment.customerData && quote) {
+        await request(`/customers/${encodeURIComponent(quote.customerId)}/billing-data`, { method: 'PATCH', body: payment.customerData })
+      }
       const { data } = await request<{ id: string }>(`/quotes/${encodeURIComponent(id)}/convert`, {
         method: 'POST',
-        body: { operationKey: convertKey.current, ...(payment ? { paymentMethod: payment.method, paymentTerms: payment.terms.trim() } : {}) },
+        body: {
+          operationKey: convertKey.current,
+          paymentMethod: payment.method,
+          paymentTerms: payment.terms.trim(),
+          ...(payment.billing ? { requiresBilling: true } : {}),
+        },
       })
       navigate({ name: 'order', id: data.id })
     } catch (err) {
@@ -849,6 +888,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
       setError(describeError(err))
     }
   })
+  // Billing needs the customer's NIT / ID and e-mail (asked in the dialog).
+  const customerNeedsData = !quote?.customer?.taxId?.trim() || !quote?.customer?.email?.trim()
+  const billingDataMissing = Boolean(converting?.billing && customerNeedsData && (!converting.taxId.trim() || !converting.email.trim()))
   // What is missing to save, shown next to the button (a tooltip is not
   // visible on phones).
   const blocker = !customerId
@@ -999,6 +1041,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
               unitPrice={linePrice(line, prices[line.key] ?? null)}
               enabledPrice={prices[line.key] ?? null}
               authorisedBy={authorisedBy[line.key]}
+              myLocation={myLocation}
               onChange={(next) => update(index, next)}
               onPrice={(price) => setPrices((current) => (current[line.key] === price ? current : { ...current, [line.key]: price }))}
               onRemove={lines.length > 1 ? () => { setDirty(true); setLines((current) => current.filter((_, i) => i !== index)) } : null}
@@ -1177,7 +1220,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                         ? 'Hay precios manuales sin autorizar'
                         : undefined
                 }
-                onClick={() => (quote?.paymentMethod ? void convert() : setConverting({ method: '', terms: paymentTerms }))}
+                onClick={() =>
+                  setConverting({
+                    method: quote?.paymentMethod ?? '',
+                    terms: quote?.paymentTerms ?? paymentTerms,
+                    billing: false,
+                    taxId: quote?.customer?.taxId ?? '',
+                    email: quote?.customer?.email ?? '',
+                  })
+                }
               >
                 Convertir en orden de venta
               </button>
@@ -1202,17 +1253,50 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                   <input value={converting.terms} disabled={busy} maxLength={300} onChange={(e) => setConverting({ ...converting, terms: e.target.value })} />
                 </Field>
               </div>
+              <label className="check billing-check">
+                <input type="checkbox" checked={converting.billing} disabled={busy} onChange={(e) => setConverting({ ...converting, billing: e.target.checked })} />
+                <span>Requiere facturación</span>
+              </label>
+              {converting.billing ? (
+                customerNeedsData ? (
+                  <>
+                    <p className="field-hint">Le llega a facturación como tarea, con el PDF de la orden. Para facturar, el cliente necesita NIT o cédula y correo; se guardan en el cliente.</p>
+                    <div className="form-grid">
+                      <Field label="NIT o cédula">
+                        <input value={converting.taxId} maxLength={30} disabled={busy} onChange={(e) => setConverting({ ...converting, taxId: e.target.value })} />
+                      </Field>
+                      <Field label="Correo para la factura">
+                        <input type="email" value={converting.email} maxLength={150} disabled={busy} onChange={(e) => setConverting({ ...converting, email: e.target.value })} />
+                      </Field>
+                    </div>
+                  </>
+                ) : (
+                  <p className="field-hint">Le llega a facturación como tarea, con el PDF de la orden (NIT {quote?.customer?.taxId} · {quote?.customer?.email}).</p>
+                )
+              ) : null}
               <div className="actions">
                 <button
                   type="button"
                   className="button"
-                  disabled={busy || !converting.method}
-                  onClick={() => converting.method && void convert({ method: converting.method, terms: converting.terms })}
+                  disabled={busy || !converting.method || billingDataMissing}
+                  onClick={() =>
+                    converting.method &&
+                    void convert({
+                      method: converting.method,
+                      terms: converting.terms,
+                      billing: converting.billing,
+                      customerData: converting.billing && customerNeedsData ? { taxId: converting.taxId.trim(), email: converting.email.trim() } : null,
+                    })
+                  }
                 >
                   {busy ? 'Convirtiendo…' : 'Convertir en orden de venta'}
                 </button>
                 <button type="button" className="text-button" disabled={busy} onClick={() => setConverting(null)}>Volver</button>
-                {!converting.method ? <span className="cell-sub">Para convertir: elige la forma de pago.</span> : null}
+                {!converting.method ? (
+                  <span className="cell-sub">Para convertir: elige la forma de pago.</span>
+                ) : billingDataMissing ? (
+                  <span className="cell-sub">Para facturar: escribe el NIT o cédula y el correo del cliente.</span>
+                ) : null}
               </div>
             </div>
           ) : null}

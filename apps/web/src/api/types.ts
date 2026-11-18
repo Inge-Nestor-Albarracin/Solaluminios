@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OPERATOR'
+export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OPERATOR' | 'BILLING'
 
 export interface SessionUser {
   id: string
@@ -16,10 +16,15 @@ export interface LoginResponse {
   user: SessionUser
 }
 
+// PROFILE: aluminium profiles. ACCESSORY: hardware and gaskets, catalog only
+// for now (operations do not offer nor accept them).
+export type ProductKind = 'PROFILE' | 'ACCESSORY'
+
 export interface Family {
   id: string
   code: string
   name: string
+  kind?: ProductKind
   active: boolean
   // Active references of the family (sent by the family list).
   activeReferences?: number
@@ -35,6 +40,10 @@ export interface Reference {
   familyId: string | null
   // Other families where it is also known (a hint on screen only).
   familyHint: string | null
+  // Accessories: their `code` is internal; people see this code (it may be
+  // missing: then only the description) and the brand.
+  supplierCode?: string | null
+  brand?: string | null
   updatedAt?: string
 }
 

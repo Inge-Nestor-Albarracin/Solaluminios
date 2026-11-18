@@ -48,6 +48,8 @@ export function configureApp(app: INestApplication): void {
     origin: corsOrigins(),
     methods: ['GET', 'POST', 'PATCH'],
     allowedHeaders: ['Authorization', 'Content-Type'],
+    // Lets the web app read the file name of downloads (PDF, Excel).
+    exposedHeaders: ['Content-Disposition'],
     credentials: false,
     maxAge: 600,
   });

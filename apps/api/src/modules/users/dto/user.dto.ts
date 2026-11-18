@@ -45,6 +45,6 @@ export class UpdateUserLocationDto {
 }
 
 export class UpdateUserRoleDto {
-  @IsEnum(UserRole, { message: 'role debe ser ADMIN, WAREHOUSE, SALES, READ_ONLY o CHINA_OPERATOR' })
+  @IsEnum(UserRole, { message: 'role debe ser ADMIN, WAREHOUSE, SALES, READ_ONLY, CHINA_OPERATOR o BILLING' })
   role!: UserRole;
 }

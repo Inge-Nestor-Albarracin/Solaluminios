@@ -29,10 +29,13 @@ function print(report: CatalogImportReport) {
   for (const rename of report.families.rename) {
     console.log(`  Nombre distinto en ${rename.code}: «${rename.from}» en la base, «${rename.to}» en el catálogo${overwrite ? ' → se reemplaza' : ' → se conserva'}`);
   }
+  for (const kind of report.families.kind) {
+    console.log(`  Tipo distinto en ${kind.code}: ${kind.from} en la base, ${kind.to} en el catálogo${overwrite ? ' → se reemplaza' : ' → se conserva'}`);
+  }
   console.log(`Referencias: ${report.references.create.length} nuevas, ${report.references.fill.length} completadas, ${report.references.unchanged} sin cambios`);
   for (const fill of report.references.fill) console.log(`  ${fill.code}: se completa ${fill.fields.join(', ')}`);
   for (const conflict of report.references.conflicts) {
-    const field = conflict.field === 'family' ? 'familia' : 'descripción';
+    const field = { family: 'familia', description: 'descripción', supplierCode: 'código de proveedor', brand: 'marca' }[conflict.field];
     console.log(`  Conflicto ${conflict.code} (${field}): «${conflict.current}» en la base, «${conflict.catalog}» en el catálogo${overwrite ? ' → se reemplaza' : ' → se conserva'}`);
   }
   if (report.references.inactive.length > 0) console.log(`  Inactivas en la base (no se reactivan): ${report.references.inactive.join(', ')}`);

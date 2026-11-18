@@ -22,7 +22,7 @@ import { TasksService } from './tasks.service.js';
 
 // Every role manages its own tasks; the service decides who may assign to
 // others (ADMIN) and who may complete (the assignee).
-const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY'] as const;
+const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'BILLING'] as const;
 
 @Controller('tasks')
 export class TasksController {
@@ -34,16 +34,19 @@ export class TasksController {
     return this.tasks.create(dto, sessionUser(request));
   }
 
+  @Roles(...ALL_ROLES)
   @Get()
   list(@Query() query: ListTasksQueryDto, @Req() request: AuthenticatedRequest) {
     return this.tasks.list(query, sessionUser(request));
   }
 
+  @Roles(...ALL_ROLES)
   @Get('summary')
   summary(@Query() query: TaskSummaryQueryDto, @Req() request: AuthenticatedRequest) {
     return this.tasks.summary(query, sessionUser(request));
   }
 
+  @Roles(...ALL_ROLES)
   @Get(':id')
   get(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.tasks.get(id, sessionUser(request));

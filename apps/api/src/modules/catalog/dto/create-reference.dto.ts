@@ -46,4 +46,23 @@ export class CreateReferenceDto {
   @IsString()
   @MaxLength(200)
   familyHint?: string | null;
+
+  // Supplier's / maker's code (shown for accessories; may repeat). Omitted:
+  // kept; empty or null: removed.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  supplierCode?: string | null;
+
+  // Supplier or brand (YALE, PACKLINE…). Omitted: kept; empty or null: removed.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  brand?: string | null;
 }

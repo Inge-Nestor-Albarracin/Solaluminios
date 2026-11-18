@@ -1,6 +1,6 @@
 import type { UserRole } from '../api/types'
 
-export const ROLES: UserRole[] = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'CHINA_OPERATOR']
+export const ROLES: UserRole[] = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'CHINA_OPERATOR', 'BILLING']
 
 // What each role can do today (same matrix as docs/roles-permissions-idor-audit.md).
 export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
@@ -9,6 +9,7 @@ export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   SALES: 'Clientes, cotizaciones y órdenes propias; generar despachos de sus órdenes. Consulta de inventario.',
   READ_ONLY: 'Solo consulta de inventario, más sus propias tareas. Sin precios ni órdenes.',
   CHINA_OPERATOR: 'Solo prerregistra paquetes del proveedor chino configurado (interfaz en inglés). Sin inventario ni costos.',
+  BILLING: 'Recibe las órdenes que requieren facturación, descarga su PDF y registra el número de factura. Sin inventario, cotizaciones ni costos.',
 }
 
 export interface AdminUser {

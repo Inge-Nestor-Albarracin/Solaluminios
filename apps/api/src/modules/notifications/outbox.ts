@@ -26,7 +26,13 @@ export type NotificationKind =
   | 'material-request-assigned'
   | 'material-request-shipped'
   | 'material-request-received'
-  | 'material-request-cancelled';
+  | 'material-request-cancelled'
+  // Billing: to the billing user (order to invoice / no longer to invoice /
+  // invoiced order cancelled: void it) and to the seller (invoiced).
+  | 'billing-requested'
+  | 'billing-cancelled'
+  | 'billing-void-needed'
+  | 'order-billed';
 
 export interface OutboxItem {
   userId: string;

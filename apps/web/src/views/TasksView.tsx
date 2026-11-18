@@ -27,11 +27,13 @@ export function TasksView({
   onOpenDispatch,
   onOpenQuote,
   onOpenRequest,
+  onOpenOrder,
 }: {
   onChanged: () => void
   onOpenDispatch?: (dispatchId: string) => void
   onOpenQuote?: (quoteId: string) => void
   onOpenRequest?: (requestId: string) => void
+  onOpenOrder?: (orderId: string) => void
 }) {
   const { user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
@@ -167,12 +169,12 @@ export function TasksView({
                     <span>{group.tasks.length}</span>
                   </h2>
                   {group.tasks.map((task) => (
-                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} onOpenRequest={onOpenRequest} />
+                    <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} onOpenRequest={onOpenRequest} onOpenOrder={onOpenOrder} />
                   ))}
                 </div>
               ))
             : items.map((task) => (
-                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} onOpenRequest={onOpenRequest} />
+                <TaskCard key={task.id} task={task} now={now} showAssignee={showAssignee} onCompleted={refresh} onOpenDispatch={onOpenDispatch} onOpenQuote={onOpenQuote} onOpenRequest={onOpenRequest} onOpenOrder={onOpenOrder} />
               ))}
 
           {tasks.data && tasks.data.totalPages > 1 ? (

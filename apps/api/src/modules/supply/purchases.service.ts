@@ -9,6 +9,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { audit, isUniqueViolation, setLockTimeout, type Tx } from '../../shared/db.js';
 import { ZERO, dec, sum, unitCost } from '../../shared/money.js';
 import type { SafeUser } from '../auth/auth.types.js';
+import { ACCESSORY_CATALOG_ONLY } from '../catalog/catalog-kind.js';
 import { computePurchase, computeTaxOnNetLine } from './costing.js';
 import type { LinkLotsDto, PurchaseQueryDto, SavePurchaseDto } from './dto/supply.dto.js';
 
@@ -93,6 +94,12 @@ export class PurchasesService {
           if (rows.length === 0) throw new NotFoundException('La compra no existe');
           if (rows[0].status !== 'DRAFT') throw new ConflictException('La compra está confirmada y no se puede modificar');
         }
+        const accessories = await tx.reference.findMany({
+          where: { id: { in: dto.lines.map((line) => line.referenceId) }, family: { kind: 'ACCESSORY' } },
+          select: { id: true },
+        });
+        const accessoryLine = dto.lines.findIndex((line) => accessories.some((reference) => reference.id === line.referenceId));
+        if (accessoryLine >= 0) throw new BadRequestException(`Renglón ${accessoryLine + 1}: la referencia ${ACCESSORY_CATALOG_ONLY}`);
         for (const line of dto.lines) {
           if (!supplier.origins.includes(line.origin)) {
             throw new BadRequestException(`El proveedor ${supplier.name} no está habilitado para material de origen ${line.origin}`);

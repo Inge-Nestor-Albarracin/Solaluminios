@@ -27,10 +27,12 @@ import type { Navigate } from './navigation'
 
 // Sales order: confirmation reserves everything or nothing (shortages are
 // shown and the order waits for supply); deliveries are dispatches assigned
-// to a warehouse worker of the order's location.
-export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) {
+// to a warehouse worker of the order's location. The billing role only reads
+// it, downloads the PDF and records the invoice.
+export function OrderView({ id, navigate, onChanged }: { id: string; navigate: Navigate; onChanged?: () => void }) {
   const { request, user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
+  const billingRole = user?.role === 'BILLING'
   const enc = encodeURIComponent
   const order = useLoad<SalesOrder>(`/sales-orders/${enc(id)}`)
   const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION)
@@ -140,8 +142,12 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
         actions={
           <>
             <DownloadPdfButton path={`/sales-orders/${encodeURIComponent(data.id)}/pdf`} fallbackName={data.number} />
-            <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'sales', tab: 'orders' })}>
-              Volver a ventas
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => navigate(billingRole ? { name: 'billing' } : { name: 'sales', tab: 'orders' })}
+            >
+              {billingRole ? 'Volver a facturación' : 'Volver a ventas'}
             </button>
           </>
         }
@@ -158,7 +164,7 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
                 {isAdmin && data.paymentStatusBy ? ` por ${data.paymentStatusBy.name}` : ''}
               </small>
             ) : null}
-            {data.paymentStatus === 'PENDING' ? (
+            {billingRole ? null : data.paymentStatus === 'PENDING' ? (
               <button type="button" className="button button-secondary" disabled={busy} onClick={() => void setPaymentStatus('PAID')}>
                 Marcar como pagada
               </button>
@@ -169,7 +175,7 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
             )}
           </span>
         ) : null}
-        {isAdmin && data.createdBy ? (
+        {(isAdmin || billingRole) && data.createdBy ? (
           <span>
             Vendedor <strong>{data.createdBy.name}</strong> · {formatDateTime(data.createdAt)}
             {data.convertedBy && data.convertedBy.id !== data.createdBy.id ? <> · convertida por {data.convertedBy.name}</> : null}
@@ -216,6 +222,17 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
         </p>
       </section>
 
+      <BillingCard
+        order={data}
+        onChanged={() => {
+          order.reload()
+          // The billing task may have been completed (menu badge).
+          onChanged?.()
+        }}
+      />
+
+      {billingRole ? null : (
+      <>
       {canConfirm ? (
         <section className="card">
           <h2 className="subtitle">Confirmar y reservar</h2>
@@ -335,6 +352,141 @@ export function OrderView({ id, navigate }: { id: string; navigate: Navigate }) 
           )}
         </section>
       ) : null}
+      </>
+      )}
     </>
+  )
+}
+
+// Electronic invoice of the order (made in another software). The seller
+// (own orders) or ADMIN marks whether it is needed; the billing user (or
+// ADMIN) records the invoice number. The customer needs NIT / ID and e-mail.
+function BillingCard({ order, onChanged }: { order: SalesOrder; onChanged: () => void }) {
+  const { request, user } = useSession()
+  const enc = encodeURIComponent
+  const canMark = user?.role === 'ADMIN' || user?.role === 'SALES'
+  const canInvoice = user?.role === 'ADMIN' || user?.role === 'BILLING'
+  const [invoice, setInvoice] = useState('')
+  const [customerData, setCustomerData] = useState<{ taxId: string; email: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const lock = useRef(false)
+  useUnsavedWork(invoice.trim() ? 'Número de factura sin registrar' : null)
+
+  const run = async (action: () => Promise<void>) => {
+    if (lock.current) return
+    lock.current = true
+    setBusy(true)
+    setError(null)
+    try {
+      await action()
+      onChanged()
+    } catch (err) {
+      setError(describeError(err))
+    } finally {
+      lock.current = false
+      setBusy(false)
+    }
+  }
+
+  const cancelled = order.status === 'CANCELLED'
+  const customer = order.customer
+  const missingData = !customer?.taxId?.trim() || !customer?.email?.trim()
+
+  const setRequired = (required: boolean) =>
+    run(async () => {
+      if (required && customerData && customer) {
+        await request(`/customers/${enc(customer.id)}/billing-data`, { method: 'PATCH', body: { taxId: customerData.taxId.trim(), email: customerData.email.trim() } })
+      }
+      await request(`/sales-orders/${enc(order.id)}/billing`, { method: 'PATCH', body: { required } })
+      setCustomerData(null)
+    })
+
+  const recordInvoice = () =>
+    run(async () => {
+      await request(`/sales-orders/${enc(order.id)}/invoice`, { method: 'POST', body: { invoiceNumber: invoice.trim() } })
+      setInvoice('')
+    })
+
+  // Nothing to show to whom cannot act on an order that does not need it.
+  if (!order.requiresBilling && (!canMark || cancelled)) return null
+
+  return (
+    <section className="card billing-card">
+      <h2 className="subtitle">Facturación electrónica</h2>
+      {error ? <Notice kind="error">{error}</Notice> : null}
+      {order.billedAt ? (
+        <Notice kind={cancelled ? 'warning' : 'success'}>
+          Facturada con la factura <strong>{order.invoiceNumber}</strong>
+          {order.billedBy ? ` por ${order.billedBy.name}` : ''} ({formatDateTime(order.billedAt)}).
+          {cancelled ? ' La orden se canceló después: facturación recibió una tarea para anular la factura.' : ''}
+        </Notice>
+      ) : order.requiresBilling ? (
+        cancelled ? (
+          <p className="field-hint">La orden se canceló antes de facturarse: ya no se factura.</p>
+        ) : (
+          <p className="field-hint">
+            Pendiente de facturar{order.billingRequestedAt ? ` (enviada a facturación el ${formatDateTime(order.billingRequestedAt)})` : ''}. La factura se genera en el
+            software de facturación con el PDF de esta orden.
+          </p>
+        )
+      ) : (
+        <p className="field-hint">Márcala si el cliente necesita factura electrónica: le llega a facturación como tarea, con el PDF de la orden.</p>
+      )}
+
+      {canMark && !order.billedAt && !cancelled ? (
+        <label className="check billing-check">
+          <input
+            type="checkbox"
+            checked={Boolean(order.requiresBilling) || customerData !== null}
+            disabled={busy}
+            onChange={(e) => {
+              if (!e.target.checked) {
+                if (customerData) setCustomerData(null)
+                else void setRequired(false)
+              } else if (missingData) {
+                setCustomerData({ taxId: customer?.taxId ?? '', email: customer?.email ?? '' })
+              } else {
+                void setRequired(true)
+              }
+            }}
+          />
+          <span>Requiere facturación</span>
+        </label>
+      ) : null}
+
+      {customerData ? (
+        <div className="billing-customer">
+          <Notice kind="info">Para facturar, el cliente {customer?.name ?? ''} necesita NIT o cédula y correo electrónico. Se guardan en el cliente.</Notice>
+          <div className="form-grid">
+            <Field label="NIT o cédula">
+              <input value={customerData.taxId} maxLength={30} disabled={busy} onChange={(e) => setCustomerData({ ...customerData, taxId: e.target.value })} />
+            </Field>
+            <Field label="Correo para la factura">
+              <input type="email" value={customerData.email} maxLength={150} disabled={busy} onChange={(e) => setCustomerData({ ...customerData, email: e.target.value })} />
+            </Field>
+          </div>
+          <div className="actions">
+            <button type="button" className="button" disabled={busy || !customerData.taxId.trim() || !customerData.email.trim()} onClick={() => void setRequired(true)}>
+              {busy ? 'Enviando…' : 'Guardar datos y enviar a facturación'}
+            </button>
+            <button type="button" className="text-button" disabled={busy} onClick={() => setCustomerData(null)}>Cancelar</button>
+          </div>
+        </div>
+      ) : null}
+
+      {canInvoice && order.requiresBilling && !order.billedAt && !cancelled ? (
+        <div className="billing-invoice">
+          <Field label="Número de la factura" hint="El de la factura generada en el software de facturación (p. ej. FE-1234).">
+            <input value={invoice} maxLength={40} disabled={busy} onChange={(e) => setInvoice(e.target.value)} />
+          </Field>
+          <div className="actions">
+            <button type="button" className="button" disabled={busy || !invoice.trim()} onClick={() => void recordInvoice()}>
+              {busy ? 'Guardando…' : 'Marcar como facturada'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
   )
 }

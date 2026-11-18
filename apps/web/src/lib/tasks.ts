@@ -24,7 +24,9 @@ export interface Task {
   // DISPATCH tasks are completed by confirming their dispatch, and
   // DISCOUNT_APPROVAL tasks by answering the request from the quote; both
   // stay pending (overdue) after the deadline.
-  kind?: 'GENERAL' | 'DISPATCH' | 'DISCOUNT_APPROVAL' | 'MATERIAL_REQUEST' | 'MATERIAL_RECEPTION'
+  kind?: 'GENERAL' | 'DISPATCH' | 'DISCOUNT_APPROVAL' | 'MATERIAL_REQUEST' | 'MATERIAL_RECEPTION' | 'BILLING'
+  // Billing tasks: the order to invoice (completed by recording its invoice).
+  salesOrder?: { id: string; number: string; customerName: string; invoiceNumber: string | null } | null
   // Material request tasks: prepare and ship / mark received.
   materialRequest?: { id: string; number: string; status: string } | null
   dispatchId?: string | null

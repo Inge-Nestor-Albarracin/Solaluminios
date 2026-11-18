@@ -15,6 +15,7 @@ export function TaskCard({
   onOpenDispatch,
   onOpenQuote,
   onOpenRequest,
+  onOpenOrder,
 }: {
   task: Task
   now: number
@@ -23,6 +24,7 @@ export function TaskCard({
   onOpenDispatch?: (dispatchId: string) => void
   onOpenQuote?: (quoteId: string) => void
   onOpenRequest?: (requestId: string) => void
+  onOpenOrder?: (orderId: string) => void
 }) {
   const { request, user } = useSession()
   const [confirming, setConfirming] = useState(false)
@@ -99,6 +101,14 @@ export function TaskCard({
         <div className="task-actions">
           <button type="button" className="button" onClick={() => onOpenRequest(task.materialRequest!.id)}>
             {status === 'pending' ? (task.kind === 'MATERIAL_REQUEST' ? 'Preparar solicitud' : 'Revisar y marcar recibido') : `Ver ${task.materialRequest.number}`}
+          </button>
+        </div>
+      ) : null}
+
+      {task.kind === 'BILLING' && task.salesOrder && onOpenOrder ? (
+        <div className="task-actions">
+          <button type="button" className="button" onClick={() => onOpenOrder(task.salesOrder!.id)}>
+            {status === 'pending' ? 'Ver orden y facturar' : `Ver ${task.salesOrder.number}${task.salesOrder.invoiceNumber ? ` · factura ${task.salesOrder.invoiceNumber}` : ''}`}
           </button>
         </div>
       ) : null}

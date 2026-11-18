@@ -81,6 +81,13 @@ const TILE_ICONS: Record<Section, (stroke: string) => ReactNode> = {
       <circle cx="34" cy="35" r="3.5" />
     </g>
   ),
+  billing: (s) => (
+    <g stroke={s}>
+      <path d="M12 5h24v38l-4-3-4 3-4-3-4 3-4-3-4 3V5Z" />
+      <path d="M18 14h12M18 20h12M18 26h7" />
+      <path d="M27 33h3" />
+    </g>
+  ),
   requests: (s) => (
     <g stroke={s}>
       <rect x="6" y="20" width="16" height="16" rx="2" />
@@ -104,6 +111,7 @@ export function HomeView({
   admin,
   seller,
   dispatcher,
+  billing = false,
   pendingQueue,
   openTasks,
   navigate,
@@ -113,26 +121,31 @@ export function HomeView({
   admin: boolean
   seller: boolean
   dispatcher: boolean
+  // Billing role: only its orders to invoice and its tasks.
+  billing?: boolean
   pendingQueue: number
   openTasks: number
   navigate: Navigate
 }) {
   const gradient = `tile-${useId().replace(/:/g, '')}`
-  const tiles: Tile[] = [
-    ...(operator
-      ? [{ name: 'register' as const, title: 'Registrar', subtitle: pendingQueue > 0 ? `${pendingQueue} sin guardar` : 'Paquete nuevo', icon: TILE_ICONS.register }]
-      : []),
-    { name: 'lookup', title: 'Consultar', subtitle: 'Leer chip', icon: TILE_ICONS.lookup },
-    { name: 'bulk', title: 'Lectura masiva', subtitle: 'Muchos chips a la vez', icon: TILE_ICONS.bulk },
-    { name: 'bundles', title: 'Paquetes', subtitle: 'Listado y filtros', icon: TILE_ICONS.bundles },
-    { name: 'summary', title: 'Resumen', subtitle: 'Existencias', icon: TILE_ICONS.summary },
-    { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks },
-    ...(dispatcher ? [{ name: 'dispatches' as const, title: 'Despachos', subtitle: 'Preparar y confirmar salidas', icon: TILE_ICONS.dispatches }] : []),
-    ...(seller || operator ? [{ name: 'requests' as const, title: 'Solicitudes', subtitle: 'Materiales a bodega y almacén', icon: TILE_ICONS.requests }] : []),
-    ...(operator ? [{ name: 'receive' as const, title: 'Recepción China', subtitle: 'Paquetes prerregistrados', icon: TILE_ICONS.receive }] : []),
-    ...(seller ? [{ name: 'sales' as const, title: 'Ventas', subtitle: 'Cotizaciones y órdenes', icon: TILE_ICONS.sales }] : []),
-    ...(admin ? [{ name: 'admin' as const, title: 'Administración', subtitle: 'Catálogo y usuarios', icon: TILE_ICONS.admin }] : []),
-  ]
+  const taskTile: Tile = { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks }
+  const tiles: Tile[] = billing
+    ? [{ name: 'billing', title: 'Facturación', subtitle: 'Órdenes por facturar', icon: TILE_ICONS.billing }, taskTile]
+    : [
+      ...(operator
+        ? [{ name: 'register' as const, title: 'Registrar', subtitle: pendingQueue > 0 ? `${pendingQueue} sin guardar` : 'Paquete nuevo', icon: TILE_ICONS.register }]
+        : []),
+      { name: 'lookup', title: 'Consultar', subtitle: 'Leer chip', icon: TILE_ICONS.lookup },
+      { name: 'bulk', title: 'Lectura masiva', subtitle: 'Muchos chips a la vez', icon: TILE_ICONS.bulk },
+      { name: 'bundles', title: 'Paquetes', subtitle: 'Listado y filtros', icon: TILE_ICONS.bundles },
+      { name: 'summary', title: 'Resumen', subtitle: 'Existencias', icon: TILE_ICONS.summary },
+      taskTile,
+      ...(dispatcher ? [{ name: 'dispatches' as const, title: 'Despachos', subtitle: 'Preparar y confirmar salidas', icon: TILE_ICONS.dispatches }] : []),
+      ...(seller || operator ? [{ name: 'requests' as const, title: 'Solicitudes', subtitle: 'Materiales a bodega y almacén', icon: TILE_ICONS.requests }] : []),
+      ...(operator ? [{ name: 'receive' as const, title: 'Recepción China', subtitle: 'Paquetes prerregistrados', icon: TILE_ICONS.receive }] : []),
+      ...(seller ? [{ name: 'sales' as const, title: 'Ventas', subtitle: 'Cotizaciones y órdenes', icon: TILE_ICONS.sales }] : []),
+      ...(admin ? [{ name: 'admin' as const, title: 'Administración', subtitle: 'Catálogo y usuarios', icon: TILE_ICONS.admin }] : []),
+    ]
   const firstName = name.trim().split(/\s+/)[0] ?? ''
 
   return (

@@ -10,6 +10,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { lockEpc } from '../../shared/db.js';
 import type { SafeUser } from '../auth/auth.types.js';
+import { ACCESSORY_CATALOG_ONLY, isAccessory, withFamilyKind } from '../catalog/catalog-kind.js';
 import { LotsService } from '../supply/lots.service.js';
 import {
   EPC_PATTERN,
@@ -451,11 +452,12 @@ export class InventoryService {
   }
 
   private async requireActiveReference(tx: Tx, id: string) {
-    const reference = await tx.reference.findUnique({ where: { id } });
+    const reference = await tx.reference.findUnique({ where: { id }, include: withFamilyKind });
     if (!reference) throw new NotFoundException('La referencia no existe');
     if (!reference.active) {
       throw new BadRequestException('La referencia está inactiva');
     }
+    if (isAccessory(reference)) throw new BadRequestException(`La referencia ${ACCESSORY_CATALOG_ONLY}`);
   }
 
   private async requireActiveFinish(tx: Tx, id: string) {

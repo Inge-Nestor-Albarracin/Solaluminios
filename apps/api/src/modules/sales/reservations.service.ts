@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { MaterialOrigin, Prisma } from '../../generated/prisma/client.js';
+import type { InventoryLocationType, MaterialOrigin, Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import type { Tx } from '../../shared/db.js';
 
@@ -15,6 +15,20 @@ export interface MaterialRequirement {
 export interface Allocation {
   bundleId: string;
   quantity: number;
+}
+
+interface StockTotals {
+  bundles: number;
+  physical: number;
+  reserved: number;
+  available: number;
+}
+
+// Stock of one provenance (origin + supplier), in total and per location.
+export interface AvailabilityGroup extends StockTotals {
+  origin: MaterialOrigin | 'UNKNOWN';
+  supplier: { id: string; code: string; name: string } | null;
+  locations: (StockTotals & { id: string; name: string; type: InventoryLocationType })[];
 }
 
 // Eligible stock: same reference and finish, a lot with the required origin
@@ -111,31 +125,41 @@ export class ReservationsService {
 
   // Availability summary by provenance for quoting and order screens
   // (no costs). Unknown-origin stock is shown separately and never counts
-  // as China or National.
+  // as China or National. Each group is also broken down by location: an
+  // order reserves in ONE location, so a seller must see where the profiles
+  // are (e.g. 18 in a store are not available in the warehouse).
   async availability(referenceId: string, finishId: string, inventoryLocationId?: string) {
     const bundles = await this.prisma.bundle.findMany({
       where: { referenceId, finishId, quantity: { gt: 0 }, ...(inventoryLocationId ? { inventoryLocationId } : {}) },
       select: {
         id: true,
         quantity: true,
-        inventoryLocationId: true,
+        inventoryLocation: { select: { id: true, name: true, type: true } },
         lot: { select: { origin: true, supplier: { select: { id: true, code: true, name: true } } } },
       },
     });
     const reserved = await this.reservedByBundle(this.prisma, bundles.map((bundle) => bundle.id));
-    const groups = new Map<string, { origin: MaterialOrigin | 'UNKNOWN'; supplier: { id: string; code: string; name: string } | null; bundles: number; physical: number; reserved: number; available: number }>();
+    const groups = new Map<string, AvailabilityGroup>();
     for (const bundle of bundles) {
       const origin = bundle.lot?.origin ?? 'UNKNOWN';
       const supplier = bundle.lot?.supplier ?? null;
       const key = `${origin}|${supplier?.id ?? ''}`;
-      const group = groups.get(key) ?? { origin, supplier, bundles: 0, physical: 0, reserved: 0, available: 0 };
+      const group = groups.get(key) ?? { origin, supplier, bundles: 0, physical: 0, reserved: 0, available: 0, locations: [] };
       const held = reserved.get(bundle.id) ?? 0;
-      group.bundles += 1;
-      group.physical += bundle.quantity;
-      group.reserved += held;
-      group.available += bundle.quantity - held;
+      let place = group.locations.find((location) => location.id === bundle.inventoryLocation.id);
+      if (!place) {
+        place = { ...bundle.inventoryLocation, bundles: 0, physical: 0, reserved: 0, available: 0 };
+        group.locations.push(place);
+      }
+      for (const totals of [group, place]) {
+        totals.bundles += 1;
+        totals.physical += bundle.quantity;
+        totals.reserved += held;
+        totals.available += bundle.quantity - held;
+      }
       groups.set(key, group);
     }
+    for (const group of groups.values()) group.locations.sort((a, b) => b.available - a.available || a.name.localeCompare(b.name));
     return [...groups.values()].sort((a, b) => a.origin.localeCompare(b.origin) || (a.supplier?.name ?? '').localeCompare(b.supplier?.name ?? ''));
   }
 }

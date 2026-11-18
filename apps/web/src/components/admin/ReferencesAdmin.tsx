@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import type { Family, Reference } from '../../api/types'
 import { matches } from '../../lib/admin'
+import { referenceLabel } from '../../lib/format'
 import { useLoad } from '../../lib/useLoad'
 import { useMutation } from '../../lib/useMutation'
 import { useUnsavedWork } from '../../pwa/workGuard'
@@ -18,10 +19,14 @@ interface Editing {
   description: string
   familyId: string
   familyHint: string
+  supplierCode: string
+  brand: string
 }
 
 // References (profiles): create, edit description/family, activate/deactivate.
 // The code is the identity of the profile and cannot be changed.
+// Accessory references: the code is internal; the table shows the supplier's
+// code (or nothing) with the description and the brand.
 export function ReferencesAdmin() {
   const { request } = useSession()
   const references = useLoad<Reference[]>('/catalog/references')
@@ -36,10 +41,13 @@ export function ReferencesAdmin() {
 
   const familyById = new Map((families.data ?? []).map((f) => [f.id, f]))
   const activeFamilies = (families.data ?? []).filter((f) => f.active)
+  const isAccessory = (reference: Pick<Reference, 'familyId'>) =>
+    reference.familyId !== null && familyById.get(reference.familyId)?.kind === 'ACCESSORY'
+  const label = (reference: Reference) => (isAccessory(reference) ? `«${referenceLabel(reference, true)}»` : reference.code)
 
   const filtered = (references.data ?? []).filter(
     (r) =>
-      matches(`${r.code} ${r.description ?? ''}`, search) &&
+      matches(`${r.code} ${r.supplierCode ?? ''} ${r.description ?? ''} ${r.brand ?? ''}`, search) &&
       (familyFilter === '' || (familyFilter === 'none' ? r.familyId === null : r.familyId === familyFilter)) &&
       (stateFilter === '' || String(r.active) === stateFilter),
   )
@@ -68,7 +76,11 @@ export function ReferencesAdmin() {
     if ((current?.familyId ?? '') !== editing.familyId) body.familyId = editing.familyId || null
     const familyHint = editing.familyHint.trim() || null
     if ((current?.familyHint ?? null) !== familyHint) body.familyHint = familyHint
-    if (body.description === undefined && body.familyId === undefined && body.familyHint === undefined) {
+    const supplierCode = editing.supplierCode.trim() || null
+    if ((current?.supplierCode ?? null) !== supplierCode) body.supplierCode = supplierCode
+    const brand = editing.brand.trim() || null
+    if ((current?.brand ?? null) !== brand) body.brand = brand
+    if (Object.keys(body).length === 1) {
       setEditing(null)
       return
     }
@@ -76,7 +88,7 @@ export function ReferencesAdmin() {
       request(`/catalog/references/${encodeURIComponent(editing.id)}`, { method: 'PATCH', body }),
     )
     if (ok) {
-      setMessage(`Referencia ${current?.code ?? ''} actualizada.`)
+      setMessage(`Referencia ${current ? label(current) : ''} actualizada.`)
       setEditing(null)
       references.reload()
     }
@@ -91,7 +103,7 @@ export function ReferencesAdmin() {
     )
     setConfirmToggle(null)
     if (ok) {
-      setMessage(`Referencia ${reference.code} ${reference.active ? 'desactivada' : 'activada'}.`)
+      setMessage(`Referencia ${label(reference)} ${reference.active ? 'desactivada' : 'activada'}.`)
       references.reload()
     }
   }
@@ -101,7 +113,7 @@ export function ReferencesAdmin() {
       <section>
         <div className="admin-toolbar">
           <Field label="Buscar referencia">
-            <input type="search" placeholder="Código o descripción" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input type="search" placeholder="Código, descripción o marca" value={search} onChange={(e) => setSearch(e.target.value)} />
           </Field>
           <Field label="Familia">
             <select value={familyFilter} onChange={(e) => setFamilyFilter(e.target.value)}>
@@ -157,10 +169,31 @@ export function ReferencesAdmin() {
                 {rows.map((reference) => {
                   const family = reference.familyId ? familyById.get(reference.familyId) : undefined
                   const isEditing = editing?.id === reference.id
+                  const accessory = family?.kind === 'ACCESSORY'
                   return (
                     <tr key={reference.id}>
                       <td className="card-title mono" data-label="Código">
-                        <span className="cell-main">{reference.code}</span>
+                        {accessory ? (
+                          isEditing ? (
+                            <span className="inline-edit">
+                              <input
+                                type="text"
+                                maxLength={50}
+                                placeholder="Código del proveedor (opcional)"
+                                aria-label={`Código del proveedor de ${reference.description ?? reference.code}`}
+                                value={editing.supplierCode}
+                                onChange={(e) => setEditing({ ...editing, supplierCode: e.target.value })}
+                              />
+                            </span>
+                          ) : (
+                            <>
+                              {reference.supplierCode ? <span className="cell-main">{reference.supplierCode}</span> : <span className="muted">Sin código</span>}
+                              <span className="cell-sub" title="Código interno: no se muestra fuera de esta pantalla"> · interno {reference.code}</span>
+                            </>
+                          )
+                        ) : (
+                          <span className="cell-main">{reference.code}</span>
+                        )}
                       </td>
                       <td data-label="Descripción">
                         {isEditing ? (
@@ -172,9 +205,22 @@ export function ReferencesAdmin() {
                               value={editing.description}
                               onChange={(e) => setEditing({ ...editing, description: e.target.value })}
                             />
+                            {accessory ? (
+                              <input
+                                type="text"
+                                maxLength={100}
+                                placeholder="Marca o proveedor (opcional)"
+                                aria-label={`Marca de ${reference.description ?? reference.code}`}
+                                value={editing.brand}
+                                onChange={(e) => setEditing({ ...editing, brand: e.target.value })}
+                              />
+                            ) : null}
                           </span>
                         ) : (
-                          reference.description ?? <span className="muted">Sin descripción</span>
+                          <>
+                            {reference.description ?? <span className="muted">Sin descripción</span>}
+                            {reference.brand ? <span className="cell-sub"> · {reference.brand}</span> : null}
+                          </>
                         )}
                       </td>
                       <td data-label="Familia">
@@ -254,6 +300,8 @@ export function ReferencesAdmin() {
                                   description: reference.description ?? '',
                                   familyId: reference.familyId ?? '',
                                   familyHint: reference.familyHint ?? '',
+                                  supplierCode: reference.supplierCode ?? '',
+                                  brand: reference.brand ?? '',
                                 })
                               }}
                             >
@@ -285,7 +333,7 @@ export function ReferencesAdmin() {
         <NewReferenceForm
           families={activeFamilies}
           onCreated={(reference) => {
-            setMessage(`Referencia ${reference.code} creada.`)
+            setMessage(`Referencia ${reference.supplierCode || reference.description || reference.code} creada.`)
             references.reload()
           }}
         />
@@ -299,6 +347,9 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
   const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
   const [familyId, setFamilyId] = useState('')
+  const [supplierCode, setSupplierCode] = useState('')
+  const [brand, setBrand] = useState('')
+  const accessory = families.find((f) => f.id === familyId)?.kind === 'ACCESSORY'
   const create = useMutation()
   useUnsavedWork(code.trim() || description.trim() ? 'Formulario de referencia sin guardar' : null)
   const normalized = code.trim().replace(/\s+/g, ' ').toUpperCase()
@@ -311,13 +362,20 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
     const ok = await create.run(async () => {
       const { data } = await request<Reference>('/catalog/references', {
         method: 'POST',
-        body: { code: normalized, description: description.trim() || undefined, familyId: familyId || undefined },
+        body: {
+          code: normalized,
+          description: description.trim() || undefined,
+          familyId: familyId || undefined,
+          ...(accessory ? { supplierCode: supplierCode.trim() || undefined, brand: brand.trim() || undefined } : {}),
+        },
       })
       result.reference = data
     })
     if (ok && result.reference) {
       setCode('')
       setDescription('')
+      setSupplierCode('')
+      setBrand('')
       onCreated(result.reference)
     }
   }
@@ -330,7 +388,14 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
       </header>
       <div className="task-form-body">
         {create.error ? <Notice kind="error">{create.error}</Notice> : null}
-        <Field label="Código" hint="Identifica el perfil (ej. 173). Se guarda en mayúsculas y no se puede cambiar.">
+        <Field
+          label={accessory ? 'Código interno' : 'Código'}
+          hint={
+            accessory
+              ? 'Solo para el sistema (ej. ACC-101); no se muestra. Se guarda en mayúsculas y no se puede cambiar.'
+              : 'Identifica el perfil (ej. 173). Se guarda en mayúsculas y no se puede cambiar.'
+          }
+        >
           <input
             className="mono"
             type="text"
@@ -363,6 +428,16 @@ function NewReferenceForm({ families, onCreated }: { families: Family[]; onCreat
             ))}
           </select>
         </Field>
+        {accessory ? (
+          <>
+            <Field label="Código del proveedor (opcional)" hint="El que se muestra. Sin él, el accesorio se muestra solo con su descripción.">
+              <input type="text" className="mono" maxLength={50} disabled={create.pending} value={supplierCode} onChange={(e) => setSupplierCode(e.target.value)} />
+            </Field>
+            <Field label="Marca o proveedor (opcional)">
+              <input type="text" maxLength={100} placeholder="Ej. YALE" disabled={create.pending} value={brand} onChange={(e) => setBrand(e.target.value)} />
+            </Field>
+          </>
+        ) : null}
         <button type="submit" className="cta" disabled={create.pending}>
           <span>{create.pending ? 'Guardando…' : 'Crear referencia'}</span>
           <span className="cta-icon" aria-hidden="true">

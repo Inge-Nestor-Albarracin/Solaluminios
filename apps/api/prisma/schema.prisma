@@ -41,6 +41,10 @@ enum UserRole {
   // Supplier-side operator in China: only pre-registers bundles of the
   // configured Chinese supplier (explicit routes only, see RolesGuard).
   CHINA_OPERATOR
+  // Billing: receives the orders that need an invoice, downloads their PDF
+  // and records the invoice number made in the billing software. No
+  // inventory, costs nor quotes.
+  BILLING
 }
 
 // Origin of the material (independent from the supplier's address). Bundles
@@ -128,13 +132,22 @@ model Rack {
 
 // CATALOG: current Reference/Finish fields are retained for API compatibility.
 
+// What a family groups. PROFILE: aluminium profiles (colour, counted in
+// profiles, bundles with RFID). ACCESSORY: hardware and gaskets, catalog only
+// for now (no colour, sold by unit / metre / roll): operations refuse them.
+enum ProductKind {
+  PROFILE
+  ACCESSORY
+}
+
 model ProductFamily {
-  id        String   @id @default(cuid())
-  code      String   @unique
+  id        String      @id @default(cuid())
+  code      String      @unique
   name      String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  kind      ProductKind @default(PROFILE)
+  active    Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
   references Reference[]
 
@@ -142,17 +155,23 @@ model ProductFamily {
 }
 
 model Reference {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  description String?
-  active      Boolean  @default(true)
-  familyId    String?
+  id           String   @id @default(cuid())
+  code         String   @unique
+  description  String?
+  active       Boolean  @default(true)
+  familyId     String?
   // Other families where operators also know this reference (catalog note,
   // shown as a hint only). The reference belongs to `familyId` alone: no
   // filter, total or report uses this text.
-  familyHint  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  familyHint   String?
+  // Accessories: the code above is internal (invented, unique); people see
+  // the supplier's / maker's code (may repeat, e.g. per metre and per roll;
+  // leading zeros kept) or, without one, only the description.
+  supplierCode String?
+  // Supplier or brand as the catalog names it (YALE, PACKLINE…).
+  brand        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   family               ProductFamily?           @relation(fields: [familyId], references: [id])
   bundles              Bundle[]
@@ -218,6 +237,7 @@ model User {
   ordersCreated             SalesOrder[]             @relation("OrderCreator")
   ordersConverted           SalesOrder[]             @relation("OrderConverter")
   orderPaymentStatuses      SalesOrder[]             @relation("OrderPaymentStatus")
+  billedOrders              SalesOrder[]             @relation("OrderBilledBy")
   bundlesOpened             Bundle[]                 @relation("BundleOpener")
   reservationsCreated       StockReservation[]       @relation("ReservationCreator")
   dispatchesCreated         Dispatch[]               @relation("DispatchCreator")
@@ -346,6 +366,8 @@ enum TaskKind {
   // Material requests: prepare and ship (warehouse) / mark received (branch).
   MATERIAL_REQUEST
   MATERIAL_RECEPTION
+  // Invoice a sales order (completed by recording the invoice number).
+  BILLING
 }
 
 model Task {
@@ -362,6 +384,8 @@ model Task {
   discountRequestId String?   @unique
   // MATERIAL_REQUEST / MATERIAL_RECEPTION tasks only (CHECK).
   materialRequestId String?
+  // BILLING tasks only (CHECK): the order to invoice.
+  salesOrderId      String?
   cancelledAt       DateTime? @db.Timestamptz(3)
   createdAt         DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
@@ -371,9 +395,12 @@ model Task {
   dispatch        Dispatch?             @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
   discountRequest QuoteDiscountRequest? @relation(fields: [discountRequestId], references: [id], onDelete: Restrict)
   materialRequest MaterialRequest?      @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
+  salesOrder      SalesOrder?           @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
 
   // One preparation task and one reception task per request.
   @@unique([materialRequestId, kind])
+  // One billing task per order (reopened if billing is requested again).
+  @@unique([salesOrderId, kind])
   @@index([assigneeId, completedAt, dueAt])
   @@index([createdById])
   @@index([dueAt])
@@ -966,6 +993,15 @@ model SalesOrder {
   completedAt           DateTime?        @db.Timestamptz(3)
   cancelledAt           DateTime?        @db.Timestamptz(3)
   cancelReason          String?
+  // Electronic invoice, made in another software: the seller marks that the
+  // order needs one (a BILLING task is created) and the billing user records
+  // the invoice number (CHECK: billed only if required; number, date and
+  // author together).
+  requiresBilling       Boolean          @default(false)
+  billingRequestedAt    DateTime?        @db.Timestamptz(3)
+  invoiceNumber         String?
+  billedAt              DateTime?        @db.Timestamptz(3)
+  billedById            String?
   createdAt             DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime         @updatedAt @db.Timestamptz(3)
 
@@ -975,11 +1011,14 @@ model SalesOrder {
   createdBy         User               @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
   convertedBy       User?              @relation("OrderConverter", fields: [convertedById], references: [id], onDelete: Restrict)
   paymentStatusBy   User?              @relation("OrderPaymentStatus", fields: [paymentStatusById], references: [id], onDelete: Restrict)
+  billedBy          User?              @relation("OrderBilledBy", fields: [billedById], references: [id], onDelete: Restrict)
   lines             SalesOrderLine[]
   dispatches        Dispatch[]
+  tasks             Task[]
 
   @@index([createdById, createdAt])
   @@index([status])
+  @@index([requiresBilling, billedAt])
   @@map("sales_orders")
 }
 

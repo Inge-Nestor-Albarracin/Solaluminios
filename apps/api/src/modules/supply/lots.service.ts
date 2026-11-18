@@ -8,6 +8,7 @@ import type { MaterialOrigin, Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { audit, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
 import type { SafeUser } from '../auth/auth.types.js';
+import { ACCESSORY_CATALOG_ONLY, isAccessory, withFamilyKind } from '../catalog/catalog-kind.js';
 import { DEFAULT_PAGE_SIZE } from '../inventory/dto/inventory-query.dto.js';
 import type { AssignBundlesDto, CreateOpeningLotDto, LotQueryDto } from './dto/supply.dto.js';
 import { SETTING_KEYS, SettingsService } from './settings.service.js';
@@ -200,8 +201,9 @@ export class LotsService {
 
   async createOpening(dto: CreateOpeningLotDto, user: SafeUser) {
     return this.prisma.$transaction(async (tx) => {
-      const reference = await tx.reference.findUnique({ where: { id: dto.referenceId } });
+      const reference = await tx.reference.findUnique({ where: { id: dto.referenceId }, include: withFamilyKind });
       if (!reference) throw new NotFoundException('La referencia no existe');
+      if (isAccessory(reference)) throw new BadRequestException(`La referencia ${ACCESSORY_CATALOG_ONLY}`);
       const finish = await tx.finish.findUnique({ where: { id: dto.finishId } });
       if (!finish) throw new NotFoundException('El color no existe');
       if (dto.supplierId) {

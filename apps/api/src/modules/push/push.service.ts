@@ -56,6 +56,10 @@ const MESSAGES: Record<PushKind, PushMessageOptions> = {
   'material-request-shipped': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-shipped' },
   'material-request-received': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-received' },
   'material-request-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'material-request-cancelled' },
+  'billing-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'billing-requested' },
+  'billing-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'billing-cancelled' },
+  'billing-void-needed': { ttlSeconds: 24 * 3600, urgency: 'high', topic: 'billing-void-needed' },
+  'order-billed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'order-billed' },
 };
 
 export interface DeliveryReport {
