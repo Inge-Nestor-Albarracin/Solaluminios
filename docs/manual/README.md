@@ -11,6 +11,11 @@
 - `assets/logo-*.svg`: el logo, generado de `apps/web/src/components/brand/logoPaths.ts`.
 - `img/`: los pantallazos.
 
+## Herramientas
+
+Las herramientas para recrear la base de demostración y tomar los pantallazos
+están en [`herramientas/`](herramientas/README.md).
+
 ## Cómo se hicieron los pantallazos
 
 Se tomaron el 18/11/2026 con Edge sin ventana (protocolo DevTools), a 1280×800

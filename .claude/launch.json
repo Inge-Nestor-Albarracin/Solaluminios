@@ -83,6 +83,22 @@
       "port": 4173
     },
     {
+      "name": "api-manual",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "docs/manual/herramientas/demo-db.mjs",
+        "run",
+        "solaluminios_ensayo_manual",
+        "node",
+        "dist/main"
+      ],
+      "env": {
+        "PORT": "3101",
+        "CORS_ORIGIN": "http://localhost:5174"
+      },
+      "port": 3101
+    },
+    {
       "name": "web-alt",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

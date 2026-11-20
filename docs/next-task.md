@@ -1,59 +1,77 @@
-# Próximo bloque: cotizador (empresas, contactos y cotizaciones)
+# Próxima tarea (actualizado el 20/11/2026)
 
-Estado previo (13/10/2026): el bloque de inventario de fase 1 está completo en
-backend y frontend (ver docs/development-status.md). Esta propuesta debe ser
-confirmada por el desarrollador y la empresa antes de implementarse; varias
-reglas comerciales siguen abiertas.
+El contexto vigente está en `docs/project-context.md` y la bitácora detallada
+en `docs/development-status.md`. Las tareas de octubre que estaban aquí
+(familias, cotizador) ya están hechas.
 
-## Antes de empezar
+## Antes de empezar, en cualquier equipo
 
-1. Lee AGENTS.md, docs/project-context.md y docs/development-status.md.
-2. Ejecuta en apps/api: `pnpm build`, `pnpm lint`, `pnpm test` y
-   `pnpm exec vitest run --config ./vitest.config.e2e.ts` (31 pruebas hoy).
-   En apps/web: `pnpm build` y `pnpm lint`.
-3. Revisa `git status`. Recomendación pendiente del bloque anterior: añadir un
-   `.gitignore` en la raíz con `node_modules/` y dejar de versionar
-   `node_modules` en un commit separado, decidido por el desarrollador.
+1. Lee `AGENTS.md`, `docs/project-context.md` y el final de
+   `docs/development-status.md`.
+2. Revisa `git status`. El repositorio debe estar al día con `origin/main`.
+3. Comprueba que existan los `.env` de `apps/api`. Si faltan, pídeselos al
+   usuario; no los inventes ni muestres su contenido.
+4. Verifica el estado:
+   - en `apps/api`: `pnpm build`, `pnpm lint`, `pnpm test` y `pnpm test:e2e`
+     (última vez: 52/52 y 225/225);
+   - en `apps/web`: `pnpm build`, `pnpm lint` y `pnpm test`.
 
-## Decisiones que deben confirmarse con la empresa
+## Tareas en orden
 
-- Datos mínimos de empresa cliente/proveedor y de contacto (NIT, dirección,
-  ciudad, condiciones de pago, plazo de entrega).
-- Precio: ¿lista por referencia + acabado, por kilo, por perfil? ¿Cambia por
-  cliente? Moneda e impuestos (IVA) y descuentos permitidos.
-- Numeración y vigencia de cotizaciones; estados (borrador, enviada,
-  aceptada, vencida, anulada) y quién puede cambiarlos.
-- Paso de cotización a orden del cliente (SalesOrder) y relación con salidas.
-- Si una cotización aceptada reserva inventario (hoy NO hay reservas: guardar
-  una cotización no descuenta ni reserva stock).
-- Roles: ¿SALES crea cotizaciones? ¿quién aprueba descuentos?
-- Formato de documento para el cliente (PDF) y datos de la empresa emisora.
+### 1. Corte a base limpia en producción (semana del 25/11/2026, por confirmar)
 
-## Alcance técnico propuesto (tras confirmar)
+Lo ejecuta el usuario en el servidor con `docs/deploy/base-limpia.md`. El papel
+de Claude es acompañarlo:
+- revisar las salidas que pegue;
+- ajustar el CSV del catálogo si hay correcciones (por ejemplo, las 9
+  referencias «por validar»);
+- resolver dudas del paso A5: el dueño de la base y la configuración regional.
 
-1. Migración nueva (revisar SQL antes de aplicarla): Company, Contact,
-   Quotation, QuotationLine. Las líneas guardan copia de descripción, precio
-   y condiciones al momento de cotizar (no dependen de cambios posteriores
-   del catálogo).
-2. Endpoints con permisos explícitos y operationKey para creaciones
-   repetibles desde el frontend.
-3. Consulta de disponibilidad desde la cotización usando
-   `GET /inventory/summary` (referencia + acabado); sin WebSockets/SSE.
-4. Frontend: listado y formulario de cotización reutilizando sesión,
-   `useLoad`, selectores y estilos existentes.
+Nunca se ejecuta nada contra producción desde aquí.
 
-## No incluir
+### 2. Manual de usuario de Administración
 
-- Reservas o descuentos automáticos de inventario.
-- Tareas semanales (bloque posterior).
-- Integración del lector UHF o antena; importación de Excel.
-- Longitud, SKU o Product.
+Con el mismo formato que `docs/manual/manual-ventas.html` y
+`manual-bodega.html`:
+- **Herramientas y pasos:** en `docs/manual/herramientas/README.md` (base de
+  demostración, API contra esa base y capturas con Edge sin ventana).
+- **Qué cubrir:**
+  - usuarios y roles, con la ubicación predeterminada;
+  - proveedores, el proveedor de China y el supervisor de despachos;
+  - familias, referencias y accesorios;
+  - compras y costos, lotes y procedencia, precios de venta;
+  - aprobar o rechazar descuentos y precios manuales;
+  - ajustes de inventario;
+  - exportación a Excel;
+  - lectores fijos;
+  - tareas asignadas a otros;
+  - lo que el administrador ve de ventas y despachos.
+- **Excluir:** Recepción China, por decisión del usuario.
 
-## Pendientes del bloque de inventario que siguen abiertos
+Al terminar, borrar la base de demostración `solaluminios_ensayo_manual` si ya
+no se necesita.
 
-- Validar el lector UHF Bluetooth real (formato del EPC, Enter final).
-- ¿Paquetes sin burro (almacén minorista)? Hoy rackId es obligatorio.
-- División de paquetes, traslado parcial, excedentes a almacén.
-- ¿Motivo/documento obligatorio en salidas? Hoy es opcional.
-- Persistencia de sesión (refresh token) y gestión de catálogos/ubicaciones/
-  usuarios desde la interfaz.
+### 3. Configuración real en producción (tras el corte, con el usuario)
+
+- Usuario de Facturación.
+- Ubicación predeterminada de cada usuario.
+- Proveedores reales, proveedor de China y supervisor de despachos.
+- Precios de venta.
+- Carga del inventario real como «Inventario existente».
+
+## Pendientes sin fecha (no empezar sin decisión del usuario)
+
+- Pruebas con la pistola Chafon real y con Android por HTTPS.
+- Venta de accesorios: color y unidad.
+- Equivalencia «Silver».
+- Importación conciliada del Excel histórico.
+- División de paquetes.
+- Recurrencia de tareas.
+- Actualizar Prisma, por el aviso de `pg`.
+
+## No incluir sin pedido explícito
+
+- Cambios de esquema que no pida la tarea (cada uno va en una migración nueva
+  y revisada).
+- Push, despliegues o acciones en el servidor.
+- Recepción China en manuales.

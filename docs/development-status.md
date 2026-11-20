@@ -2926,6 +2926,38 @@ El usuario pidió manuales en PDF: primero Ventas, luego Bodega y Administració
 
 Por decisión del usuario se omite Recepción China.
 
+## Documentos actualizados para el cambio de equipo (20/11/2026)
+
+El usuario cambia de computador y pidió dejar el contexto completo en GitHub.
+
+**Documentos reescritos:**
+- **`docs/project-context.md`:** contexto vigente completo, que reemplaza la
+  versión del 13/10. Cubre qué hace, roles, reglas, arquitectura, entornos,
+  comandos, estado y pendientes, más un anexo con los hallazgos de fase 1 que
+  siguen vigentes (Excel, China, pisos, fase 2).
+- **`docs/next-task.md`:** próximas tareas reales: el corte a base limpia, el
+  manual de Administración y la configuración de producción.
+- **`CLAUDE.md` y `START-HERE.md`:** quitan la restricción vieja «no ampliar al
+  cotizador ni al frontend» y la tarea de familias, ya hecha. Ya no suponen una
+  ruta fija de Windows. Agregan el primer encargo para retomar el proyecto en un
+  equipo nuevo.
+- **`README.md` de la raíz:** era de un paquete antiguo y estaba en UTF-16;
+  ahora es un índice en UTF-8.
+
+**Herramientas de los manuales en el repositorio** (`docs/manual/herramientas/`):
+- `driver.mjs` y `m.sh`: Edge sin ventana para los pantallazos;
+- `demo-db.mjs`: la base de demostración;
+- `seed-manual.mjs`: los datos, sin depender de otra base;
+- `demo-api.mjs`: preparar estados por el API.
+
+Las rutas son relativas al repositorio. Los `.json` con contraseñas de
+demostración y las salidas quedan fuera de Git. `.claude/launch.json` suma la
+configuración `api-manual`.
+
+**Verificado:** sintaxis de los cuatro scripts. `counts` sobre la base de
+demostración funciona con las rutas nuevas. El guard rechaza
+`DROP DATABASE solaluminios_dev` y la base de desarrollo sigue intacta.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

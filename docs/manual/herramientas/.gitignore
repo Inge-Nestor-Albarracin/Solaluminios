@@ -1,0 +1,6 @@
+# Generated locally; may contain demo passwords or large images.
+*.json
+out/
+edge-profile/
+edge-print/
+contact*.html

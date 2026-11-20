@@ -1,79 +1,58 @@
-# Configurar Claude Code para Solaluminios
+# Abrir y retomar Solaluminios con Claude Code
 
-## Ubicación
+## En un equipo nuevo
 
-Coloca AGENTS.md y CLAUDE.md en la raíz del monorepo, al mismo nivel que apps,
-package.json y pnpm-workspace.yaml. Coloca la carpeta docs junto a ellos.
-La raíz conocida es C:\Users\ASUS\Pictures\Aduvidrios; usar la copia actual
-si elegiste otra ubicación con el mismo proyecto.
+1. Instala Git, Node 24, pnpm 11.4.0, PostgreSQL 18, VS Code y la app de
+   Claude. El detalle está en `docs/project-context.md`, sección 10.
+2. Clona el repositorio en una ruta corta, por ejemplo `C:\dev\Aduvidrios`.
+3. Copia los `.env` de `apps/api` desde el respaldo (no están en Git).
+4. Desde la raíz, ejecuta `pnpm install --frozen-lockfile`.
+5. Prepara la base local: restaura el respaldo o aplica las migraciones.
 
-Si ya existen archivos de instrucciones, conserva las reglas vigentes y
-combina el contenido. No reemplaces ciegamente instrucciones de la empresa.
-En un CLAUDE.md existente puedes agregar la línea @AGENTS.md fuera de un bloque
-de código. Los archivos entregados son instrucciones, no una copia del código.
+`AGENTS.md`, `CLAUDE.md` y `docs/` ya vienen en el repositorio, en la raíz del
+monorepo. Claude Code los carga al abrir la carpeta.
 
 ## Inicio
 
-Si ya abriste Claude Code en VS Code o en otra interfaz con esta carpeta,
-continúa allí. No hace falta instalar una segunda interfaz. Si trabajas desde
-terminal y ya está instalado:
+Abre la carpeta del proyecto en la app de Claude (pestaña Code), en VS Code o
+en la terminal:
 
 ```powershell
-cd C:\Users\ASUS\Pictures\Aduvidrios
-claude --version
+cd C:\dev\Aduvidrios
 claude
 ```
 
-Inicia sesión con el acceso de Claude que te dio la empresa si lo solicita.
-ChatGPT Plus y Claude son servicios distintos; este paquete comparte archivos,
-no suscripciones, credenciales o historiales de conversación.
+Inicia sesión con tu cuenta de Claude si lo pide. En una sesión nueva, puedes
+pedirle que confirme qué instrucciones y documentos leyó.
 
-Tras copiar las instrucciones, abre una sesión nueva para que las cargue.
-Puedes usar /context para comprobar la carga de CLAUDE.md en versiones que lo
-ofrecen. También pide que confirme qué instrucciones/documentos leyó.
-
-## Primer encargo
+## Primer encargo en el equipo nuevo
 
 Copia este mensaje en Claude Code:
 
 ```text
-Trabaja en este proyecto Solaluminios.
-Lee CLAUDE.md, AGENTS.md, docs/project-context.md,
-docs/development-status.md y docs/next-task.md.
+Retoma el proyecto Solaluminios.
+Lee CLAUDE.md, AGENTS.md, docs/project-context.md, docs/next-task.md
+y el final de docs/development-status.md.
 
-Inspecciona el repositorio real, git status, package.json, schema.prisma,
-migraciones, módulo catalog y guards. Confirma qué está implementado
-y si hay diferencias con el estado documentado, sin mostrar secretos.
+Revisa git status, que existan los .env de apps/api (sin mostrar su
+contenido), que la base local responda y que las migraciones estén al
+día. Ejecuta build, lint y pruebas de apps/api y apps/web, e informa
+los resultados y cualquier diferencia con lo documentado.
 
-Después implementa la tarea de docs/next-task.md: familias y asociación
-de referencias. Conserva endpoints existentes y permisos; no cambies
-el modelo de paquetes ni las migraciones aplicadas.
-
-Ejecuta compilación y pruebas pertinentes. Para HTTP utiliza una sesión
-local sin mostrar credenciales o tokens. Si no puedes ejecutar alguna
-prueba, explica el bloqueo y deja los pasos preparados.
-
-Al terminar, informa archivos cambiados y resultados, y actualiza
-docs/development-status.md. No amplíes esta tarea al frontend/cotizador.
+No cambies código todavía: después te digo la tarea.
 ```
 
 ## Trabajo diario
 
-Una tarea concreta por turno. Mantener una sola IA editora en la carpeta.
-Claude implementa y verifica; ChatGPT puede revisar el diff o ayudarte a decidir
-reglas del negocio. Actualizar documentos tras una tarea completada, no duplicar
-reglas contradictorias en ambos archivos de instrucciones.
+- Una tarea concreta por turno y una sola IA editora en la carpeta.
+- Al terminar cada tarea, actualizar `docs/development-status.md`.
+- **Git:** revisar `git status` y `git diff` y guardar puntos de avance
+  después de verificar. No incluir `.env`, secretos, `node_modules` ni `dist`.
+  Los documentos se versionan porque no contienen credenciales.
+- **Publicación:** push, despliegue o acciones en el servidor solo cuando el
+  usuario lo pida.
 
-Si Git ya está configurado, revisar git status/git diff y conservar puntos de
-avance después de verificar. No incluir .env, secretos, node_modules o dist.
-Los documentos pueden versionarse porque no contienen credenciales.
-
-## Documentación oficial consultada
+## Documentación oficial
 
 - Inicio: https://code.claude.com/docs/en/quickstart
-- Instrucciones/importaciones: https://code.claude.com/docs/en/memory
-- AGENTS.md de Codex: https://developers.openai.com/codex/guides/agents-md
-
-Los comandos de sesión disponibles dependen de la versión/interfaz. Si no
-encuentras uno, utiliza /help o los controles de esa interfaz; el encargo en
-texto y la lectura explícita de documentos siguen siendo utilizables.
+- Instrucciones y memoria: https://code.claude.com/docs/en/memory
