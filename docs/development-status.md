@@ -2958,6 +2958,47 @@ configuración `api-manual`.
 demostración funciona con las rutas nuevas. El guard rechaza
 `DROP DATABASE solaluminios_dev` y la base de desarrollo sigue intacta.
 
+## Proyecto retomado en el equipo nuevo (20/11/2026)
+
+Primer encargo de `START-HERE.md`. No se cambió código.
+
+**Equipo:**
+- Git 2.56, Node 24.22.3 (MSI de nodejs.org, con checksum y firma
+  verificados), pnpm 11.4.0, PostgreSQL 18.7 y VS Code;
+- repositorio en `C:\dev\Aduvidrios`, rama `main` al día con `origin/main`;
+- los tres `.env` de `apps/api` vienen de la USB y Git los ignora.
+
+**Base local:**
+- `solaluminios_dev` y `solaluminios_ensayo_manual` se restauraron con
+  `pg_restore --single-transaction` desde volcados del equipo anterior
+  (PostgreSQL 18.6, formato custom), copiados a `C:\dev\respaldos`, fuera
+  del repositorio;
+- ambas tienen UTF8 y `Spanish_Colombia.1252`;
+- `prisma migrate status`: 20 migraciones, «Database schema is up to date»;
+- `solaluminios_dev`: 8 usuarios, 26 familias, 348 referencias, 35 paquetes
+  y 31 cotizaciones; la de demostración: 6 usuarios, 25 familias y 346
+  referencias;
+- `pnpm test:db:setup` creó `solaluminios_dev_e2e_test`.
+
+**Verificación:**
+- API: `prisma generate`, `build` y `lint` correctos; `pnpm test` 52/52.
+- Web: `build` y `lint` correctos (aviso de un archivo JS de más de 500 kB);
+  `pnpm test` con Chafon 7/7 y números 14/14.
+- API `pnpm test:e2e`:
+  - primera corrida, 223/225: fallaron 2 de `material-requests.e2e-spec.ts`;
+  - el archivo solo dio 7/7;
+  - segunda corrida completa, 225/225.
+
+**Diferencias con lo documentado:**
+- En un clon nuevo hay que ejecutar `pnpm exec prisma generate` en `apps/api`
+  antes de `pnpm build`, porque `src/generated/prisma/` no está en Git. La
+  sección 10 de `docs/project-context.md` no lo menciona.
+- **Fallo intermitente en `material-requests.e2e-spec.ts`.** El test «the
+  shipment transfers…» usa `s.bundle2`, que se asigna al final del test
+  anterior («preparing by chip…»). Si ese falla, el siguiente cae en cadena
+  con `findUniqueOrThrow` sin id. La causa del primer fallo no quedó en la
+  salida guardada; queda por reproducir.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean
