@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Manual de usuario · Ventas · Solualuminios</title>
+<link rel="stylesheet" href="assets/manual.css">
+<style>
+  @page { size: A4; margin: 16mm 16mm 18mm; @bottom-left { content: 'Manual de usuario · Ventas'; font: 8pt 'Nunito Sans', sans-serif; color: #5b6684; } @bottom-right { content: 'Página ' counter(page) ' de ' counter(pages); font: 8pt 'Nunito Sans', sans-serif; color: #5b6684; } }
+  @page :first { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <img class="logo" src="assets/logo-negativo.svg" alt="WeTracking · Soluciones Integrales">
+  <p class="kicker">Manual de usuario</p>
+  <h1>Ventas</h1>
+  <p class="subtitle">Solualuminios · Inventario de perfiles. Cotizaciones, órdenes de venta, despachos y solicitudes de material.</p>
+  <div class="meta">
+    <strong>Versión 1</strong> · Noviembre de 2026<br>
+    Para el rol <strong>Ventas</strong> (vendedores de almacén y de bodega)<br>
+    Los clientes, precios y personas de los pantallazos son de ejemplo.
+  </div>
+</section>
+
+<nav class="toc">
+  <h1>Contenido</h1>
+  <ol>
+    <li><a href="#c1">Antes de empezar</a>
+      <ol><li>Qué puedes hacer con tu rol</li><li>Ingresar a la aplicación</li><li>Inicio y menú</li><li>En el celular</li><li>Notificaciones</li></ol></li>
+    <li><a href="#c2">Consultar el inventario</a>
+      <ol><li>Resumen de existencias</li><li>Paquetes</li><li>Consultar un chip</li></ol></li>
+    <li><a href="#c3">Cotizaciones</a>
+      <ol><li>Reglas que debes conocer</li><li>Crear una cotización</li><li>Agregar renglones</li><li>Disponibilidad por ubicación</li><li>Totales y descuento global</li><li>Guardar, revisar y descargar el PDF</li><li>Precio manual</li><li>Descuento global mayor al 3 %</li><li>Respuestas del administrador</li><li>Ventanería: ensamble e instalación</li></ol></li>
+    <li><a href="#c4">Órdenes de venta</a>
+      <ol><li>Convertir una cotización en orden</li><li>Estados de la orden</li><li>Confirmar y reservar</li><li>Estado de pago</li><li>Facturación electrónica</li><li>Cancelar una orden</li></ol></li>
+    <li><a href="#c5">Despachos</a></li>
+    <li><a href="#c6">Solicitudes a bodega</a></li>
+    <li><a href="#c7">Tareas</a></li>
+    <li><a href="#c8">La lista de Ventas</a></li>
+    <li><a href="#c9">Preguntas frecuentes</a></li>
+  </ol>
+</nav>
+
+<!-- 1 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c1"><span class="num">1</span>Antes de empezar</h1>
+
+<h2>1.1 Qué puedes hacer con tu rol</h2>
+<p>Con el rol <strong>Ventas</strong> puedes:</p>
+<ul>
+  <li>consultar el inventario: existencias, paquetes y chips;</li>
+  <li>hacer cotizaciones de <strong>Detal</strong> o <strong>Ventanería</strong> y descargarlas en PDF;</li>
+  <li>convertirlas en <strong>órdenes de venta</strong>, reservar el material y pedir el <strong>despacho</strong> a bodega;</li>
+  <li>pedir material a una bodega para tu almacén (<strong>solicitudes a bodega</strong>);</li>
+  <li>organizar tus <strong>tareas</strong>.</li>
+</ul>
+<p>Solo ves tus propias cotizaciones y órdenes. Los costos de compra no se muestran a Ventas: el precio de venta lo habilita administración.</p>
+
+<h2>1.2 Ingresar a la aplicación</h2>
+<ol class="steps">
+  <li>Abre la dirección de la aplicación que te dio el administrador (en el computador o en el celular).</li>
+  <li>Escribe tu <strong>correo electrónico</strong> y tu <strong>contraseña</strong>. El ojo de la derecha muestra lo que escribiste.</li>
+  <li>Presiona <span class="ui">Iniciar sesión</span>.</li>
+</ol>
+<figure class="short"><img src="img/ventas-01-login.jpg" alt=""><figcaption>Pantalla de ingreso.</figcaption></figure>
+<div class="box note"><span class="title">Importante</span>
+  <p>Si recargas o cierras la página, tendrás que ingresar de nuevo. Es normal y protege tu cuenta. Si olvidaste la contraseña o necesitas acceso, pídeselo al administrador.</p>
+</div>
+
+<h2>1.3 Inicio y menú</h2>
+<p>Al entrar ves <strong>Inicio</strong>, con un acceso para cada sección. En el computador, el menú está a la izquierda; abajo aparecen tu nombre, tu rol y el botón para <strong>cerrar sesión</strong>.</p>
+<figure><img src="img/ventas-02-inicio.jpg" alt=""><figcaption>Inicio en el computador.</figcaption></figure>
+<table>
+  <tr><th>Sección</th><th>Para qué sirve</th></tr>
+  <tr><td>Consultar chip</td><td>Ver un paquete leyendo su chip o escribiendo su código.</td></tr>
+  <tr><td>Lectura masiva</td><td>Leer muchos chips a la vez con el lector.</td></tr>
+  <tr><td>Paquetes</td><td>Lista de paquetes con filtros por producto, ubicación y procedencia.</td></tr>
+  <tr><td>Resumen</td><td>Perfiles disponibles por referencia y color, y dónde están.</td></tr>
+  <tr><td>Tareas</td><td>Tus tareas y las que te asignan.</td></tr>
+  <tr><td>Ventas</td><td>Cotizaciones y órdenes de venta.</td></tr>
+  <tr><td>Despachos</td><td>Entregas autorizadas de tus órdenes.</td></tr>
+  <tr><td>Solicitudes a bodega</td><td>Pedir material a una bodega para un almacén.</td></tr>
+</table>
+
+<h2>1.4 En el celular</h2>
+<p>La aplicación se adapta al celular. La barra de abajo tiene <strong>Inicio, Chip, Paquetes, Resumen y Tareas</strong>; <strong>Ventas, Despachos y Solicitudes</strong> se abren desde los accesos de Inicio. El número sobre <strong>Tareas</strong> indica cuántas tienes pendientes.</p>
+<div class="duo">
+  <figure class="phone"><img src="img/ventas-40-celular-inicio.jpg" alt=""><figcaption>Inicio en el celular.</figcaption></figure>
+  <figure class="phone"><img src="img/ventas-41-celular-ventas.jpg" alt=""><figcaption>Ventas en el celular.</figcaption></figure>
+</div>
+<p><strong>Instalar la aplicación:</strong> en Inicio, el recuadro <strong>Este dispositivo</strong> ofrece <span class="ui">Instalar aplicación</span>. Así se abre como una app, desde un ícono en la pantalla de inicio y sin la barra del navegador. En Android usa Google Chrome.</p>
+<div class="pending"><strong>Pantallazo pendiente (celular real)</strong>El botón «Instalar aplicación» en Inicio → Este dispositivo, la confirmación de Chrome y el ícono en la pantalla de inicio del teléfono.</div>
+
+<h2>1.5 Notificaciones</h2>
+<p>La aplicación te avisa en el celular cuando:</p>
+<ul>
+  <li>un administrador <strong>aprueba o rechaza</strong> tu descuento o tu precio manual;</li>
+  <li>bodega <strong>confirma la salida</strong> de un despacho de tu orden;</li>
+  <li><strong>facturan</strong> una de tus órdenes;</li>
+  <li>te <strong>asignan una tarea</strong>.</li>
+</ul>
+<p>Para recibirlas:</p>
+<ol class="steps">
+  <li>En <strong>Inicio</strong>, baja hasta el recuadro <strong>Este dispositivo</strong>.</li>
+  <li>Presiona <span class="ui">Activar notificaciones</span> y acepta el permiso que pide el navegador.</li>
+  <li>Comprueba con <span class="ui">Enviar notificación de prueba</span>.</li>
+</ol>
+<p>Se activan una vez por dispositivo. Si cambias de celular, actívalas en el nuevo. La conexión debe ser segura (dirección que empieza por https://).</p>
+<div class="pending"><strong>Pantallazos pendientes (celular real)</strong>El recuadro «Este dispositivo» con «Activar notificaciones», el permiso del navegador y una notificación recibida en el teléfono.</div>
+
+<!-- 2 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c2"><span class="num">2</span>Consultar el inventario</h1>
+
+<h2>2.1 Resumen de existencias</h2>
+<p><span class="ui">Resumen</span> muestra cuántos perfiles hay disponibles de cada <strong>referencia + color</strong>, cuántos paquetes cerrados y cuántos perfiles sueltos (de paquetes abiertos). Los paquetes agotados no se cuentan. Puedes filtrar por familia, sucursal y bodega o almacén.</p>
+<figure><img src="img/ventas-07-resumen.jpg" alt=""><figcaption>Resumen de inventario con sus totales.</figcaption></figure>
+<p>Presiona <span class="ui">Ubicaciones (2)</span> para ver en qué bodega o almacén está cada cantidad, y <span class="ui">Ver paquetes</span> para ir a la lista de esos paquetes.</p>
+<figure><img src="img/ventas-08-resumen-ubicaciones.jpg" alt=""><figcaption>El sillar 744 blanco pintura: 12 sueltos en el Almacén 7 de agosto y 48 en la Bodega 116.</figcaption></figure>
+
+<h2>2.2 Paquetes</h2>
+<p><span class="ui">Paquetes</span> lista todos los paquetes, del más reciente al más antiguo. Usa los filtros (familia, referencia, color, sucursal, bodega, pasillo, burro, estado, procedencia y proveedor) para encontrar lo que buscas.</p>
+<figure><img src="img/ventas-05-paquetes.jpg" alt=""><figcaption>Filtros de la lista de paquetes.</figcaption></figure>
+<figure><img src="img/ventas-06-paquetes-lista.jpg" alt=""><figcaption>Resultado: chip, referencia, color, perfiles, procedencia (China o Nacional) y ubicación.</figcaption></figure>
+<div class="box tip"><span class="title">Sueltos</span><p>Un paquete <strong>suelto</strong> es uno que ya se abrió: sus perfiles se venden por unidad desde ese lugar.</p></div>
+
+<h2>2.3 Consultar un chip</h2>
+<p>Cada paquete tiene una etiqueta con un chip. En <span class="ui">Consultar chip</span> puedes leerlo con el lector Bluetooth (en modo teclado, con el campo activo) o escribir el código y presionar <span class="ui">Buscar paquete</span>.</p>
+<figure class="short"><img src="img/ventas-03-consultar-chip.jpg" alt=""><figcaption>Consulta por chip.</figcaption></figure>
+<p>Verás la referencia, el color, los perfiles disponibles, la ubicación exacta (bodega, pasillo y burro) y el historial de movimientos. Con tu rol solo consultas: las operaciones del paquete las hace bodega.</p>
+<figure><img src="img/ventas-04-paquete.jpg" alt=""><figcaption>Detalle de un paquete.</figcaption></figure>
+<div class="pending"><strong>Pantallazo pendiente (lector real)</strong>Lectura de un chip con el lector UHF Bluetooth emparejado al celular, y la pantalla «Lectura masiva» con varios chips leídos.</div>
+
+<!-- 3 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c3"><span class="num">3</span>Cotizaciones</h1>
+
+<h2>3.1 Reglas que debes conocer</h2>
+<ul>
+  <li><strong>Una cotización no reserva ni descuenta inventario.</strong> El material se reserva cuando la orden de venta se confirma.</li>
+  <li><strong>El precio lo habilita administración</strong> para cada referencia, color y origen. Si no hay precio, puedes pedir un <strong>precio manual</strong>, que debe autorizar un administrador.</li>
+  <li><strong>China y Nacional son materiales distintos</strong>, aunque coincidan la referencia y el color: cada renglón dice qué origen exige.</li>
+  <li>La cantidad va en <strong>perfiles enteros</strong>, no en paquetes.</li>
+  <li><strong>Descuentos:</strong> hasta <strong>3 % por renglón</strong> y hasta <strong>3 % de descuento global</strong> los aplicas tú. Un descuento global mayor necesita autorización de un administrador.</li>
+  <li>El <strong>IVA de venta</strong> viene en 19 % y puedes cambiarlo por renglón.</li>
+  <li>Los precios y totales los calcula el sistema y se conservan con las condiciones del día en que guardaste.</li>
+</ul>
+
+<h2>3.2 Crear una cotización</h2>
+<ol class="steps">
+  <li>Entra a <span class="ui">Ventas</span> y presiona <span class="ui">Nueva cotización</span>.</li>
+  <li>Elige la <strong>modalidad</strong>: <strong>Detal</strong> (materiales y accesorios) o <strong>Ventanería</strong> (además, ensamble e instalación si se cobran; ver 3.10).</li>
+  <li>En <strong>Cliente</strong>, escribe parte del nombre o del NIT y <strong>elige uno de los resultados</strong>.</li>
+  <li>Opcional: <strong>Válida hasta</strong>, <strong>Notas</strong>, <strong>Forma de pago</strong> y <strong>Condiciones de pago</strong>. Si es solo una consulta, deja la forma de pago en «Por definir»: se pide al convertir en orden.</li>
+</ol>
+<figure><img src="img/ventas-11-buscar-cliente.jpg" alt=""><figcaption>Modalidad y búsqueda del cliente: al escribir «constru» aparece Constructora Ejemplo S.A.S.</figcaption></figure>
+<p>Si el cliente no existe, presiona <span class="ui">+ Cliente nuevo</span>, escribe su nombre (y su NIT si lo tienes) y presiona <span class="ui">Crear cliente</span>.</p>
+<figure class="short"><img src="img/ventas-12-cliente-nuevo.jpg" alt=""><figcaption>Crear un cliente desde la cotización.</figcaption></figure>
+
+<h2>3.3 Agregar renglones</h2>
+<p>Cada renglón es un material. Para llenarlo:</p>
+<ol class="steps">
+  <li><strong>Familia</strong> (opcional): filtra la lista de referencias, por ejemplo «744 PUERTA CORREDIZA».</li>
+  <li><strong>Referencia</strong> y <strong>Acabado (color)</strong>.</li>
+  <li><strong>Origen requerido</strong>: China o Nacional.</li>
+  <li><strong>Perfiles</strong>: la cantidad.</li>
+  <li>Revisa el <strong>precio habilitado sin IVA</strong>; si quieres, pon un <strong>descuento</strong> (hasta 3 %) o cambia el <strong>IVA</strong>.</li>
+</ol>
+<p>Para más materiales presiona <span class="ui">+ Agregar renglón</span>; para quitar uno, <span class="ui">Quitar renglón</span>.</p>
+<figure class="tall"><img src="img/ventas-13-renglon.jpg" alt=""><figcaption>Renglón completo: precio, disponibilidad por ubicación, precio con IVA y total del renglón.</figcaption></figure>
+
+<h2>3.4 Disponibilidad por ubicación</h2>
+<p>Debajo de cada renglón ves cuántos perfiles hay disponibles <strong>de ese origen</strong>:</p>
+<ul>
+  <li><strong>En tu ubicación</strong> (la que te asignó el administrador), primero.</li>
+  <li><strong>En otras ubicaciones</strong>, aparte.</li>
+  <li>Un <strong>aviso amarillo</strong> si en tu ubicación no alcanza para la cantidad pedida.</li>
+</ul>
+<div class="box warn"><span class="title">La orden sale de una sola ubicación</span>
+  <p>Al confirmar la orden se reserva todo en <strong>una</strong> bodega o almacén. Si en tu ubicación no alcanza, al confirmar elige la ubicación que sí tiene el material, o pide un traslado (capítulo 6). Si no hay en ninguna, la orden queda <strong>pendiente de abastecimiento</strong>.</p>
+</div>
+<p>El material de <strong>origen desconocido</strong> (paquetes sin clasificar) se muestra aparte y no se usa hasta que administración lo clasifique.</p>
+
+<h2>3.5 Totales y descuento global</h2>
+<p>Al final ves el subtotal, los descuentos, el IVA y el <strong>total</strong> de la cotización. El <strong>descuento global</strong> se aplica sobre toda la cotización, antes del IVA.</p>
+<figure><img src="img/ventas-14-totales.jpg" alt=""><figcaption>Dos renglones con 2 % de descuento global.</figcaption></figure>
+
+<h2>3.6 Guardar, revisar y descargar el PDF</h2>
+<ol class="steps">
+  <li>Presiona <span class="ui">Guardar cotización</span>. Si falta algo, el botón dice qué (por ejemplo «Para guardar: Elige el cliente.»).</li>
+  <li>La cotización recibe un número (<strong>COT-…</strong>) y queda en estado <span class="badge">Borrador</span>.</li>
+  <li>Presiona <span class="ui">Descargar PDF</span> para enviársela al cliente.</li>
+</ol>
+<figure><img src="img/ventas-15-cotizacion-guardada.jpg" alt=""><figcaption>Cotización guardada con su número y el botón Descargar PDF.</figcaption></figure>
+<p>Abajo, <strong>Condiciones guardadas</strong> muestra cada renglón con su precio, descuento, IVA y total, tal como quedaron. Desde ahí puedes <span class="ui">Guardar cambios</span>, <span class="ui">Convertir en orden de venta</span> o <span class="ui">Cancelar cotización</span>.</p>
+<figure class="short"><img src="img/ventas-16-condiciones.jpg" alt=""><figcaption>Condiciones guardadas de la cotización.</figcaption></figure>
+<div class="box tip"><span class="title">Editar</span><p>Mientras esté en <strong>Borrador</strong> puedes cambiar renglones, cliente y condiciones; presiona <span class="ui">Guardar cambios</span>. Una vez convertida en orden ya no se edita.</p></div>
+
+<h2>3.7 Precio manual</h2>
+<p>Si un material no tiene precio habilitado («Sin precio habilitado»), o el caso lo pide (un precio acordado con el cliente), usa <strong>precio manual</strong>:</p>
+<figure class="short"><img src="img/ventas-25-sin-precio.jpg" alt=""><figcaption>Blanco mate sin precio habilitado para origen China.</figcaption></figure>
+<ol class="steps">
+  <li>Marca <span class="ui">Precio manual (requiere autorización de un administrador)</span>.</li>
+  <li>Escribe el <strong>precio manual sin IVA</strong> por perfil.</li>
+  <li>Opcional: el <strong>costo de compra estimado</strong> por perfil; el sistema calcula el margen estimado para el administrador.</li>
+  <li>Explica <strong>por qué el precio es manual</strong> (obligatorio).</li>
+  <li>Elige el <strong>administrador que autoriza</strong> y guarda con <span class="ui">Guardar y solicitar autorización</span>.</li>
+</ol>
+<figure class="tall"><img src="img/ventas-26-precio-manual.jpg" alt=""><figcaption>Precio manual con costo estimado y justificación.</figcaption></figure>
+<div class="box warn"><span class="title">Mientras no lo autoricen</span><p>La cotización no se convierte en orden ni se descarga en PDF. Si cambias un precio manual o envías otra solicitud, la anterior se cancela.</p></div>
+
+<h2>3.8 Descuento global mayor al 3 %</h2>
+<p>Si escribes un descuento global mayor al 3 %, aparecen el <strong>motivo</strong> (opcional) y el <strong>administrador que autoriza</strong>. La cotización se guarda con 0 % y la solicitud le llega al administrador como tarea; si la aprueba, el descuento se aplica solo.</p>
+<figure><img src="img/ventas-27-descuento-global.jpg" alt=""><figcaption>Solicitud de 5 % de descuento global a un administrador.</figcaption></figure>
+<p>Mientras tanto, la cotización muestra las solicitudes <strong>pendientes de autorización</strong>, con lo que pasaría si se aprueban. Puedes <span class="ui">Cancelar solicitud</span> si ya no la necesitas.</p>
+<figure><img src="img/ventas-28-autorizaciones-pendientes.jpg" alt=""><figcaption>Descuento global y precio manual pendientes de autorización.</figcaption></figure>
+
+<h2>3.9 Respuestas del administrador</h2>
+<p>Cuando el administrador aprueba o rechaza, te llega una notificación y en <span class="ui">Ventas</span> aparece <strong>«Tienes N respuestas nuevas a tus solicitudes»</strong>, con un botón <span class="ui">Ver cotización</span>. Un descuento aprobado ya queda aplicado; un precio manual puede haber sido corregido por el administrador, así que revísalo.</p>
+<figure><img src="img/ventas-29-respuestas.jpg" alt=""><figcaption>Respuestas nuevas: precio manual y descuento global aprobados.</figcaption></figure>
+
+<h2>3.10 Ventanería: ensamble e instalación</h2>
+<p>Con la modalidad <strong>Ventanería</strong> aparece el recuadro <strong>Mano de obra (Ventanería)</strong>. Escribe el valor total de cada servicio que se cobre, sin IVA y sin descuentos; deja vacío el que no se cobre:</p>
+<ul>
+  <li><strong>Ensamble:</strong> armar la ventana en el taller.</li>
+  <li><strong>Instalación:</strong> instalar la ventana en la obra.</li>
+</ul>
+<figure><img src="img/ventas-39-ventaneria.jpg" alt=""><figcaption>Cotización de Ventanería con ensamble e instalación.</figcaption></figure>
+<p>En la lista de Ventas, estas cotizaciones llevan la marca <span class="badge info">Ventanería · con mano de obra</span>.</p>
+
+<!-- 4 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c4"><span class="num">4</span>Órdenes de venta</h1>
+
+<h2>4.1 Convertir una cotización en orden</h2>
+<ol class="steps">
+  <li>Abre la cotización y presiona <span class="ui">Convertir en orden de venta</span>.</li>
+  <li>Elige la <strong>forma de pago</strong> (obligatoria): contado en efectivo, contado por transferencia, abono o cartera (crédito).</li>
+  <li>Opcional: las <strong>condiciones de pago</strong>, por ejemplo «50 % de anticipo y saldo contra entrega».</li>
+  <li>Si el cliente necesita factura electrónica, marca <span class="ui">Requiere facturación</span> (ver 4.5).</li>
+  <li>Presiona <span class="ui">Convertir en orden de venta</span>.</li>
+</ol>
+<figure class="short"><img src="img/ventas-17-convertir.jpg" alt=""><figcaption>Forma de pago, condiciones y «Requiere facturación».</figcaption></figure>
+<p>Para facturar, el cliente necesita <strong>NIT o cédula</strong> y <strong>correo</strong>. Si le faltan, la ventana los pide y quedan guardados en el cliente:</p>
+<figure class="short"><img src="img/ventas-31-convertir-datos-facturacion.jpg" alt=""><figcaption>Cliente sin correo: se pide al marcar «Requiere facturación».</figcaption></figure>
+<p>La orden recibe un número (<strong>OV-…</strong>) y queda <span class="badge">Por confirmar</span>.</p>
+<figure><img src="img/ventas-18-orden.jpg" alt=""><figcaption>Orden de venta recién creada.</figcaption></figure>
+
+<h2>4.2 Estados de la orden</h2>
+<table>
+  <tr><th>Estado</th><th>Qué significa</th></tr>
+  <tr><td><span class="badge">Por confirmar</span></td><td>La orden existe, pero todavía no tiene material reservado.</td></tr>
+  <tr><td><span class="badge warn">Pendiente de abastecimiento</span></td><td>Se intentó confirmar y faltó material: no se reservó nada.</td></tr>
+  <tr><td><span class="badge ok">Reservada</span></td><td>Todo el material está reservado en una ubicación; ya puedes pedir despachos.</td></tr>
+  <tr><td><span class="badge ok">Entregada</span></td><td>Se entregó todo lo pedido.</td></tr>
+  <tr><td><span class="badge">Cancelada</span></td><td>Se canceló; sus reservas se liberaron.</td></tr>
+</table>
+
+<h2>4.3 Confirmar y reservar</h2>
+<p>Confirmar reserva la <strong>cantidad completa de cada renglón en la ubicación elegida, o nada</strong>.</p>
+<ol class="steps">
+  <li>En <strong>Confirmar y reservar</strong>, elige la <strong>sucursal</strong> y la <strong>bodega o almacén</strong> de donde saldrá el material.</li>
+  <li>Presiona <span class="ui">Confirmar orden</span>.</li>
+</ol>
+<p>Si falta material en esa ubicación, verás qué renglón falta y cuánto, y la orden queda <strong>pendiente de abastecimiento</strong>. Puedes volver a confirmar desde otra ubicación o cuando llegue el material.</p>
+<figure class="short"><img src="img/ventas-19-confirmar-faltante.jpg" alt=""><figcaption>En el Almacén 7 de agosto solo hay 12 de los 30 perfiles: no se reservó nada.</figcaption></figure>
+<figure><img src="img/ventas-20-orden-confirmada.jpg" alt=""><figcaption>Confirmada desde la Bodega 116: la orden queda «Reservada · sale de Bodega 116».</figcaption></figure>
+<div class="box tip"><span class="title">Entrega parcial</span><p>Si el cliente necesita llevarse una parte antes de que esté todo, usa <span class="ui">Autorizar entrega parcial</span>: se reserva solo lo que autorices y el resto de la orden queda pendiente.</p></div>
+
+<h2>4.4 Estado de pago</h2>
+<p>En órdenes de <strong>abono</strong> o <strong>cartera</strong>, el encabezado muestra <span class="badge warn">Pago pendiente</span>. Cuando el cliente pague, presiona <span class="ui">Marcar como pagada</span>. El cambio se puede deshacer y queda registrado con tu nombre.</p>
+<figure><img src="img/ventas-33-orden-encabezado.jpg" alt=""><figcaption>Encabezado de la orden: forma de pago, condiciones y estado de pago.</figcaption></figure>
+
+<h2>4.5 Facturación electrónica</h2>
+<p>Si marcaste <strong>Requiere facturación</strong>, la orden le llega como tarea a la persona de <strong>Facturación</strong>, que descarga el PDF, hace la factura en el software de facturación y registra su número.</p>
+<figure class="short"><img src="img/ventas-32-facturacion-orden.jpg" alt=""><figcaption>Recuadro de facturación electrónica en la orden.</figcaption></figure>
+<ul>
+  <li>Mientras no esté facturada, puedes marcar o desmarcar <strong>Requiere facturación</strong> desde la orden.</li>
+  <li>Cuando la facturan, te llega un aviso y la orden muestra <span class="badge ok">Factura FE-…</span>.</li>
+  <li>Si se cancela una orden ya facturada, Facturación recibe una tarea para anular la factura.</li>
+</ul>
+
+<h2>4.6 Cancelar una orden</h2>
+<p>Presiona <span class="ui">Cancelar orden…</span>, escribe el <strong>motivo</strong> y confirma. Se liberan las reservas y los despachos abiertos; las salidas ya confirmadas se conservan.</p>
+
+<!-- 5 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c5"><span class="num">5</span>Despachos</h1>
+<p>Un <strong>despacho</strong> autoriza a bodega a entregar el material reservado de una orden. Se crea una tarea para el responsable de bodega, que lee los paquetes y confirma la salida.</p>
+<h2>5.1 Crear un despacho</h2>
+<ol class="steps">
+  <li>En una orden <strong>Reservada</strong>, presiona <span class="ui">Crear despacho</span>.</li>
+  <li>Revisa las cantidades de cada renglón.</li>
+  <li>Elige el <strong>responsable de bodega</strong> (solo aparecen los usuarios de bodega de la ubicación de salida).</li>
+  <li>Pon la <strong>fecha límite</strong> y la <strong>hora</strong> (hora de Colombia).</li>
+  <li>Presiona <span class="ui">Crear despacho y tarea</span>.</li>
+</ol>
+<figure class="short"><img src="img/ventas-21-crear-despacho.jpg" alt=""><figcaption>Formulario del despacho.</figcaption></figure>
+<h2>5.2 Seguir un despacho</h2>
+<p>El despacho recibe un número (<strong>DES-…</strong>) y muestra lo autorizado, lo preparado, lo entregado y las incidencias, con los paquetes sugeridos y su pasillo y burro.</p>
+<figure class="short"><img src="img/ventas-22-despacho.jpg" alt=""><figcaption>Despacho abierto con los paquetes sugeridos.</figcaption></figure>
+<p>En <span class="ui">Despachos</span> ves todos los tuyos por estado: <strong>Abiertos</strong>, <strong>Confirmados</strong> (salida confirmada) y <strong>Cancelados</strong>. Desde el despacho también puedes <span class="ui">Reasignar responsable</span> o <span class="ui">Cancelar despacho…</span>.</p>
+<figure class="short"><img src="img/ventas-23-despachos.jpg" alt=""><figcaption>Lista de despachos.</figcaption></figure>
+
+<!-- 6 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c6"><span class="num">6</span>Solicitudes a bodega</h1>
+<p>Sirven para <strong>pedir perfiles a una bodega para un almacén</strong>, por ejemplo de la Bodega 116 al Almacén 7 de agosto. No necesitas leer chips: bodega prepara paquetes completos, confirma la salida y el almacén marca el pedido como recibido.</p>
+<div class="box note"><span class="title">Importante</span><p>Enviar una solicitud no mueve ni reserva inventario. El material cambia de ubicación cuando bodega confirma la salida y el almacén lo recibe.</p></div>
+<h2>6.1 Crear una solicitud</h2>
+<ol class="steps">
+  <li>Entra a <span class="ui">Solicitudes a bodega</span> y presiona <span class="ui">Nueva solicitud</span>.</li>
+  <li>Elige la <strong>bodega que abastece</strong> y el <strong>almacén destino</strong>.</li>
+  <li>El <strong>bodeguero que prepara</strong> se asigna por turno; cámbialo solo si no está disponible.</li>
+  <li>Pon la <strong>fecha límite</strong>, la <strong>hora</strong> y, si quieres, una nota.</li>
+  <li>En cada renglón: referencia, color, origen y <strong>perfiles</strong> (no paquetes). Verás cuánto hay disponible en esa bodega.</li>
+  <li>Presiona <span class="ui">Enviar a bodega</span>.</li>
+</ol>
+<figure><img src="img/ventas-35-solicitud-nueva.jpg" alt=""><figcaption>Nueva solicitud de materiales.</figcaption></figure>
+<figure class="short"><img src="img/ventas-36-solicitud-renglon.jpg" alt=""><figcaption>Renglón de la solicitud con lo disponible en la bodega.</figcaption></figure>
+<h2>6.2 Seguimiento</h2>
+<p>La solicitud recibe un número (<strong>SM-…</strong>). En su detalle ves lo solicitado, preparado, despachado y pendiente. Como bodega envía paquetes completos, lo preparado puede superar lo solicitado.</p>
+<figure><img src="img/ventas-37-solicitud-enviada.jpg" alt=""><figcaption>Solicitud enviada a bodega.</figcaption></figure>
+<p>La lista se organiza en <strong>Por preparar</strong>, <strong>En camino</strong>, <strong>Recibidas</strong> y <strong>Canceladas</strong>. Desde el detalle puedes <span class="ui">Cambiar responsable</span> o <span class="ui">Cancelar solicitud…</span>.</p>
+
+<!-- 7 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c7"><span class="num">7</span>Tareas</h1>
+<p>En <span class="ui">Tareas</span> ves las tareas que te asignaron y puedes programar las tuyas, por ejemplo una llamada a un cliente.</p>
+<ol class="steps">
+  <li>En <strong>Nueva tarea</strong>, escribe el <strong>título</strong> y, si quieres, un detalle.</li>
+  <li>Elige el <strong>día</strong> y la <strong>hora</strong> en que vence (hora de Bogotá).</li>
+  <li>Presiona <span class="ui">Crear tarea</span>. Cuando la hagas, presiona <span class="ui">Marcar completada</span>.</li>
+</ol>
+<figure><img src="img/ventas-38-tareas.jpg" alt=""><figcaption>Tareas pendientes y formulario para programar una.</figcaption></figure>
+<p>Si una tarea vence sin completarse, pasa a <strong>Incompletas</strong>. Arriba ves cuántas tienes pendientes y cuántas vencen en las próximas 24 horas.</p>
+
+<!-- 8 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c8"><span class="num">8</span>La lista de Ventas</h1>
+<p><span class="ui">Ventas</span> tiene dos pestañas: <strong>Cotizaciones</strong> y <strong>Órdenes de venta</strong>. Cada fila muestra el número, el cliente, la fecha, el total y unas marcas de estado. Presiona una fila para abrirla.</p>
+<figure class="short"><img src="img/ventas-24-ventas-cotizaciones.jpg" alt=""><figcaption>Cotizaciones: borrador, de Ventanería y convertidas en orden.</figcaption></figure>
+<figure class="short"><img src="img/ventas-30-ordenes.jpg" alt=""><figcaption>Órdenes: estado, facturación y pago.</figcaption></figure>
+<table>
+  <tr><th>Marca</th><th>Significado</th></tr>
+  <tr><td><span class="badge">Borrador</span></td><td>Cotización guardada que aún puedes editar.</td></tr>
+  <tr><td><span class="badge">Orden OV-…</span></td><td>La cotización ya se convirtió en esa orden.</td></tr>
+  <tr><td><span class="badge info">Ventanería · con mano de obra</span></td><td>Cotización con ensamble o instalación.</td></tr>
+  <tr><td><span class="badge warn">Por facturar</span></td><td>Requiere factura y todavía no la registran.</td></tr>
+  <tr><td><span class="badge ok">Factura FE-…</span></td><td>Ya se facturó con ese número.</td></tr>
+  <tr><td><span class="badge warn">Pago pendiente</span></td><td>Orden de abono o cartera que el cliente aún no ha pagado.</td></tr>
+</table>
+
+<!-- 9 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c9"><span class="num">9</span>Preguntas frecuentes</h1>
+<dl class="faq">
+  <dt>La cotización dice que hay perfiles, pero al confirmar la orden faltan.</dt>
+  <dd>La orden se reserva en una sola ubicación. Revisa en el renglón cuánto hay <strong>en tu ubicación</strong> y cuánto <strong>en otras</strong>, y confirma desde la ubicación que tiene el material, o pide un traslado.</dd>
+  <dt>Aparece «Sin precio habilitado».</dt>
+  <dd>Administración no ha fijado precio para esa referencia, color y origen. Pídelo a administración o usa precio manual (3.7).</dd>
+  <dt>No me deja convertir la cotización en orden.</dt>
+  <dd>Revisa si hay una solicitud de precio manual o de descuento <strong>pendiente de autorización</strong>, y que hayas elegido la forma de pago. Si marcaste «Requiere facturación», el cliente necesita NIT o cédula y correo.</dd>
+  <dt>No me deja guardar.</dt>
+  <dd>El botón dice lo que falta, por ejemplo «Para guardar: Elige el cliente.». En el cliente hay que <strong>elegir uno de los resultados</strong>; escribir el nombre no basta.</dd>
+  <dt>Quiero dar más del 3 % de descuento.</dt>
+  <dd>Como descuento global, pide la autorización a un administrador (3.8). Por renglón, el máximo es 3 %; para más, usa precio manual.</dd>
+  <dt>Recargué la página y me pidió ingresar otra vez.</dt>
+  <dd>Es normal: por seguridad, la sesión se cierra al recargar o cerrar la página.</dd>
+  <dt>No me llegan notificaciones.</dt>
+  <dd>Actívalas en Inicio → <strong>Este dispositivo</strong> en cada celular que uses, y revisa que el navegador tenga permiso para notificar.</dd>
+  <dt>Me equivoqué en una orden ya confirmada.</dt>
+  <dd>Cancélala con su motivo (4.6) y crea una nueva cotización. Si ya estaba facturada, Facturación recibirá la tarea de anular la factura.</dd>
+</dl>
+
+</body>
+</html>

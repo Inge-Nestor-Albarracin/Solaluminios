@@ -2677,7 +2677,8 @@ local de desarrollo el 17/11/2026):
   BRAZOS DE 8"». Los filtros de Paquetes no ofrecen accesorios.
 
 **Pendiente.**
-- En el servidor: `prisma migrate deploy` y la importación del CSV.
+- ~~En el servidor: `prisma migrate deploy` y la importación del CSV~~
+  (hecho el 18/11/2026; ver «Despliegue en producción»).
 - Para venderlos: color (o «sin color»), unidad (unidad, metro o rollo) y
   cómo se muestran en cotizaciones y PDF.
 
@@ -2766,7 +2767,7 @@ de desarrollo el 18/11/2026):
 
 **Pendiente.**
 - Crear el usuario real con rol Facturación (Administración → Usuarios).
-- En el servidor: `prisma migrate deploy`.
+- ~~En el servidor: `prisma migrate deploy`~~ (hecho el 18/11/2026).
 
 ## Disponibilidad por ubicación en la cotización (18/11/2026)
 
@@ -2808,6 +2809,122 @@ de mayor a menor disponible.
   - con 5 perfiles aparece el aviso;
   - sin ubicación: «18 perfiles (Almacén 7 de agosto: 18)»;
   - a 375 px sin desbordes.
+
+## Despliegue en producción (18/11/2026)
+
+Lo hizo el usuario en el servidor (`/srv/solaluminios`, base
+`solaluminios_prod`, commit `b427d499`). Aquí se resume la salida que pegó.
+
+**Migraciones** (`prisma migrate deploy`): se aplicaron
+`20261106120000_reference_family_hint`, `20261113120000_request_answer_seen`,
+`20261117120000_quote_sale_type_services`, `20261117130000_material_requests`,
+`20261117140000_accessory_catalog` y `20261118120000_order_billing`. El
+resultado fue «Database schema is up to date».
+
+**Comprobación:** la página responde HTTP 200 y `/api/tasks` sin sesión
+responde 401.
+
+**Catálogo** (`pnpm catalog:import` desde `apps/api`; primero simulación,
+luego `--apply`). Producción no tenía familias ni referencias: no hubo
+conflictos.
+- **Perfiles** (`catalog-references.csv`): 23 familias y 218 referencias
+  nuevas. Las 9 «por validar» (177, 413, 1122, 1123, 840, 3709, T166, 315,
+  T237) entraron con la familia propuesta.
+- **Accesorios** (`catalog-accessories.csv`): 2 familias (ACCESORIOS y
+  ACCESORIOS-YALE) y 128 referencias.
+- Una segunda corrida dio «0 nuevas, 218 sin cambios».
+
+**Pendiente en producción.**
+- Crear el usuario de Facturación.
+- Revisar la ubicación predeterminada de cada vendedor: de ella depende la
+  disponibilidad que muestra la cotización.
+- Validar las 9 referencias «por validar».
+
+## Base limpia para arrancar en producción (18/11/2026)
+
+**Decisión del usuario:** en una semana, arrancar con una base sin pruebas,
+solo con el catálogo. Opción elegida: base nueva. La actual se renombra a
+`solaluminios_pruebas` y se conserva; no se borra tabla por tabla.
+
+**Hallazgo.** No hay pantallas para crear acabados, sucursales, ubicaciones,
+pasillos ni burros (solo `POST` del API). Una base vacía los perdería.
+
+**Script nuevo `pnpm structure:copy`** (`src/scripts/copy-structure.ts`):
+- copia esas cinco tablas desde otra base del mismo servidor, con sus mismos
+  ids; ninguna tiene relación con usuarios;
+- por defecto solo simula; `--apply` aplica en una transacción y deja la
+  auditoría `STRUCTURE_COPIED`;
+- solo copia lo activo;
+- `--exclude-branch` y `--exclude-location` dejan fuera la estructura de
+  prueba; un código inexistente da error;
+- se niega a aplicar sobre la misma base o sobre una que ya tenga estructura;
+- solo imprime nombres de base, nunca credenciales.
+
+**Guía:** `docs/deploy/base-limpia.md`:
+- días antes: desplegar, revisar con la simulación, anotar la configuración;
+- el corte: detener, respaldar, renombrar, crear, migrar, catálogo,
+  estructura, administrador con `read -s`, iniciar y configurar en la app;
+- cómo volver atrás.
+
+**Ensayo local completo** (PostgreSQL 18; la base de desarrollo hizo de
+producción actual y solo se leyó):
+- renombrar con conexiones cerradas y crear con el mismo dueño, codificación
+  y configuración regional;
+- 20 migraciones y los dos catálogos;
+- la simulación de `structure:copy` mostró 6 acabados activos, omitió el
+  inactivo y rechazó un código inexistente;
+- `--apply` excluyendo `TEST-C7923B31` copió solo 7 de agosto;
+- en una segunda base, la copia de pasillos y burros conservó sus relaciones;
+- una segunda aplicación y origen igual a destino se rechazaron;
+- `create-admin` creó uno y rechazó el segundo;
+- resultado: solo catálogo (25 familias, 346 referencias), 6 acabados, una
+  sucursal, 1 usuario y 3 auditorías; contadores de numeración en cero;
+- **navegador** (API apuntando a la base del ensayo): inicio de sesión
+  correcto; Registrar paquete ofreció las 23 familias de perfiles, los 6
+  acabados y solo 7 de agosto; Ventas, «Sin cotizaciones»;
+- después se borraron las tres bases del ensayo y se quitó la entrada
+  temporal de `.claude/launch.json`.
+
+**Pendiente.**
+- Desplegar el commit con `structure:copy` antes del corte.
+- Pasar a los CSV las correcciones del catálogo antes del corte.
+
+## Manual de usuario: Ventas (18/11/2026)
+
+El usuario pidió manuales en PDF: primero Ventas, luego Bodega y Administración.
+
+- **Entregado:** `docs/manual/Manual-Ventas.pdf`, de 29 páginas. Fuente en
+  `manual-ventas.html` con estilos compartidos en `assets/manual.css`; cómo
+  regenerarlo, en `docs/manual/README.md`.
+- **Contenido:**
+  - ingreso, menú y celular;
+  - consulta de inventario;
+  - cotizaciones, con disponibilidad por ubicación, precio manual y descuentos;
+  - órdenes: conversión, reserva, pago y facturación;
+  - despachos, solicitudes a bodega, tareas y preguntas frecuentes.
+- **Pantallazos** (41, en `docs/manual/img`):
+  - tomados con Edge sin ventana, nítidos y del mismo tamaño;
+  - la captura del panel del navegador recortaba la imagen por el escalado al
+    125 %;
+  - en una base local de demostración, `solaluminios_ensayo_manual`: catálogo
+    real y personas, clientes y proveedores ficticios;
+  - las capturas que requieren un celular o hardware real quedan marcadas como
+    «Pantallazo pendiente».
+- **Base de demostración:** se conserva para los manuales de Bodega y
+  Administración; se borra al terminarlos.
+
+**Manual de Bodega** (`Manual-Bodega.pdf`, 27 páginas, 33 pantallazos
+`bodega-*`):
+- registrar paquetes: inventario existente o entrada nueva, la lista por
+  guardar y el guardado definitivo;
+- consultar y operar un paquete: abrir, salida, traslado e historial (los
+  ajustes son del administrador);
+- lectura masiva y traslado masivo;
+- despachos: lectura, incidencia resuelta y salida confirmada;
+- solicitudes de materiales: preparar, despachar y recibir en el almacén;
+- tareas y preguntas frecuentes.
+
+Por decisión del usuario se omite Recepción China.
 
 ## Pendiente
 

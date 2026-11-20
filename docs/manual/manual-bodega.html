@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Manual de usuario · Bodega · Solualuminios</title>
+<link rel="stylesheet" href="assets/manual.css">
+<style>
+  @page { size: A4; margin: 16mm 16mm 18mm; @bottom-left { content: 'Manual de usuario · Bodega'; font: 8pt 'Nunito Sans', sans-serif; color: #5b6684; } @bottom-right { content: 'Página ' counter(page) ' de ' counter(pages); font: 8pt 'Nunito Sans', sans-serif; color: #5b6684; } }
+  @page :first { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <img class="logo" src="assets/logo-negativo.svg" alt="WeTracking · Soluciones Integrales">
+  <p class="kicker">Manual de usuario</p>
+  <h1>Bodega</h1>
+  <p class="subtitle">Solualuminios · Inventario de perfiles. Registro de paquetes, operaciones, despachos y solicitudes de material.</p>
+  <div class="meta">
+    <strong>Versión 1</strong> · Noviembre de 2026<br>
+    Para el rol <strong>Bodega</strong> (bodegas y almacenes)<br>
+    Las personas, clientes y paquetes de los pantallazos son de ejemplo.
+  </div>
+</section>
+
+<nav class="toc">
+  <h1>Contenido</h1>
+  <ol>
+    <li><a href="#c1">Antes de empezar</a>
+      <ol><li>Qué puedes hacer con tu rol</li><li>Ingresar a la aplicación</li><li>Inicio y menú</li><li>En el celular</li><li>Notificaciones</li><li>El lector de chips</li></ol></li>
+    <li><a href="#c2">Registrar paquetes</a>
+      <ol><li>Inventario existente o entrada nueva</li><li>Llenar el registro</li><li>Lista por guardar y guardado definitivo</li><li>Reglas del registro</li></ol></li>
+    <li><a href="#c3">Consultar y operar un paquete</a>
+      <ol><li>Consultar por chip</li><li>Abrir paquete</li><li>Salida</li><li>Traslado</li><li>Historial de movimientos</li></ol></li>
+    <li><a href="#c4">Lectura masiva y traslado masivo</a></li>
+    <li><a href="#c5">Despachos</a>
+      <ol><li>La tarea del despacho</li><li>Leer los paquetes</li><li>Incidencias</li><li>Confirmar la salida</li></ol></li>
+    <li><a href="#c6">Solicitudes de materiales</a>
+      <ol><li>Preparar en la bodega</li><li>Confirmar la salida</li><li>Recibir en el almacén</li></ol></li>
+    <li><a href="#c7">Paquetes y Resumen</a></li>
+    <li><a href="#c8">Tareas</a></li>
+    <li><a href="#c9">Preguntas frecuentes</a></li>
+  </ol>
+</nav>
+
+<!-- 1 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c1"><span class="num">1</span>Antes de empezar</h1>
+
+<h2>1.1 Qué puedes hacer con tu rol</h2>
+<p>Con el rol <strong>Bodega</strong> puedes:</p>
+<ul>
+  <li><strong>registrar paquetes</strong>: el inventario que ya existía y la mercancía que llega;</li>
+  <li><strong>consultar</strong> cualquier paquete por su chip y ver su historial;</li>
+  <li><strong>abrir</strong> un paquete, registrar una <strong>salida</strong> o <strong>trasladarlo</strong>;</li>
+  <li>leer muchos chips a la vez y <strong>trasladarlos juntos</strong>;</li>
+  <li><strong>preparar despachos</strong> de órdenes de venta y confirmar su salida;</li>
+  <li><strong>preparar y enviar solicitudes de materiales</strong> a un almacén, o <strong>recibirlas</strong> si trabajas en el almacén;</li>
+  <li>organizar tus <strong>tareas</strong>.</li>
+</ul>
+<p>Cada usuario de Bodega tiene una <strong>ubicación</strong> asignada (por ejemplo Bodega 116 o Almacén 7 de agosto). Los despachos y las solicitudes se asignan a las personas de la ubicación de donde sale o adonde llega el material.</p>
+<div class="box note"><span class="title">Ajustes de inventario</span><p>Corregir cantidades (ajustes de entrada o salida) es solo del <strong>administrador</strong>. Si un paquete tiene una cantidad equivocada, avísale.</p></div>
+
+<h2>1.2 Ingresar a la aplicación</h2>
+<p>Abre la dirección de la aplicación, escribe tu <strong>correo</strong> y tu <strong>contraseña</strong> y presiona <span class="ui">Iniciar sesión</span>. Si recargas o cierras la página tendrás que ingresar de nuevo.</p>
+<figure class="short"><img src="img/bodega-01-login.jpg" alt=""><figcaption>Pantalla de ingreso.</figcaption></figure>
+
+<h2>1.3 Inicio y menú</h2>
+<figure><img src="img/bodega-02-inicio.jpg" alt=""><figcaption>Inicio de un usuario de Bodega. El número junto a Tareas indica cuántas tiene pendientes.</figcaption></figure>
+<table>
+  <tr><th>Sección</th><th>Para qué sirve</th></tr>
+  <tr><td>Registrar paquete</td><td>Dar de alta paquetes con su chip, producto, ubicación y cantidad.</td></tr>
+  <tr><td>Consultar chip</td><td>Ver un paquete y hacer sus operaciones: abrir, salida o traslado.</td></tr>
+  <tr><td>Lectura masiva</td><td>Leer muchos chips a la vez y trasladarlos juntos.</td></tr>
+  <tr><td>Paquetes</td><td>Lista de paquetes con filtros.</td></tr>
+  <tr><td>Resumen</td><td>Perfiles disponibles por referencia y color, y dónde están.</td></tr>
+  <tr><td>Tareas</td><td>Despachos y solicitudes asignados, y tus propias tareas.</td></tr>
+  <tr><td>Despachos</td><td>Entregas de órdenes de venta por preparar y confirmar.</td></tr>
+  <tr><td>Solicitudes a bodega</td><td>Pedidos de material entre bodega y almacén.</td></tr>
+</table>
+
+<h2>1.4 En el celular</h2>
+<p>En el celular, la barra de abajo tiene <strong>Inicio, Registrar, Chip, Paquetes, Resumen y Tareas</strong>. Despachos, Lectura masiva y Solicitudes se abren desde Inicio. Puedes instalar la app desde Inicio → <strong>Este dispositivo</strong> → <span class="ui">Instalar aplicación</span>.</p>
+<div class="duo">
+  <figure class="phone"><img src="img/bodega-30-celular-registrar.jpg" alt=""><figcaption>Registrar paquete en el celular.</figcaption></figure>
+  <figure class="phone"><img src="img/bodega-31-celular-paquete.jpg" alt=""><figcaption>Consulta de un paquete en el celular.</figcaption></figure>
+</div>
+
+<h2>1.5 Notificaciones</h2>
+<p>Actívalas en Inicio → <strong>Este dispositivo</strong> → <span class="ui">Activar notificaciones</span> y prueba con <span class="ui">Enviar notificación de prueba</span>. Te avisan cuando:</p>
+<ul>
+  <li>te asignan un <strong>despacho</strong>, o te lo reasignan o lo cancelan;</li>
+  <li>tienes una <strong>solicitud de materiales por preparar</strong>, o la cancelan;</li>
+  <li>sale de bodega una solicitud que debes <strong>recibir</strong> en tu almacén;</li>
+  <li>te <strong>asignan una tarea</strong>.</li>
+</ul>
+<div class="pending"><strong>Pantallazos pendientes (celular real)</strong>«Este dispositivo» con «Activar notificaciones» y una notificación de despacho asignado en el teléfono.</div>
+
+<h2>1.6 El lector de chips</h2>
+<p>Cada paquete tiene una etiqueta con un <strong>chip</strong> (RFID UHF). El código de fábrica del chip es el que identifica al paquete. Hay dos formas de leerlo:</p>
+<ul>
+  <li><strong>Modo teclado:</strong> la pistola escribe el código en el campo donde está el cursor, como si fuera un teclado. Funciona en todos los campos «Código del chip».</li>
+  <li><strong>Bluetooth:</strong> en Lectura masiva y en los despachos, el botón <span class="ui">Conectar lector Bluetooth</span> conecta la pistola Chafon (H100, H102 o H103) para leer muchos chips seguidos.</li>
+</ul>
+<p>Si el chip no se puede leer, también puedes <strong>escribir el código</strong> a mano.</p>
+<div class="pending"><strong>Pantallazos pendientes (lector real)</strong>Emparejar la pistola con el celular, el botón «Conectar lector Bluetooth» y una lectura en curso.</div>
+
+<!-- 2 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c2"><span class="num">2</span>Registrar paquetes</h1>
+
+<h2>2.1 Inventario existente o entrada nueva</h2>
+<p>Lo primero es elegir el <strong>tipo de registro</strong>. Son operaciones distintas y no se deben confundir:</p>
+<table>
+  <tr><th>Tipo</th><th>Cuándo usarlo</th></tr>
+  <tr><td><strong>Inventario existente</strong></td><td>El paquete ya estaba en bodega antes de usar el sistema (carga inicial del inventario).</td></tr>
+  <tr><td><strong>Entrada nueva</strong></td><td>Mercancía recién recibida.</td></tr>
+</table>
+<div class="box warn"><span class="title">Un paquete se registra una sola vez</span><p>Si lees el chip de un paquete que ya está registrado, el sistema no vuelve a sumar su stock. Para moverlo usa <strong>Traslado</strong>; para consultarlo, <strong>Consultar chip</strong>.</p></div>
+
+<h2>2.2 Llenar el registro</h2>
+<ol class="steps">
+  <li>Entra a <span class="ui">Registrar paquete</span> y elige el <strong>tipo de registro</strong>.</li>
+  <li><strong>Producto:</strong> elige la <strong>familia</strong> (puedes buscarla por nombre o código), luego la <strong>referencia</strong> y el <strong>acabado (color)</strong>.</li>
+  <li><strong>Origen del material:</strong> China o Nacional. Si es nacional, elige el <strong>proveedor nacional</strong>; el de China se asigna solo.</li>
+  <li><strong>Llegada física:</strong> elige <strong>Fecha exacta</strong> si conoces el día, <strong>Mes y año</strong> si solo conoces el mes, o <strong>Desconocida</strong>. No inventes un día. La fecha de registro en el sistema se guarda aparte, automáticamente.</li>
+  <li><strong>Ubicación:</strong> sucursal, bodega, pasillo y burro. En un <strong>almacén</strong> no hay pasillo ni burro: el paquete queda abierto y sus perfiles, sueltos.</li>
+  <li><strong>Etiqueta y perfiles:</strong> lee el <strong>chip</strong> (o escribe su código) y escribe cuántos <strong>perfiles</strong> tiene el paquete. Las notas son opcionales.</li>
+  <li>Presiona <span class="ui">Guardar y continuar</span>.</li>
+</ol>
+<figure class="short"><img src="img/bodega-03-registrar.jpg" alt=""><figcaption>Registro de una entrada nueva. A la derecha, el resumen del paquete actual.</figcaption></figure>
+<figure class="short"><img src="img/bodega-04-registrar-ubicacion.jpg" alt=""><figcaption>Llegada física y ubicación: Bodega 116, pasillo 2, burro 1.</figcaption></figure>
+
+<h2>2.3 Lista por guardar y guardado definitivo</h2>
+<p><span class="ui">Guardar y continuar</span> <strong>no guarda en el inventario</strong>: agrega el paquete a la <strong>lista por guardar</strong>. El producto, la llegada y la ubicación se conservan, así que para el siguiente paquete igual solo lees otro chip y escribes su cantidad.</p>
+<figure><img src="img/bodega-05-lista-por-guardar.jpg" alt=""><figcaption>Dos paquetes en la lista por guardar. Arriba, el aviso de que todavía no están en el inventario.</figcaption></figure>
+<ol class="steps">
+  <li>Revisa la lista. Para quitar un paquete, usa la <strong>X</strong> de su fila; para empezar de nuevo, <span class="ui">Vaciar lista</span>.</li>
+  <li>Presiona <span class="ui">Guardar definitivo</span> y luego <span class="ui">Confirmar guardado</span>.</li>
+</ol>
+<figure><img src="img/bodega-06-confirmar-guardado.jpg" alt=""><figcaption>Confirmación del guardado: todos los paquetes se guardan juntos o no se guarda ninguno.</figcaption></figure>
+<figure class="short"><img src="img/bodega-07-guardado.jpg" alt=""><figcaption>Paquetes guardados en el inventario.</figcaption></figure>
+
+<h2>2.4 Reglas del registro</h2>
+<ul>
+  <li>Hasta <strong>50 paquetes</strong> por lista.</li>
+  <li>El código del chip se guarda en mayúsculas y conserva los ceros iniciales.</li>
+  <li>La cantidad va en <strong>perfiles enteros</strong>: la cantidad física que hay hoy.</li>
+  <li>Una misma lista lleva un solo origen. Si cambias de China a Nacional, guarda primero la lista anterior.</li>
+  <li>La lista se conserva en esa pestaña del navegador mientras no la guardes. <strong>No cierres la pestaña con paquetes sin guardar.</strong> Si cierras sesión con paquetes en la lista, la app te pregunta si quieres revisarlos, conservarlos o descartarlos.</li>
+</ul>
+
+<!-- 3 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c3"><span class="num">3</span>Consultar y operar un paquete</h1>
+
+<h2>3.1 Consultar por chip</h2>
+<p>En <span class="ui">Consultar chip</span>, lee el chip o escribe su código y presiona <span class="ui">Buscar paquete</span>. Verás la referencia, el color, los perfiles disponibles, la ubicación, la llegada física y la fecha de registro. Debajo están las <strong>Operaciones</strong> y el <strong>historial</strong>.</p>
+<figure><img src="img/bodega-08-paquete.jpg" alt=""><figcaption>Detalle de un paquete con sus operaciones.</figcaption></figure>
+
+<h2>3.2 Abrir paquete</h2>
+<p>Úsalo cuando necesites <strong>solo una parte</strong> de un paquete cerrado. Sus perfiles pasan a ser <strong>sueltos</strong> en ese mismo lugar y los despachos los usan primero. No es una salida: el total no cambia. Un paquete se abre una sola vez y no necesita chip nuevo.</p>
+<ol class="steps">
+  <li>En la pestaña <span class="ui">Abrir paquete</span>, presiona <span class="ui">Revisar apertura</span>.</li>
+  <li>Lee el resumen y presiona <span class="ui">Abrir paquete</span>.</li>
+</ol>
+<figure class="short"><img src="img/bodega-09-abrir.jpg" alt=""><figcaption>Confirmación de la apertura.</figcaption></figure>
+
+<h2>3.3 Salida</h2>
+<p>Descuenta perfiles del paquete (por ejemplo, una venta de mostrador). Las entregas de órdenes de venta no se hacen aquí, sino con <strong>despachos</strong> (capítulo 5).</p>
+<ol class="steps">
+  <li>En la pestaña <span class="ui">Salida</span>, escribe los <strong>perfiles que salen</strong> (no más del saldo disponible).</li>
+  <li>Opcional: el <strong>motivo o documento</strong>.</li>
+  <li>Revisa el saldo resultante y presiona <span class="ui">Confirmar salida</span>.</li>
+</ol>
+<figure class="short"><img src="img/bodega-10-salida.jpg" alt=""><figcaption>Salida de 6 perfiles: el saldo pasa de 24 a 18.</figcaption></figure>
+
+<h2>3.4 Traslado</h2>
+<p>Mueve <strong>paquetes completos</strong> a otra bodega, almacén, pasillo o burro; la cantidad no cambia. Puedes trasladar solo este paquete o agregar otros leyendo su chip.</p>
+<ol class="steps">
+  <li>En la pestaña <span class="ui">Traslado</span>, si quieres mover más paquetes, lee sus chips en <strong>Agregar otro paquete</strong> y presiona <span class="ui">Agregar</span>.</li>
+  <li>Elige el destino: sucursal, bodega o almacén, pasillo y burro.</li>
+  <li>Opcional: el <strong>motivo o remisión</strong>.</li>
+  <li>Presiona <span class="ui">Revisar traslado</span> y luego <span class="ui">Confirmar traslado</span>.</li>
+</ol>
+<figure><img src="img/bodega-11-traslado.jpg" alt=""><figcaption>Traslado de dos paquetes al pasillo 1, burro 3.</figcaption></figure>
+<figure class="short"><img src="img/bodega-12-traslado-hecho.jpg" alt=""><figcaption>Traslado registrado: la ubicación del paquete ya cambió.</figcaption></figure>
+<div class="box tip"><span class="title">A un almacén</span><p>Si trasladas a un <strong>almacén</strong>, el paquete queda abierto y sus perfiles quedan sueltos para la venta.</p></div>
+
+<h2>3.5 Historial de movimientos</h2>
+<p>Cada paquete guarda sus movimientos: entrada o inventario inicial, aperturas, salidas, traslados y ajustes. Muestra la cantidad, el saldo, la ubicación, el responsable y el motivo.</p>
+<figure><img src="img/bodega-13-historial.jpg" alt=""><figcaption>Historial: entrada nueva y traslado, con su responsable.</figcaption></figure>
+
+<!-- 4 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c4"><span class="num">4</span>Lectura masiva y traslado masivo</h1>
+<p><span class="ui">Lectura masiva</span> sirve para leer muchos paquetes a la vez y ver qué referencia es cada uno. <strong>Leer no cambia el inventario.</strong></p>
+<ol class="steps">
+  <li>Conecta la pistola con <span class="ui">Conectar lector Bluetooth</span>, o deja el cursor en <strong>Código del chip</strong> si la pistola está en modo teclado. También puedes pegar varios códigos.</li>
+  <li>Aprieta el gatillo cerca de los paquetes. Cada chip aparece una sola vez, aunque se lea varias veces.</li>
+  <li>Revisa los contadores: <strong>chips leídos</strong>, <strong>registrados</strong> (con sus perfiles) y <strong>no registrados</strong>.</li>
+</ol>
+<figure><img src="img/bodega-27-lectura-masiva.jpg" alt=""><figcaption>Seis chips leídos: cinco registrados y uno sin paquete.</figcaption></figure>
+<p>Abajo verás el <strong>resumen por referencia</strong> y la lista de chips. Puedes filtrarla por <strong>Registrados</strong> o <strong>No registrados</strong>. Un chip no registrado tiene el botón <span class="ui">Registrar</span>, que lo lleva a Registrar paquete. Si leíste un paquete vecino por error, usa <span class="ui">Quitar</span>.</p>
+<figure><img src="img/bodega-28-lectura-resumen.jpg" alt=""><figcaption>Resumen por referencia y lista de chips leídos.</figcaption></figure>
+<h2>Trasladar los paquetes leídos</h2>
+<p>Con <span class="ui">Trasladar paquetes</span> mueves de una vez todos los paquetes <strong>registrados</strong> de la lista. Es todo o nada: si uno no se puede mover, no se mueve ninguno.</p>
+<figure class="short"><img src="img/bodega-29-traslado-masivo.jpg" alt=""><figcaption>Traslado masivo de 5 paquetes (128 perfiles).</figcaption></figure>
+
+<!-- 5 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c5"><span class="num">5</span>Despachos</h1>
+<p>Cuando Ventas confirma una orden y crea un <strong>despacho</strong>, te llega una tarea para preparar el material y confirmar su salida.</p>
+
+<h2>5.1 La tarea del despacho</h2>
+<p>En <span class="ui">Tareas</span> verás el despacho con lo que hay que preparar y su plazo. Presiona <span class="ui">Abrir despacho</span>. También lo encuentras en <span class="ui">Despachos</span>.</p>
+<figure><img src="img/bodega-20-tareas.jpg" alt=""><figcaption>Tareas de Bodega: un despacho y una solicitud de materiales.</figcaption></figure>
+
+<h2>5.2 Leer los paquetes</h2>
+<p>El despacho muestra cada renglón con lo que falta y los <strong>paquetes sugeridos</strong>, con su pasillo y burro. Primero se sugieren los perfiles sueltos y luego los paquetes más antiguos.</p>
+<figure><img src="img/bodega-14-despacho.jpg" alt=""><figcaption>Despacho abierto: 40 perfiles autorizados y los paquetes sugeridos.</figcaption></figure>
+<ol class="steps">
+  <li>Ve al pasillo y burro sugeridos.</li>
+  <li>Lee cada paquete con la pistola (o escribe el código en <strong>Chip</strong> y presiona Enter).</li>
+  <li>Revisa que cada renglón quede <span class="badge ok">Completo</span>.</li>
+</ol>
+<figure><img src="img/bodega-15-despacho-leyendo.jpg" alt=""><figcaption>Primer renglón completo con dos paquetes.</figcaption></figure>
+<div class="box tip"><span class="title">Paquete usado en parte</span><p>Si de un paquete solo se necesita una parte, el despacho lo indica («Preparado: 6 de 24 perfiles»). Al confirmar la salida, ese paquete queda abierto y el resto de sus perfiles pasa a sueltos.</p></div>
+
+<h2>5.3 Incidencias</h2>
+<p>Si lees un paquete que <strong>no corresponde</strong> (otra referencia, otro color u otro origen), aparece una <strong>incidencia</strong> y ese material no cuenta para el despacho. Retira el paquete, escribe <strong>cómo se resolvió</strong> y presiona <span class="ui">Resolver</span>. La salida solo se confirma cuando no quedan incidencias abiertas.</p>
+<figure><img src="img/bodega-16-incidencia.jpg" alt=""><figcaption>Incidencia: se leyó un sillar negro y el despacho pide blanco.</figcaption></figure>
+
+<h2>5.4 Confirmar la salida</h2>
+<ol class="steps">
+  <li>Cuando todo esté preparado y sin incidencias abiertas, presiona <span class="ui">Revisar y confirmar salida</span>.</li>
+  <li>Confirma que el material salió físicamente con <span class="ui">Confirmar salida física</span>.</li>
+</ol>
+<figure><img src="img/bodega-17-despacho-preparado.jpg" alt=""><figcaption>Todo preparado: 40 de 40 perfiles y ninguna incidencia abierta.</figcaption></figure>
+<figure class="short"><img src="img/bodega-18-confirmar-salida.jpg" alt=""><figcaption>Confirmación de la salida física.</figcaption></figure>
+<p>Al confirmar, se descuenta del inventario, se consumen las reservas de la orden, se completa tu tarea y se avisa al vendedor.</p>
+<figure><img src="img/bodega-19-despacho-confirmado.jpg" alt=""><figcaption>Despacho con la salida confirmada.</figcaption></figure>
+<div class="box note"><span class="title">Si no lo puedes hacer</span><p>Si no vas a poder preparar un despacho a tiempo, avisa: el despacho se puede <strong>reasignar</strong> a otra persona de la misma bodega. Un despacho atrasado sigue pendiente hasta que se confirme su salida.</p></div>
+
+<!-- 6 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c6"><span class="num">6</span>Solicitudes de materiales</h1>
+<p>Ventas pide perfiles de una bodega para un almacén. La bodega prepara <strong>paquetes completos</strong> y confirma la salida; el almacén marca el pedido como recibido.</p>
+
+<h2>6.1 Preparar en la bodega</h2>
+<ol class="steps">
+  <li>En <span class="ui">Tareas</span>, presiona <span class="ui">Preparar solicitud</span> (o ábrela en Solicitudes a bodega).</li>
+  <li>Revisa los materiales y los <strong>paquetes disponibles</strong> en tu bodega, con su pasillo y burro.</li>
+  <li>Lee el chip de cada paquete en <strong>Leer chip del paquete</strong>. Se reserva el paquete completo.</li>
+</ol>
+<figure><img src="img/bodega-21-solicitud.jpg" alt=""><figcaption>Solicitud por preparar: 30 perfiles de jamba 744 negro pintura.</figcaption></figure>
+<figure><img src="img/bodega-22-solicitud-preparada.jpg" alt=""><figcaption>Paquete preparado para el renglón 1.</figcaption></figure>
+<p>Como se envían paquetes completos, lo preparado puede superar lo solicitado. Si un paquete no va, usa <span class="ui">Quitar</span>.</p>
+
+<h2>6.2 Confirmar la salida</h2>
+<p>Presiona <span class="ui">Revisar y confirmar salida</span> y luego <span class="ui">Confirmar salida física</span>. Los paquetes se trasladan completos al almacén y allá quedan abiertos, como perfiles sueltos para la venta. Al almacén le llega la tarea de recibir.</p>
+<figure><img src="img/bodega-23-solicitud-despachada.jpg" alt=""><figcaption>Solicitud despachada, en camino al almacén.</figcaption></figure>
+
+<h2>6.3 Recibir en el almacén</h2>
+<p>La persona de bodega del almacén destino recibe la tarea <strong>«Recibir SM-…»</strong>.</p>
+<ol class="steps">
+  <li>Cuando llegue el material, presiona <span class="ui">Revisar y marcar recibido</span>.</li>
+  <li>Opcional: escribe las <strong>novedades</strong> (por ejemplo, un paquete que no llegó o llegó dañado).</li>
+  <li>Presiona <span class="ui">Marcar como recibido</span>.</li>
+</ol>
+<figure><img src="img/bodega-24-tarea-recibir.jpg" alt=""><figcaption>Tarea de recepción en el Almacén 7 de agosto.</figcaption></figure>
+<figure class="short"><img src="img/bodega-25-recibir.jpg" alt=""><figcaption>Recepción con una novedad.</figcaption></figure>
+<figure><img src="img/bodega-26-recibida.jpg" alt=""><figcaption>Solicitud recibida.</figcaption></figure>
+
+<!-- 7 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c7"><span class="num">7</span>Paquetes y Resumen</h1>
+<p><span class="ui">Resumen</span> muestra los perfiles disponibles por referencia y color, los paquetes cerrados y los perfiles sueltos. <span class="ui">Ubicaciones</span> dice en qué bodega, pasillo y burro está cada cantidad.</p>
+<figure><img src="img/bodega-32-resumen.jpg" alt=""><figcaption>Resumen de inventario.</figcaption></figure>
+<p><span class="ui">Paquetes</span> lista todos los paquetes con filtros por familia, referencia, color, sucursal, bodega, pasillo, burro, estado, procedencia y proveedor.</p>
+<figure><img src="img/bodega-33-paquetes.jpg" alt=""><figcaption>Lista de paquetes.</figcaption></figure>
+
+<!-- 8 ------------------------------------------------------------------- -->
+<h1 class="chapter continue" id="c8"><span class="num">8</span>Tareas</h1>
+<p>En <span class="ui">Tareas</span> están los despachos, solicitudes y recepciones que te asignan, y puedes programar tus propias tareas:</p>
+<ul>
+  <li><strong>Pendientes:</strong> lo que tienes por hacer, ordenado por fecha; arriba ves cuántas vencen en las próximas 24 horas.</li>
+  <li><strong>Completadas</strong> e <strong>Incompletas</strong> (vencidas sin completar).</li>
+  <li>Las tareas de despacho y de solicitudes se completan solas al confirmar la salida o la recepción.</li>
+  <li>Para una tarea propia: escribe el <strong>título</strong>, el día y la hora en que vence, y presiona <span class="ui">Crear tarea</span>; cuando la hagas, <span class="ui">Marcar completada</span>.</li>
+</ul>
+
+<!-- 9 ------------------------------------------------------------------- -->
+<h1 class="chapter" id="c9"><span class="num">9</span>Preguntas frecuentes</h1>
+<dl class="faq">
+  <dt>Leí un chip y dice que ya está registrado.</dt>
+  <dd>Ese paquete ya existe; no se registra de nuevo. Consúltalo en Consultar chip y, si cambió de lugar, haz un traslado.</dd>
+  <dt>Guardé y continué, pero el paquete no aparece en Paquetes.</dt>
+  <dd>«Guardar y continuar» solo lo agrega a la lista. Falta el <strong>guardado definitivo</strong> (2.3).</dd>
+  <dt>¿Inventario existente o entrada nueva?</dt>
+  <dd>Inventario existente: estaba en bodega antes del sistema. Entrada nueva: acaba de llegar.</dd>
+  <dt>No sé el día en que llegó el paquete.</dt>
+  <dd>Usa <strong>Mes y año</strong> si conoces el mes, o <strong>Desconocida</strong>. No inventes un día.</dd>
+  <dt>Un paquete tiene una cantidad equivocada.</dt>
+  <dd>Las correcciones (ajustes) las hace el administrador. Avísale con el código del chip y la cantidad real.</dd>
+  <dt>No puedo confirmar la salida de un despacho.</dt>
+  <dd>Revisa que todos los renglones estén completos y que no haya incidencias abiertas (5.3).</dd>
+  <dt>El despacho me sugiere un paquete que no encuentro.</dt>
+  <dd>Lee otro paquete que cumpla (misma referencia, color y origen) y avisa al administrador para revisar la ubicación del que falta.</dd>
+  <dt>El lector no escribe en el campo.</dt>
+  <dd>Deja el cursor en el campo «Código del chip» (modo teclado), o conecta la pistola con «Conectar lector Bluetooth». Si nada funciona, escribe el código a mano.</dd>
+</dl>
+
+</body>
+</html>
