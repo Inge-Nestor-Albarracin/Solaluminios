@@ -2999,6 +2999,121 @@ Primer encargo de `START-HERE.md`. No se cambió código.
   con `findUniqueOrThrow` sin id. La causa del primer fallo no quedó en la
   salida guardada; queda por reproducir.
 
+## Diseño del rol Accesorios (24/11/2026)
+
+El usuario pidió plantear un rol de Accesorios. Solo diseño: no se cambió
+código ni la base.
+
+**Decisiones del usuario:**
+- las cajas son canastas fijas de la bodega, con un chip por canasta
+  (referencia y color);
+- las compras se echan en la canasta y la entrada se digita a mano;
+- los accesorios se venden completos;
+- los colores son los mismos acabados;
+- la persona de Accesorios genera un despacho que le llega a ella misma y
+  registra la salida, todo auditable.
+
+**Propuesta** (`docs/accesorios-fase-1.md`):
+- canasta = `Bundle`;
+- recarga con `ENTRY` sobre la canasta existente, que el CHECK
+  `inventory_movements_balance_consistent` ya admite;
+- vale de salida asignado a sí misma, con salidas `EXIT` vinculadas;
+- rol `ACCESSORIES` restringido como `BILLING`;
+- ajustes solo del administrador.
+
+**Revisado en el código:**
+- las salidas parciales ya existen (`BundleExitDto.quantity`);
+- los despachos actuales exigen una orden de venta (`Dispatch.salesOrderId`),
+  por eso el vale es un documento aparte;
+- el registro de paquetes rechaza accesorios en `inventory.service.ts`.
+
+**Segunda ronda de decisiones (mismo día):**
+- todo lo que sale es para la venta;
+- en las entradas basta el soporte, y el administrador recibe una tarea
+  informativa sin autorizar;
+- no hay canastas repetidas;
+- si Ventas cotiza y despacha accesorios, a Bodega solo le llegan los
+  perfiles y a Accesorios, los accesorios.
+
+**Cambios en el diseño:**
+- se quita el vale de salida propio: toda salida de accesorios sale de un
+  despacho de una orden;
+- una orden mixta genera dos despachos;
+- el ingreso es un documento (`IA-0001`) con su tarea al administrador;
+- la canasta es única por referencia y color, con un índice en la base.
+
+**Revisado en el código:**
+- `SalePrice` exige una línea de compra;
+- la orden reserva en una sola ubicación (`SalesOrder.inventoryLocationId`);
+- `eligibleAssignees` solo ofrece bodegueros de esa ubicación.
+
+**Tercera ronda de decisiones (mismo día):**
+- las órdenes mixtas de Ventas entran en la fase 1;
+- Accesorios vende solo accesorios, con un cliente genérico de mostrador, y
+  el despacho le llega a ella misma;
+- Accesorios también registra salidas sin venta (muestras, garantías,
+  consumo interno), con motivo y tarea al administrador;
+- el precio nace de la compra, como en los perfiles.
+
+**Hallazgo.** La reserva solo usa paquetes con un lote del origen pedido
+(`eligibleWhere`), pero una canasta se rellena con varias compras. Propuesta:
+- la canasta tiene un lote fijo que dice su origen;
+- el costo de cada compra queda en su ingreso;
+- un ingreso de otro origen se rechaza.
+
+El usuario confirmó que un mismo accesorio nunca se compra de los dos
+orígenes, así que queda decidido.
+
+**Pendiente:** las cinco preguntas de «Por confirmar» del documento. Se
+sugieren tres entregas: inventario, venta de mostrador y ventas mixtas.
+
+## Rol Accesorios creado (24/11/2026)
+
+El usuario pidió crear el rol antes de cerrar las preguntas del diseño. Solo el
+rol: todavía sin canastas, ingresos, ventas ni despachos de accesorios.
+
+**Migración `20261124120000_accessories_role`** (aditiva; aplicada en
+`solaluminios_dev` el 24/11/2026):
+- solo `ALTER TYPE "UserRole" ADD VALUE 'ACCESSORIES'`; los usuarios
+  existentes no cambian;
+- `migrate status`: 21 migraciones, al día;
+- `migrate diff` entre la base y el esquema: «No difference detected»;
+- no se aplicó en `solaluminios_ensayo_manual` ni en producción.
+
+**API:**
+- `RolesGuard`: la lista `RESTRICTED_ROLES` (`CHINA_OPERATOR`, `BILLING` y
+  `ACCESSORIES`) solo llega a las rutas que la nombran;
+- `ACCESSORIES` se agregó a las rutas de tareas y de avisos (`push`);
+- se actualizó el mensaje de validación del rol en `UpdateUserRoleDto`.
+
+**Web:**
+- tipo `UserRole`;
+- nombre «Accesorios» y su descripción en Administración → Usuarios;
+- menú e Inicio del rol: solo Inicio y Tareas, como Facturación sin su
+  pantalla;
+- `allowed()` no deja abrir otras vistas desde una URL o un aviso.
+
+**Pruebas** (`accessories-role.e2e-spec.ts`, 3):
+- el administrador crea un usuario de Accesorios y le cambia el rol a otro
+  usuario; el cambio aplica desde la siguiente petición;
+- un rol inválido da 400;
+- Accesorios maneja sus tareas y sus avisos, y no asigna tareas a otros;
+- da 403 en inventario, catálogo, ubicaciones, cotizaciones, órdenes,
+  despachos, solicitudes, proveedores, precios, lotes y usuarios.
+
+**Verificación:**
+- API: `build`, `oxlint` y `pnpm test` 52/52; `pnpm test:e2e` 228/228 (29
+  archivos);
+- web: `build`, `oxlint` y sus pruebas (7/7 y 14/14);
+- no se probó en el navegador: hace falta iniciar sesión con un usuario de
+  Accesorios.
+
+**Pendiente:**
+- crear en la app la «Bodega de accesorios» y el usuario real, y asignarle esa
+  ubicación;
+- desplegar la migración cuando se publique;
+- las preguntas del diseño antes de la primera entrega.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

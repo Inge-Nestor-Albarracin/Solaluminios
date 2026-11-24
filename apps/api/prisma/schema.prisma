@@ -45,6 +45,10 @@ enum UserRole {
   // and records the invoice number made in the billing software. No
   // inventory, costs nor quotes.
   BILLING
+  // Accessories warehouse (docs/accesorios-fase-1.md): baskets with one chip
+  // each, entries, counter sales and accessory dispatches, built in stages.
+  // Explicit routes only (see RolesGuard); no profiles, costs nor users.
+  ACCESSORIES
 }
 
 // Origin of the material (independent from the supplier's address). Bundles

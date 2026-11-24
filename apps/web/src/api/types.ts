@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OPERATOR' | 'BILLING'
+export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OPERATOR' | 'BILLING' | 'ACCESSORIES'
 
 export interface SessionUser {
   id: string

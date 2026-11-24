@@ -5,6 +5,12 @@ import type { UserRole } from '../../generated/prisma/client.js';
 import { PUBLIC_KEY, ROLES_KEY } from './auth.metadata.js';
 import type { AuthenticatedRequest } from './auth.types.js';
 
+// Roles that only reach routes naming them explicitly, not even for reading:
+// China (never inventory, costs, sales or users), billing (its tasks and the
+// orders sent to billing) and accessories (its own screens, built in stages;
+// never profiles, costs nor users).
+const RESTRICTED_ROLES: readonly UserRole[] = ['CHINA_OPERATOR', 'BILLING', 'ACCESSORIES'];
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
@@ -17,10 +23,7 @@ export class RolesGuard implements CanActivate {
     const allowed = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, targets);
     if (allowed) {
       if (allowed.includes(request.user.role)) return true;
-    } else if (request.user.role === 'CHINA_OPERATOR' || request.user.role === 'BILLING') {
-      // Supplier-side and billing accounts only reach routes that name them
-      // explicitly (China: never inventory, costs, sales or users; billing:
-      // its tasks and the orders sent to billing), not even for reading.
+    } else if (RESTRICTED_ROLES.includes(request.user.role)) {
       throw new ForbiddenException('No tienes permisos para esta operación');
     } else {
       // Existing catalog/location reads: authenticated users.

@@ -22,7 +22,7 @@ import { TasksService } from './tasks.service.js';
 
 // Every role manages its own tasks; the service decides who may assign to
 // others (ADMIN) and who may complete (the assignee).
-const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'BILLING'] as const;
+const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'BILLING', 'ACCESSORIES'] as const;
 
 @Controller('tasks')
 export class TasksController {

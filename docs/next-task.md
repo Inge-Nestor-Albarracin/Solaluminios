@@ -1,4 +1,4 @@
-# Próxima tarea (actualizado el 20/11/2026)
+# Próxima tarea (actualizado el 24/11/2026)
 
 El contexto vigente está en `docs/project-context.md` y la bitácora detallada
 en `docs/development-status.md`. Las tareas de octubre que estaban aquí
@@ -58,6 +58,30 @@ no se necesita.
 - Proveedores reales, proveedor de China y supervisor de despachos.
 - Precios de venta.
 - Carga del inventario real como «Inventario existente».
+
+### 4. Rol Accesorios, fase 1 (diseño propuesto el 24/11/2026)
+
+El diseño completo está en `docs/accesorios-fase-1.md`:
+- cada canasta de la bodega de accesorios es un paquete con chip, único por
+  referencia y color;
+- la canasta se rellena con un ingreso (cantidad digitada y su soporte), y
+  al administrador le llega una tarea informativa;
+- el precio nace de la compra, como en los perfiles;
+- Accesorios vende solo accesorios en mostrador (cliente genérico), con el
+  despacho para ella misma, y registra salidas sin venta con motivo y tarea
+  al administrador;
+- Ventas también vende accesorios: una orden mixta genera dos despachos, los
+  perfiles para Bodega y los accesorios para Accesorios;
+- toda salida tiene un documento detrás y queda como movimiento auditable;
+- se sugiere entregarla en tres partes: inventario, venta de mostrador y
+  ventas mixtas.
+
+**Hecho el 24/11/2026:** el rol `ACCESSORIES` (migración, guard restringido,
+tareas y avisos, menú Inicio y Tareas).
+
+**No programar el resto** hasta que el usuario responda las preguntas de la
+sección «Por confirmar» de ese documento. El orden frente a las tareas 1 a 3
+también está por confirmar con el usuario.
 
 ## Pendientes sin fecha (no empezar sin decisión del usuario)
 

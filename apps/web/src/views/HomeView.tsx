@@ -112,6 +112,7 @@ export function HomeView({
   seller,
   dispatcher,
   billing = false,
+  accessories = false,
   pendingQueue,
   openTasks,
   navigate,
@@ -123,13 +124,17 @@ export function HomeView({
   dispatcher: boolean
   // Billing role: only its orders to invoice and its tasks.
   billing?: boolean
+  // Accessories role: for now only its tasks (its screens come later).
+  accessories?: boolean
   pendingQueue: number
   openTasks: number
   navigate: Navigate
 }) {
   const gradient = `tile-${useId().replace(/:/g, '')}`
   const taskTile: Tile = { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks }
-  const tiles: Tile[] = billing
+  const tiles: Tile[] = accessories
+    ? [taskTile]
+    : billing
     ? [{ name: 'billing', title: 'Facturación', subtitle: 'Órdenes por facturar', icon: TILE_ICONS.billing }, taskTile]
     : [
       ...(operator

@@ -58,9 +58,10 @@ bodega y almacén.
 | `BILLING` | Facturación | Solo Inicio, Facturación y Tareas. Ve las órdenes que requieren factura, descarga el PDF y registra el número de factura. |
 | `READ_ONLY` | Solo lectura | Consultas. |
 | `CHINA_OPERATOR` | Operador China | Solo prerregistro del proveedor chino (interfaz en inglés). |
+| `ACCESSORIES` | Accesorios | Bodega de accesorios (`docs/accesorios-fase-1.md`). Rol creado el 24/11/2026: por ahora solo Inicio y Tareas; canastas, ingresos, ventas de mostrador y despachos de accesorios llegan por entregas. |
 
-- **Guard global de roles:** `CHINA_OPERATOR` y `BILLING` solo llegan a las
-  rutas que los nombran explícitamente. Los demás roles tienen GET en las rutas
+- **Guard global de roles:** `CHINA_OPERATOR`, `BILLING` y `ACCESSORIES` solo
+  llegan a las rutas que los nombran explícitamente. Los demás roles tienen GET en las rutas
   sin `@Roles`, y las escrituras requieren su rol explícito.
 - **Responsable de cada operación:** sale siempre de la sesión, nunca del
   cuerpo de la petición.
@@ -151,7 +152,9 @@ El navegador nunca se conecta a la base.
   lotes, reservas y entregas.
 - **Concurrencia:** bloqueos de fila e `operationKey` idempotente en las
   operaciones que se pueden repetir desde el frontend.
-- **Migraciones:** 20 en total; la última es `20261118120000_order_billing`.
+- **Migraciones:** 21 en total; la última es
+  `20261124120000_accessories_role` (aplicada en la base local el 24/11/2026,
+  todavía no en producción).
   No se modifican las ya aplicadas, no se usa `db push` y no se resetea la base.
 
 ## 6. Entornos

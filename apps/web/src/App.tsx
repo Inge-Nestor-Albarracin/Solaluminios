@@ -114,6 +114,9 @@ function Workspace() {
   const operator = canOperate(user?.role)
   // Billing role: its orders to invoice and its tasks, nothing else.
   const billing = user?.role === 'BILLING'
+  // Accessories role: for now only Inicio and its tasks; its own screens come
+  // in the next stages (docs/accesorios-fase-1.md).
+  const accessories = user?.role === 'ACCESSORIES'
   // Pending registration list (not saved yet), shared by the register view,
   // the menu badge and the logout prompt.
   const queue = useRegistrationQueue(user?.id ?? 'anonymous')
@@ -148,7 +151,7 @@ function Workspace() {
 
   // Views this user may open from a URL, a shortcut or a notification.
   const allowed = (name: LaunchView) =>
-    (!billing || name === 'home' || name === 'tasks') &&
+    (!(billing || accessories) || name === 'home' || name === 'tasks') &&
     (name !== 'register' || operator) &&
     (name !== 'receive' || operator) &&
     (name !== 'sales' || canSell(user?.role)) &&
@@ -205,7 +208,12 @@ function Workspace() {
   })
   useEffect(() => onOpenView((name) => openRequested(name)), [])
 
-  const tabs: NavTab[] = billing
+  const tabs: NavTab[] = accessories
+    ? [
+        { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
+        { name: 'tasks', label: 'Tareas', short: 'Tareas', icon: IconTasks },
+      ]
+    : billing
     ? [
         { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
         { name: 'billing', label: 'Facturación', short: 'Facturación', icon: IconList },
@@ -347,6 +355,7 @@ function Workspace() {
             seller={canSell(user?.role)}
             dispatcher={canDispatch(user?.role)}
             billing={billing}
+            accessories={accessories}
             pendingQueue={pending}
             openTasks={openTasks}
             navigate={navigate}

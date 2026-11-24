@@ -32,4 +32,5 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   READ_ONLY: 'Solo consulta',
   CHINA_OPERATOR: 'Operador China',
   BILLING: 'Facturación',
+  ACCESSORIES: 'Accesorios',
 }

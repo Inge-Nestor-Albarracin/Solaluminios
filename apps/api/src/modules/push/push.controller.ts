@@ -16,7 +16,7 @@ import { PushService } from './push.service.js';
 
 // Every role can receive notifications on its own devices. All routes act
 // only on the session user; no route takes a userId.
-const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'BILLING'] as const;
+const ALL_ROLES = ['ADMIN', 'WAREHOUSE', 'SALES', 'READ_ONLY', 'BILLING', 'ACCESSORIES'] as const;
 
 @Controller('push')
 export class PushController {
