@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { ApiError, describeError } from '../api/client'
 import { LocationSelectors } from '../components/LocationSelectors'
 import { DownloadPdfButton } from '../components/DownloadPdfButton'
+import { OrderPaymentsPanel } from '../components/OrderPaymentsPanel'
 import { Field, Loading, Notice, PageHeader } from '../components/ui'
 import {
   DISPATCH_STATUS_LABEL,
@@ -19,6 +20,7 @@ import {
 } from '../lib/commerce'
 import { EMPTY_LOCATION, type LocationValue } from '../lib/forms'
 import { formatDateTime, todayIso } from '../lib/format'
+import { RETURN_STATUS_BADGE, RETURN_STATUS_LABEL } from '../lib/returns'
 import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
 import { useUnsavedWork } from '../pwa/workGuard'
@@ -164,7 +166,8 @@ export function OrderView({ id, navigate, onChanged }: { id: string; navigate: N
                 {isAdmin && data.paymentStatusBy ? ` por ${data.paymentStatusBy.name}` : ''}
               </small>
             ) : null}
-            {billingRole ? null : data.paymentStatus === 'PENDING' ? (
+            {/* With abonos recorded, they decide the state (see Pagos). */}
+            {billingRole || data.paymentSummary?.recorded ? null : data.paymentStatus === 'PENDING' ? (
               <button type="button" className="button button-secondary" disabled={busy} onClick={() => void setPaymentStatus('PAID')}>
                 Marcar como pagada
               </button>
@@ -184,6 +187,9 @@ export function OrderView({ id, navigate, onChanged }: { id: string; navigate: N
       </p>
       {error ? <Notice kind="error">{error}</Notice> : null}
       {data.status === 'CANCELLED' ? <Notice kind="warning">Orden cancelada: {data.cancelReason}</Notice> : null}
+
+      {/* Total, paid, balance and abonos (ADMIN and the seller; billing reads the order without them). */}
+      <OrderPaymentsPanel order={data} canRecord={user?.role === 'ADMIN' || user?.role === 'SALES'} onChanged={() => order.reload()} />
 
       <section className="card">
         <h2 className="subtitle">Renglones</h2>
@@ -230,6 +236,8 @@ export function OrderView({ id, navigate, onChanged }: { id: string; navigate: N
           onChanged?.()
         }}
       />
+
+      <ReturnsCard order={data} navigate={navigate} canRequest={user?.role === 'ADMIN' || user?.role === 'SALES'} />
 
       {billingRole ? null : (
       <>
@@ -355,6 +363,58 @@ export function OrderView({ id, navigate, onChanged }: { id: string; navigate: N
       </>
       )}
     </>
+  )
+}
+
+// Sales returns (documento DV) of the order. The seller (own orders) or
+// ADMIN registers one for delivered material; billing reads them (credit
+// notes of invoiced orders).
+function ReturnsCard({ order, navigate, canRequest }: { order: SalesOrder; navigate: Navigate; canRequest: boolean }) {
+  const returns = order.returns ?? []
+  const delivered = order.lines.some((line) => line.dispatchedQuantity > 0)
+  const possible = canRequest && delivered && order.status !== 'CANCELLED'
+  if (returns.length === 0 && !possible) return null
+  const returned = Number(order.returnSummary?.returned ?? 0)
+  return (
+    <section className="card">
+      <div className="payments-head">
+        <h2 className="subtitle">Devoluciones</h2>
+        {possible ? (
+          <button type="button" className="button button-secondary" onClick={() => navigate({ name: 'returnNew', orderId: order.id })}>
+            Registrar devolución
+          </button>
+        ) : null}
+      </div>
+      {returns.length === 0 ? (
+        <p className="field-hint">Si el cliente devuelve material entregado (por ejemplo, se llevó otra referencia o color), regístralo aquí: bodega lo recibe y el valor descuenta del saldo o queda a favor del cliente.</p>
+      ) : (
+        <ul className="doc-list">
+          {returns.map((item) => (
+            <li key={item.id}>
+              <button type="button" className="doc-row" onClick={() => navigate({ name: 'return', id: item.id })}>
+                <span className="doc-main">
+                  <strong>{item.number}</strong>
+                  <small>
+                    {item.reasonLabel} · {formatDateTime(item.createdAt)}
+                    {item.amount ? ` · ${formatMoney(item.amount)}` : ''}
+                    {item.creditNoteNumber ? ` · nota crédito ${item.creditNoteNumber}` : ''}
+                  </small>
+                </span>
+                <span className="doc-side">
+                  {item.refundPending ? <span className="badge badge-warning">Reintegro pendiente</span> : null}
+                  <span className={RETURN_STATUS_BADGE[item.status]}>{RETURN_STATUS_LABEL[item.status]}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {returned > 0 ? (
+        <p className="quote-totals">
+          Devuelto {formatMoney(returned)} · <strong>Total neto {formatMoney(order.returnSummary?.net ?? order.total)}</strong>
+        </p>
+      ) : null}
+    </section>
   )
 }
 

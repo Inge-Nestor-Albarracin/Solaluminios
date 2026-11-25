@@ -60,6 +60,15 @@ const MESSAGES: Record<PushKind, PushMessageOptions> = {
   'billing-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'billing-cancelled' },
   'billing-void-needed': { ttlSeconds: 24 * 3600, urgency: 'high', topic: 'billing-void-needed' },
   'order-billed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'order-billed' },
+  'accessory-entry': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'accessory-entry' },
+  'accessory-exit': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'accessory-exit' },
+  'return-requested': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-requested' },
+  'return-approved': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-resolved' },
+  'return-rejected': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-resolved' },
+  'return-to-receive': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-to-receive' },
+  'return-received': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-received' },
+  'return-cancelled': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'return-cancelled' },
+  'credit-note-needed': { ttlSeconds: 24 * 3600, urgency: 'normal', topic: 'credit-note-needed' },
 };
 
 export interface DeliveryReport {

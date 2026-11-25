@@ -16,6 +16,8 @@ export function TaskCard({
   onOpenQuote,
   onOpenRequest,
   onOpenOrder,
+  onOpenVoucher,
+  onOpenReturn,
 }: {
   task: Task
   now: number
@@ -25,6 +27,8 @@ export function TaskCard({
   onOpenQuote?: (quoteId: string) => void
   onOpenRequest?: (requestId: string) => void
   onOpenOrder?: (orderId: string) => void
+  onOpenVoucher?: (voucherId: string) => void
+  onOpenReturn?: (returnId: string) => void
 }) {
   const { request, user } = useSession()
   const [confirming, setConfirming] = useState(false)
@@ -40,7 +44,10 @@ export function TaskCard({
   const expiredLocally = !isDispatch && task.status === 'pending' && new Date(task.dueAt).getTime() <= now
   const status = expiredLocally ? 'incomplete' : task.status
   const overdue = isDispatch && status === 'pending' && new Date(task.dueAt).getTime() <= now
-  const canComplete = !isDispatch && status === 'pending' && task.assigneeId === user?.id
+  // An accessory notice is only information: its assignee marks it as seen,
+  // even after its date.
+  const notice = task.kind === 'ACCESSORY_NOTICE'
+  const canComplete = (!isDispatch || notice) && status === 'pending' && task.assigneeId === user?.id
   const dueSoon = status === 'pending' && new Date(task.dueAt).getTime() - now < 3 * 3_600_000
   const assignedByOther = task.createdById !== task.assigneeId
 
@@ -121,6 +128,28 @@ export function TaskCard({
         </div>
       ) : null}
 
+      {(task.kind === 'RETURN_APPROVAL' || task.kind === 'RETURN_RECEPTION' || task.kind === 'CREDIT_NOTE') && task.salesReturn && onOpenReturn ? (
+        <div className="task-actions">
+          <button type="button" className="button" onClick={() => onOpenReturn(task.salesReturn!.id)}>
+            {status !== 'pending'
+              ? `Ver ${task.salesReturn.number}`
+              : task.kind === 'RETURN_APPROVAL'
+                ? 'Revisar y responder'
+                : task.kind === 'RETURN_RECEPTION'
+                  ? 'Recibir devolución'
+                  : 'Registrar nota crédito'}
+          </button>
+        </div>
+      ) : null}
+
+      {notice && task.accessoryVoucher && onOpenVoucher ? (
+        <div className="task-actions">
+          <button type="button" className="button button-secondary" onClick={() => onOpenVoucher(task.accessoryVoucher!.id)}>
+            Ver {task.accessoryVoucher.number}
+          </button>
+        </div>
+      ) : null}
+
       {canComplete ? (
         <div className="task-actions">
           {confirming ? (
@@ -134,9 +163,9 @@ export function TaskCard({
               </button>
             </>
           ) : (
-            <button type="button" className="button button-secondary" onClick={() => setConfirming(true)}>
+            <button type="button" className="button button-secondary" onClick={() => (notice ? void complete() : setConfirming(true))} disabled={pending}>
               <IconCheck />
-              Marcar completada
+              {notice ? (pending ? 'Guardando…' : 'Marcar como visto') : 'Marcar completada'}
             </button>
           )}
         </div>

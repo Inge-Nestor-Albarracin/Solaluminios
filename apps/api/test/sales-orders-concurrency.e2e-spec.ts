@@ -134,6 +134,7 @@ describe('Quotes, orders and reservations under concurrency (e2e)', () => {
         ['dispatchLines', () => prisma.dispatchLine.deleteMany({ where: { dispatchId: { in: dIds } } })],
         ['dispatches', () => prisma.dispatch.deleteMany({ where: { id: { in: dIds } } })],
         ['orderLines', () => prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: oIds } } })],
+        ['payments', () => prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: oIds } } })],
         ['orders', () => prisma.salesOrder.deleteMany({ where: { id: { in: oIds } } })],
         ['quotes', () => prisma.quote.deleteMany({ where: { createdById: { in: users } } })],
         ['customer', () => prisma.customer.deleteMany({ where: { id: ids.customer } })],

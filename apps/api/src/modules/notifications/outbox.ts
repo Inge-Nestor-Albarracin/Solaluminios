@@ -32,7 +32,20 @@ export type NotificationKind =
   | 'billing-requested'
   | 'billing-cancelled'
   | 'billing-void-needed'
-  | 'order-billed';
+  | 'order-billed'
+  // Accessories: to the administrator, an entry or an exit without a sale.
+  | 'accessory-entry'
+  | 'accessory-exit'
+  // Sales returns: to the chosen administrator (to authorise), the warehouse
+  // (to receive), the requester (approved / rejected / received), whoever
+  // had a task of a cancelled one, and billing (credit note).
+  | 'return-requested'
+  | 'return-approved'
+  | 'return-rejected'
+  | 'return-to-receive'
+  | 'return-received'
+  | 'return-cancelled'
+  | 'credit-note-needed';
 
 export interface OutboxItem {
   userId: string;

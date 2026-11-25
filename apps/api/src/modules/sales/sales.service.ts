@@ -19,7 +19,7 @@ import type {
 } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { RetryableException } from '../../infrastructure/http/retryable.js';
-import { audit, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
+import { audit, businessToday, isLockTimeout, isUniqueViolation, nextNumber, setLockTimeout, type Tx } from '../../shared/db.js';
 import { Decimal, ZERO, dec } from '../../shared/money.js';
 import { ACCENT_FOLD_FROM, ACCENT_FOLD_TO, escapeLike, foldAccents } from '../../shared/search.js';
 import type { SafeUser } from '../auth/auth.types.js';
@@ -56,6 +56,10 @@ import {
 import { renderSalesExport } from './sales-export.js';
 import { renderSalesPdf } from './sales-pdf.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
+// Payment methods whose collection is followed (paid / pending), and how the
+// contado of a new order is split.
+import { COLLECTED_LATER, CONTADO, contadoSplit, customerCredit, lockCustomer, pesos, requireTransferEntity } from './order-payments.js';
+import { REASON_LABEL, SETTLEMENT_LABEL, orderMoney } from '../returns/returns.js';
 
 const orderInclude = {
   customer: { select: { id: true, name: true, taxId: true, email: true } },
@@ -65,6 +69,23 @@ const orderInclude = {
   paymentStatusBy: { select: { id: true, name: true } },
   billedBy: { select: { id: true, name: true } },
   quote: { select: { id: true, number: true } },
+  payments: {
+    orderBy: [{ paidOn: 'asc' }, { createdAt: 'asc' }],
+    select: {
+      id: true,
+      medium: true,
+      // Transfers: where the money was received (null: «Sin especificar»).
+      transferEntity: { select: { id: true, name: true } },
+      amount: true,
+      paidOn: true,
+      note: true,
+      atSale: true,
+      createdAt: true,
+      updatedAt: true,
+      createdBy: { select: { id: true, name: true } },
+      updatedBy: { select: { id: true, name: true } },
+    },
+  },
   lines: {
     orderBy: { lineNo: 'asc' },
     include: {
@@ -87,6 +108,25 @@ const orderInclude = {
       _count: { select: { incidents: { where: { status: 'OPEN' } } } },
     },
   },
+  // Sales returns of the order (documento DV): header only.
+  returns: {
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      number: true,
+      status: true,
+      reason: true,
+      settlement: true,
+      amount: true,
+      baseAmount: true,
+      settledAmount: true,
+      createdAt: true,
+      receivedAt: true,
+      refundedAt: true,
+      creditNoteNumber: true,
+      _count: { select: { lines: true } },
+    },
+  },
 } satisfies Prisma.SalesOrderInclude;
 
 type OrderWithLines = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
@@ -97,6 +137,7 @@ export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
   TRANSFER: 'Contado – transferencia',
   PARTIAL: 'Abono',
   CREDIT: 'Cartera (crédito)',
+  CASH_TRANSFER: 'Contado – efectivo y transferencia',
 };
 
 // Who created a quote or an order (and who changed its payment state) is
@@ -114,8 +155,6 @@ function forViewer<T extends object>(document: T, user: SafeUser): T {
   return rest as T;
 }
 
-// Payment methods whose collection is followed (paid / pending).
-const COLLECTED_LATER: readonly PaymentMethod[] = ['PARTIAL', 'CREDIT'];
 
 const authorSelect = { select: { id: true, name: true } } as const;
 
@@ -304,6 +343,12 @@ export class SalesService {
     if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException('El cliente no existe');
     await this.requireNewTaxId(dto.taxId, id);
     return this.prisma.customer.update({ where: { id }, data: this.customerData(dto) });
+  }
+
+  async customerCreditOf(id: string) {
+    const customer = await this.prisma.customer.findUnique({ where: { id }, select: { id: true } });
+    if (!customer) throw new NotFoundException('El cliente no existe');
+    return { customerId: id, available: (await customerCredit(this.prisma, id)).toFixed(2) };
   }
 
   // Only what an invoice needs (NIT / ID and e-mail); the rest is kept.
@@ -1095,6 +1140,22 @@ export class SalesService {
         }
         const paymentTerms = dto.paymentTerms !== undefined ? dto.paymentTerms || null : quote.paymentTerms;
         if (dto.requiresBilling) await this.requireBillingData(tx, quote.customerId);
+        // Contado: the money received at the sale, in one or two media, adding
+        // up exactly to the total (abono / cartera: recorded later, per abono).
+        const contado = contadoSplit(paymentMethod, quote.total, dto);
+        for (const part of contado) if (part.transferEntityId) await requireTransferEntity(tx, part.transferEntityId);
+        // Saldo a favor (from the customer's returns): the customer must have it.
+        const credit = contado.find((part) => part.medium === 'CREDIT_BALANCE');
+        if (credit) {
+          await lockCustomer(tx, quote.customerId);
+          const available = await customerCredit(tx, quote.customerId);
+          if (credit.amount.gt(available)) {
+            throw new BadRequestException(
+              available.gt(ZERO) ? `El cliente tiene ${pesos(available)} de saldo a favor: no alcanza para ${pesos(credit.amount)}` : 'El cliente no tiene saldo a favor',
+            );
+          }
+        }
+        const prepaid = contado.reduce((total, part) => total.plus(part.amount), ZERO);
         if (paymentMethod !== quote.paymentMethod || paymentTerms !== quote.paymentTerms) {
           await tx.quote.update({ where: { id }, data: { paymentMethod, paymentTerms } });
         }
@@ -1120,7 +1181,7 @@ export class SalesService {
             paymentMethod,
             paymentTerms,
             // Abono / credit: pending until someone records the payment.
-            paymentStatus: COLLECTED_LATER.includes(paymentMethod) ? 'PENDING' : null,
+            paymentStatus: COLLECTED_LATER.includes(paymentMethod) ? (prepaid.gte(quote.total) && quote.total.gt(ZERO) ? 'PAID' : 'PENDING') : null,
             convertOperationKey: dto.operationKey,
             ...(dto.requiresBilling ? { requiresBilling: true, billingRequestedAt: new Date() } : {}),
             // The seller of the quote keeps owning the order; who converted it is recorded.
@@ -1156,6 +1217,38 @@ export class SalesService {
           },
         });
         await tx.quote.update({ where: { id }, data: { status: 'CONVERTED' } });
+        const paidOn = new Date(`${businessToday()}T00:00:00.000Z`);
+        for (const part of contado) {
+          const payment = await tx.salesOrderPayment.create({
+            data: {
+              salesOrderId: order.id,
+              medium: part.medium,
+              transferEntityId: part.transferEntityId,
+              amount: part.amount,
+              paidOn,
+              // Contado is fixed at the sale; saldo a favor of an abono /
+              // cartera order is an abono like the others.
+              atSale: CONTADO.includes(paymentMethod),
+              operationKey: `${dto.operationKey}:contado:${part.medium}`,
+              createdById: user.id,
+            },
+          });
+          await audit(tx, {
+            entity: 'SalesOrderPayment',
+            entityId: payment.id,
+            action: 'PAYMENT_RECORDED',
+            userId: user.id,
+            data: {
+              orderId: order.id,
+              amount: part.amount.toFixed(2),
+              medium: part.medium,
+              transferEntityId: part.transferEntityId,
+              paidOn: businessToday(),
+              note: null,
+              atSale: CONTADO.includes(paymentMethod),
+            },
+          });
+        }
         if (dto.requiresBilling) await this.openBillingTask(tx, order, user);
         const manual = quote.lines.filter((line) => line.pricingMethod === 'MANUAL');
         await audit(tx, {
@@ -1250,10 +1343,34 @@ export class SalesService {
       }
       rows.set(seller.id, row);
     }
+    // Received returns of those orders, by their seller: sold and came back.
+    const returns = await this.prisma.salesReturn.findMany({
+      where: { status: 'RECEIVED', salesOrder: where },
+      select: { amount: true, baseAmount: true, salesOrder: { select: { createdById: true } } },
+    });
+    const back = new Map<string, { returns: number; base: Decimal; total: Decimal }>();
+    for (const item of returns) {
+      const row = back.get(item.salesOrder.createdById) ?? { returns: 0, base: ZERO, total: ZERO };
+      row.returns += 1;
+      row.base = row.base.plus(dec(item.baseAmount));
+      row.total = row.total.plus(dec(item.amount));
+      back.set(item.salesOrder.createdById, row);
+    }
+    const returned = (sellerId: string) => {
+      const row = back.get(sellerId) ?? { returns: 0, base: ZERO, total: ZERO };
+      return { returns: row.returns, base: row.base.toFixed(2), total: row.total.toFixed(2) };
+    };
     const text = (bucket: ReturnType<typeof empty>) => ({ orders: bucket.orders, base: bucket.base.toFixed(2), total: bucket.total.toFixed(2) });
     return [...rows.values()]
       .sort((a, b) => b.all.total.comparedTo(a.all.total) || a.seller.name.localeCompare(b.seller.name))
-      .map((row) => ({ seller: row.seller, all: text(row.all), paid: text(row.paid), pending: text(row.pending), cash: text(row.cash) }));
+      .map((row) => ({
+        seller: row.seller,
+        all: text(row.all),
+        paid: text(row.paid),
+        pending: text(row.pending),
+        cash: text(row.cash),
+        returned: returned(row.seller.id),
+      }));
   }
 
   // Excel of the filtered orders (same filters as the list), for commissions.
@@ -1276,6 +1393,11 @@ export class SalesService {
           convertedBy: authorSelect,
           quote: { select: { number: true } },
           lines: { orderBy: { lineNo: 'asc' } },
+          returns: {
+            where: { status: 'RECEIVED' },
+            orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
+            include: { lines: { orderBy: { salesOrderLine: { lineNo: 'asc' } }, include: { salesOrderLine: true } } },
+          },
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       }),
@@ -1322,6 +1444,26 @@ export class SalesService {
         invoiceNumber: order.invoiceNumber,
         billedAt: order.billedAt,
         lines: order.lines.map((line) => ({ ...line, origin: line.origin === 'CHINA' ? 'China' : 'Nacional' })),
+        returns: order.returns.map((item) => ({
+          number: item.number,
+          receivedAt: item.receivedAt!,
+          reason: REASON_LABEL[item.reason],
+          // What happened with the money beyond lowering the balance.
+          settlement: dec(item.settledAmount).gt(ZERO) ? SETTLEMENT_LABEL[item.settlement] : 'Descontado del saldo',
+          settledAmount: dec(item.settledAmount),
+          creditNoteNumber: item.creditNoteNumber,
+          lines: item.lines.map((line) => ({
+            lineNo: line.salesOrderLine.lineNo,
+            referenceCode: line.salesOrderLine.referenceCode,
+            referenceDescription: line.salesOrderLine.referenceDescription,
+            finishCode: line.salesOrderLine.finishCode,
+            origin: line.salesOrderLine.origin === 'CHINA' ? 'China' : 'Nacional',
+            good: line.goodQuantity ?? 0,
+            damaged: line.damagedQuantity ?? 0,
+            amount: dec(line.amount),
+            baseAmount: dec(line.baseAmount),
+          })),
+        })),
       })),
     });
     const who = seller ? `_${slug(seller.name)}` : '';
@@ -1351,8 +1493,84 @@ export class SalesService {
     return { items, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
+  // Entities where Solaluminios receives transfers (the only list; inactive
+  // ones are not offered).
+  transferEntities() {
+    return this.prisma.transferEntity.findMany({ where: { active: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true } });
+  }
+
   async getOrder(id: string, user: SafeUser) {
-    return forViewer(await this.loadOrder(id, user), user);
+    return forViewer(await this.withPayments(await this.loadOrder(id, user), user), user);
+  }
+
+  // Payments of the order, with total paid and balance computed here (never
+  // typed by anyone), and the corrections of each one from the audit. Only
+  // who records payments sees them (ADMIN and the owner seller): billing
+  // reads the order without them. Authors of payments and corrections: ADMIN.
+  //
+  // Returns (documento DV) are shown to everyone who sees the order (billing
+  // makes their credit notes). The balance counts them: net total = total −
+  // value returned; paid = payments − what was given back to the customer.
+  private async withPayments<T extends { total: Decimal; customerId: string; payments: OrderWithLines['payments']; returns: OrderWithLines['returns'] }>(
+    order: T,
+    user: SafeUser,
+  ) {
+    const { payments, returns, ...rest } = order;
+    const received = returns.filter((r) => r.status === 'RECEIVED');
+    const returned = received.reduce((total, r) => total.plus(dec(r.amount)), ZERO);
+    const settled = received.reduce((total, r) => total.plus(dec(r.settledAmount)), ZERO);
+    const returnList = returns.map(({ _count, amount, baseAmount, settledAmount, ...r }) => ({
+      ...r,
+      reasonLabel: REASON_LABEL[r.reason],
+      settlementLabel: SETTLEMENT_LABEL[r.settlement],
+      lines: _count.lines,
+      amount: amount?.toFixed(2) ?? null,
+      baseAmount: baseAmount?.toFixed(2) ?? null,
+      settledAmount: settledAmount?.toFixed(2) ?? null,
+      refundPending: r.status === 'RECEIVED' && r.settlement === 'REFUND' && dec(settledAmount).gt(ZERO) && !r.refundedAt,
+    }));
+    const returnSummary = { returned: returned.toFixed(2), net: order.total.minus(returned).toFixed(2) };
+    if (user.role !== 'ADMIN' && user.role !== 'SALES') return { ...rest, returns: returnList, returnSummary };
+    const admin = user.role === 'ADMIN';
+    const edits = payments.length
+      ? await this.prisma.auditEvent.findMany({
+          where: { entity: 'SalesOrderPayment', action: 'PAYMENT_EDITED', entityId: { in: payments.map((p) => p.id) } },
+          orderBy: { at: 'asc' },
+          select: { entityId: true, at: true, data: true, user: { select: { id: true, name: true } } },
+        })
+      : [];
+    const paid = payments.reduce((total, p) => total.plus(p.amount), ZERO);
+    const { net, balance } = orderMoney({ total: order.total, paid, returned, settled });
+    return {
+      ...rest,
+      returns: returnList,
+      returnSummary,
+      // Saldo a favor of the customer (from returns), usable as a payment.
+      customerCredit: (await customerCredit(this.prisma, order.customerId)).toFixed(2),
+      payments: payments.map(({ createdBy, updatedBy, ...payment }) => ({
+        ...payment,
+        paidOn: payment.paidOn.toISOString().slice(0, 10),
+        edited: updatedBy !== null,
+        ...(admin ? { createdBy, updatedBy } : {}),
+        changes: edits
+          .filter((e) => e.entityId === payment.id)
+          .map((e) => ({ at: e.at, changed: (e.data as { changed?: unknown } | null)?.changed ?? {}, ...(admin ? { by: e.user } : {}) })),
+      })),
+      paymentSummary: {
+        // No records: an order converted before payments existed (nothing is
+        // invented) or an abono / cartera order still without abonos.
+        recorded: payments.length > 0,
+        total: order.total.toFixed(2),
+        // Value of the received returns and what of it went back to the
+        // customer (saldo a favor or reintegro); the rest lowered the balance.
+        returned: returned.toFixed(2),
+        settled: settled.toFixed(2),
+        net: net.toFixed(2),
+        paid: paid.toFixed(2),
+        balance: balance.toFixed(2),
+        complete: payments.length > 0 && balance.lte(ZERO),
+      },
+    };
   }
 
   // Full order (with its authors) for internal use, e.g. the printable copy.
@@ -1487,6 +1705,10 @@ export class SalesService {
         throw new ConflictException('Solo las órdenes con abono o a crédito (cartera) registran si ya están pagadas');
       }
       if (order.paymentStatus === status) return;
+      // With abonos recorded, they decide the status (paid when the balance is zero).
+      if ((await tx.salesOrderPayment.count({ where: { salesOrderId: id } })) > 0) {
+        throw new ConflictException('El estado de pago lo calculan los abonos registrados: agrega o corrige un abono');
+      }
       await tx.salesOrder.update({ where: { id }, data: { paymentStatus: status, paymentStatusAt: new Date(), paymentStatusById: user.id } });
       await audit(tx, { entity: 'SalesOrder', entityId: id, action: 'PAYMENT_STATUS_CHANGED', userId: user.id, data: { from: order.paymentStatus, to: status } });
     });
@@ -1525,7 +1747,7 @@ export class SalesService {
 
   // Active BILLING user (in turn if there are several). Without one, the
   // oldest active administrator, so the request is never lost.
-  private async billingAssignee(tx: Tx): Promise<{ id: string; fallback: boolean }> {
+  async billingAssignee(tx: Tx): Promise<{ id: string; fallback: boolean }> {
     const users = await tx.user.findMany({ where: { active: true, role: 'BILLING' }, select: { id: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     if (users.length === 1) return { id: users[0].id, fallback: false };
     if (users.length > 1) {

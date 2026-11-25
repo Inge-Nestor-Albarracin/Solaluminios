@@ -28,6 +28,7 @@ export function CatalogSelectors({
   showReference = true,
   showFinish = true,
   requireFamily = false,
+  searchFamily = requireFamily,
   disabled,
   onDescribe,
 }: {
@@ -37,6 +38,10 @@ export function CatalogSelectors({
   showReference?: boolean
   showFinish?: boolean
   requireFamily?: boolean
+  // A text box above the family list narrows it by the typed characters
+  // (name or code, without accents). Only the family; optional unless
+  // requireFamily. On by default with requireFamily (bundle registration).
+  searchFamily?: boolean
   disabled?: boolean
   // Receives readable labels of the current selection.
   onDescribe?: (labels: CatalogLabels) => void
@@ -63,9 +68,9 @@ export function CatalogSelectors({
   const referenceOptions = requireFamily ? profileReferences.sort((a, b) => natural(a.code, b.code)) : profileReferences
   const finishOptions = onlyActive(finishes.data)
   const profileFamilies = onlyActive(families.data).filter((f) => f.kind !== 'ACCESSORY')
-  const familyOptions = requireFamily ? profileFamilies.sort((a, b) => natural(a.name, b.name)) : profileFamilies
+  const familyOptions = requireFamily || searchFamily ? profileFamilies.sort((a, b) => natural(a.name, b.name)) : profileFamilies
 
-  // requireFamily: a text box narrows the family list (name or code); empty,
+  // searchFamily: a text box narrows the family list (name or code); empty,
   // every family. The chosen family stays listed while it does not match.
   const [familySearch, setFamilySearch] = useState('')
   const familyTerm = fold(familySearch.trim())
@@ -89,24 +94,24 @@ export function CatalogSelectors({
     <select
       value={value.familyId}
       required={requireFamily}
-      aria-label={requireFamily ? 'Familia' : undefined}
+      aria-label={searchFamily ? 'Familia' : undefined}
       disabled={disabled || families.loading}
       onChange={(e) => onChange({ ...value, familyId: e.target.value, referenceId: '' })}
     >
       <option value="">
-        {requireFamily
-          ? familyTerm
-            ? familyMatches.length === 0
-              ? `Ninguna familia coincide con «${familySearch.trim()}»`
-              : `Selecciona una familia (${familyMatches.length} ${familyMatches.length === 1 ? 'coincide' : 'coinciden'})`
-            : 'Selecciona una familia'
-          : mode === 'form'
-            ? 'Todas las familias'
-            : 'Todas'}
+        {searchFamily && familyTerm
+          ? familyMatches.length === 0
+            ? `Ninguna familia coincide con «${familySearch.trim()}»`
+            : `${requireFamily ? 'Selecciona' : 'Elige'} una familia (${familyMatches.length} ${familyMatches.length === 1 ? 'coincide' : 'coinciden'})`
+          : requireFamily
+            ? 'Selecciona una familia'
+            : mode === 'form'
+              ? 'Todas las familias'
+              : 'Todas'}
       </option>
       {shownFamilies.map((family) => (
         <option key={family.id} value={family.id}>
-          {requireFamily
+          {requireFamily || searchFamily
             ? `${family.name}${family.activeReferences !== undefined ? ` (${family.activeReferences})` : ''}`
             : `${family.code} — ${family.name}`}
           {family.active ? '' : ' (inactiva)'}
@@ -117,10 +122,10 @@ export function CatalogSelectors({
 
   return (
     <>
-      {requireFamily ? (
+      {searchFamily ? (
         <div className="field">
           <span className="field-label">
-            Familia <span className="required-mark">*</span>
+            Familia {requireFamily ? <span className="required-mark">*</span> : null}
           </span>
           <label className="field-sublabel">
             <span>Buscar por nombre o código</span>
@@ -133,7 +138,11 @@ export function CatalogSelectors({
             />
           </label>
           {familySelect}
-          <span className="field-hint">Elige primero la familia: la referencia muestra solo las de esa familia.</span>
+          <span className="field-hint">
+            {requireFamily
+              ? 'Elige primero la familia: la referencia muestra solo las de esa familia.'
+              : 'Escribe para filtrar la lista de familias. Opcional: la familia filtra las referencias.'}
+          </span>
           {families.error ? <span className="field-error">{families.error}</span> : null}
         </div>
       ) : (

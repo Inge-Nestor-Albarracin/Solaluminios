@@ -35,10 +35,10 @@ bodega y almacén.
 | Área | Funciones |
 | --- | --- |
 | **Inventario** | Registro de paquetes con su chip (EPC de fábrica): inventario existente o entrada nueva. Consulta por chip, lista de paquetes y resumen de existencias. Abrir paquete (perfiles sueltos), salida, traslado de uno o varios paquetes y ajustes (solo administrador). Historial de movimientos. Lectura masiva con la pistola. |
-| **Ubicaciones** | Sucursal → bodega o almacén → pasillo → burro. Los **almacenes** (`RETAIL_STORE`) no tienen pasillo ni burro: lo que llega se abre y queda en perfiles sueltos. Acabados, sucursales, ubicaciones, pasillos y burros no tienen pantalla de creación: se crean por el API o se copian con `structure:copy`. |
+| **Ubicaciones** | Sucursal → bodega o almacén → pasillo → burro. Los **almacenes** (`RETAIL_STORE`) no tienen pasillo ni burro: lo que llega se abre y queda en perfiles sueltos. Las **bodegas de accesorios** (`ACCESSORY_WAREHOUSE`) solo tienen canastas, sin pasillo ni burro. Acabados, sucursales, ubicaciones, pasillos y burros no tienen pantalla de creación: se crean por el API o se copian con `structure:copy`. |
 | **Catálogo** | Familias, referencias (perfiles) y acabados (colores). Accesorios como familias de tipo `ACCESSORY`: solo catálogo, no se venden ni se inventarían todavía. |
 | **Abastecimiento** | Proveedores, compras (orden de factura: valor sin IVA → descuento → IVA, más fletes), lotes y procedencia (China o Nacional) y precios de venta calculados desde la compra (solo administrador). |
-| **Ventas** | Clientes y cotizaciones **Detal** o **Ventanería** (con ensamble e instalación). Descuento por renglón (hasta 3 %), descuento global (más de 3 % requiere autorización) y precio manual con autorización. PDF. Conversión en orden con forma de pago obligatoria, reserva en **una** ubicación, estado de pago (abono o cartera) y cancelación. La cotización muestra la disponibilidad en la ubicación del vendedor y aparte la de las demás. |
+| **Ventas** | Clientes y cotizaciones **Detal** o **Ventanería** (con ensamble e instalación). Descuento por renglón (hasta 3 %), descuento global (más de 3 % requiere autorización) y precio manual con autorización. PDF. Conversión en orden con forma de pago obligatoria, reserva en **una** ubicación y cancelación. **Pagos de la orden** (24/11/2026): el contado se registra al convertir, en efectivo, en transferencia o repartido libremente entre ambos (la suma debe ser el total). Abono y cartera registran cada abono en la orden («Agregar abono»: valor, fecha y medio) y se corrigen con «Editar». El sistema calcula lo abonado y el saldo, y marca la orden pagada cuando el saldo llega a cero. La cotización muestra la disponibilidad en la ubicación del vendedor y aparte la de las demás. **Devoluciones** (25/11/2026, `docs/devoluciones.md`): documento DV desde la orden, autorizado por el administrador y recibido por bodega (lo bueno vuelve a su paquete, lo dañado no); el valor baja el saldo y lo pagado de más queda como **saldo a favor** del cliente (medio de pago en otras órdenes) o reintegro; orden facturada → tarea de nota crédito. |
 | **Facturación** | Casilla «Requiere facturación». La orden le llega como tarea al rol Facturación, que hace la factura en otro software y registra su número. Si se cancela una orden facturada, se crea la tarea de anulación. |
 | **Despachos** | Ventas autoriza la entrega. Bodega lee los paquetes con la pistola; el sistema sugiere primero los sueltos y luego los más antiguos. Incidencias si se lee algo que no corresponde. Al confirmar la salida física se descuenta el inventario y se consume la reserva. Entrega parcial posible. |
 | **Solicitudes de materiales** | Ventas pide perfiles de una bodega para un almacén. Bodega prepara paquetes completos y confirma la salida; el almacén marca el pedido como recibido. Enviar la solicitud no mueve ni reserva inventario. |
@@ -58,7 +58,7 @@ bodega y almacén.
 | `BILLING` | Facturación | Solo Inicio, Facturación y Tareas. Ve las órdenes que requieren factura, descarga el PDF y registra el número de factura. |
 | `READ_ONLY` | Solo lectura | Consultas. |
 | `CHINA_OPERATOR` | Operador China | Solo prerregistro del proveedor chino (interfaz en inglés). |
-| `ACCESSORIES` | Accesorios | Bodega de accesorios (`docs/accesorios-fase-1.md`). Rol creado el 24/11/2026: por ahora solo Inicio y Tareas; canastas, ingresos, ventas de mostrador y despachos de accesorios llegan por entregas. |
+| `ACCESSORIES` | Accesorios | Bodega de accesorios (`docs/accesorios-fase-1.md`): canastas con chip, ingresos y salidas sin venta, con aviso al administrador (entrega 1, 24/11/2026). La venta de mostrador y los despachos de accesorios llegan en las entregas 2 y 3. Sin perfiles, costos ni usuarios. |
 
 - **Guard global de roles:** `CHINA_OPERATOR`, `BILLING` y `ACCESSORIES` solo
   llegan a las rutas que los nombran explícitamente. Los demás roles tienen GET en las rutas
@@ -142,7 +142,7 @@ El navegador nunca se conecta a la base.
   - en cada petición se verifican el usuario activo y su rol;
   - sin registro público ni recuperación de contraseña;
   - al recargar la página se vuelve a ingresar.
-- **Modelo:** 41 modelos en `apps/api/prisma/schema.prisma`, entre ellos
+- **Modelo:** 43 modelos en `apps/api/prisma/schema.prisma`, entre ellos
   Branch, InventoryLocation (tabla `warehouses`), Aisle (columna
   `warehouseId`), Rack, ProductFamily, Reference, Finish, Bundle,
   InventoryMovement, StockLot, Supplier, Purchase*, SalePrice, Customer,
@@ -152,9 +152,16 @@ El navegador nunca se conecta a la base.
   lotes, reservas y entregas.
 - **Concurrencia:** bloqueos de fila e `operationKey` idempotente en las
   operaciones que se pueden repetir desde el frontend.
-- **Migraciones:** 21 en total; la última es
-  `20261124120000_accessories_role` (aplicada en la base local el 24/11/2026,
-  todavía no en producción).
+- **Migraciones:** 25 en total; la última es
+  `20261125120000_sales_returns` (devoluciones de clientes y saldo a favor,
+  ver `docs/devoluciones.md`). Las del 24 y 25/11/2026 están aplicadas en las
+  bases locales, todavía no en producción:
+  - la de devoluciones (`20261125120000_sales_returns`);
+  - las dos de accesorios (`20261124120000_accessories_role` y
+    `20261124130000_accessory_inventory`);
+  - la de pagos de las órdenes (`20261124140000_order_payments`);
+  - la de entidades de transferencia: tabla `transfer_entities` con Nequi y
+    Banco Caja Social; cada pago por transferencia guarda dónde se recibió.
   No se modifican las ya aplicadas, no se usa `db push` y no se resetea la base.
 
 ## 6. Entornos

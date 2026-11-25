@@ -1,9 +1,14 @@
 # Rol Accesorios: diseño de la fase 1
 
-**Estado (24/11/2026):** diseño propuesto. El **rol `ACCESSORIES` ya está
-creado**: migración `20261124120000_accessories_role`, guard restringido,
-tareas y avisos, con el menú Inicio y Tareas. El resto está sin implementar;
-antes de programarlo hay que cerrar las preguntas de la última sección.
+**Estado (24/11/2026):**
+- **Rol `ACCESSORIES`:** creado (migración `20261124120000_accessories_role`).
+- **Entrega 1 (inventario de accesorios):** implementada en local (migración
+  `20261124130000_accessory_inventory`); ver la bitácora. Comprende canastas,
+  ingresos, salidas sin venta, aviso al administrador y las protecciones de
+  los flujos de perfiles.
+- **Compras y precios de accesorios:** pasan a la entrega 2, porque solo hacen
+  falta para vender.
+- **Entregas 2 y 3:** sin implementar.
 
 ## Decisiones del usuario (24/11/2026)
 
@@ -21,6 +26,10 @@ antes de programarlo hay que cerrar las preguntas de la última sección.
 - **Colores:** los mismos acabados actuales (BM, BP, NP, CR, BR y CH).
 - **Un solo origen por accesorio:** una misma referencia y color nunca se
   compra a la vez de China y nacional.
+- **Sede:** los accesorios van en la sede de la **139**. Si en producción
+  figura como «116» (error del usuario), se renombra allí. Los manuales, los
+  datos de demostración y las pruebas conservan «Bodega 116» como ejemplo,
+  por decisión del usuario.
 
 **Venta y salida:**
 - **Precio desde la compra,** como los perfiles: se registra la compra de
@@ -95,7 +104,8 @@ de los dos orígenes:
 - **Lo que no ve:** perfiles, costos, compras ni usuarios. Ve los precios de
   venta de los accesorios.
 - **Ubicación asignada:** la «Bodega de accesorios», una ubicación aparte de
-  la bodega de perfiles. Solo opera canastas de esa ubicación.
+  la bodega de perfiles, en la sede de la 139. Solo opera canastas de esa
+  ubicación.
 - **El administrador** ve y hace todo: compras, precios y ajustes.
 
 ## Flujo
@@ -244,14 +254,14 @@ Vale para los dos tipos de venta:
 La fase 1 es grande. Conviene entregarla en tres partes, cada una con sus
 pruebas, su verificación en el navegador y su despliegue:
 
-1. **Inventario de accesorios:**
+1. **Inventario de accesorios** (hecha el 24/11/2026):
    - rol y bodega;
    - canastas;
-   - compras y precios;
    - ingresos y salidas sin venta, con sus tareas al administrador;
    - ajustes.
-2. **Venta de mostrador de Accesorios:** cotización, orden y despacho a sí
-   misma, con cliente genérico.
+2. **Venta de mostrador de Accesorios:**
+   - compras y precios de accesorios;
+   - cotización, orden y despacho a sí misma, con cliente genérico.
 3. **Ventas con accesorios:**
    - cotizaciones y órdenes mixtas;
    - reserva en dos ubicaciones;
@@ -263,16 +273,22 @@ pruebas, su verificación en el navegador y su despliegue:
   definir.
 - **Traslados** de canastas y **solicitudes de materiales** de accesorios.
 
-## Por confirmar antes de programar
+## Respuestas del 24/11/2026
 
-1. **Accesorios sin color** (tornillería, por ejemplo). Toda canasta necesita
-   un acabado. ¿Se usa uno de los actuales o hace falta agregar «Sin color»?
-2. **Rollos (21 referencias).** ¿En la fase 1 se venden como rollo completo,
-   es decir, una unidad?
-3. **Orden mixta sin existencias.** ¿Todo o nada (si falta un accesorio, toda
+- **Rollos:** se sacan completos. Un rollo es una unidad, y su canasta cuenta
+  rollos.
+- **Color:** no hay accesorios sin color. Toda canasta usa uno de los
+  acabados actuales y no se agrega «Sin color».
+- **Tipos de salida sin venta:** «Venta no registrada» y «Consumo interno».
+  - Una venta no registrada es la que se hizo por fuera del sistema; el
+    detalle es obligatorio, para que el administrador sepa de qué se trata.
+  - Otros tipos (muestra, garantía) se agregan solo si el usuario los pide.
+- **Personas del rol:** una sola persona tendrá el rol Accesorios.
+  - Los despachos de accesorios se le asignan a ella.
+  - Si no hay ninguna activa, van al administrador activo más antiguo, con una
+    nota, como Facturación.
+
+## Por confirmar (antes de la entrega 3)
+
+1. **Orden mixta sin existencias.** ¿Todo o nada (si falta un accesorio, toda
    la orden queda pendiente) o se confirma por separado?
-4. **Tipos de salida sin venta.** ¿Basta con muestra, garantía, consumo
-   interno y otro?
-5. **Ubicación.** ¿En qué sucursal queda la bodega de accesorios? ¿Cuántas
-   personas tendrán el rol? Si son varias, ¿el despacho se reparte por turno,
-   como Facturación?

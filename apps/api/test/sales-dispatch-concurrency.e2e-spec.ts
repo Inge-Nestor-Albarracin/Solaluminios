@@ -88,6 +88,7 @@ describe('Sales and dispatch races repeated 20 times (e2e)', () => {
       await prisma.dispatchLine.deleteMany({ where: { dispatchId: { in: dIds } } });
       await prisma.dispatch.deleteMany({ where: { id: { in: dIds } } });
       await prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orders.map((o) => o.id) } } });
+      await prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orders.map((o) => o.id) } } });
       await prisma.salesOrder.deleteMany({ where: { id: { in: orders.map((o) => o.id) } } });
       await prisma.quote.deleteMany({ where: { createdById: { in: users } } });
       await prisma.customer.deleteMany({ where: { id: ids.customer } });

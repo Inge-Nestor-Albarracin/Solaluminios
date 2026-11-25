@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 // plain, already labelled data; this module only lays it out:
 // - «Órdenes»: one row per order.
 // - «Renglones»: one row per order line.
+// - «Devoluciones»: one row per line of each received sales return.
 // - «Resumen»: the filters used and the totals per seller (as on screen).
 // Cancelled orders are included (unless filtered out) and painted red in both
 // detail sheets. Amounts are numeric cells so they can be summed and filtered.
@@ -57,6 +58,28 @@ export interface ExportOrder {
   invoiceNumber: string | null;
   billedAt: Date | null;
   lines: ExportLine[];
+  // Received sales returns of the order (documento DV).
+  returns: ExportReturn[];
+}
+
+export interface ExportReturn {
+  number: string;
+  receivedAt: Date;
+  reason: string;
+  settlement: string;
+  settledAmount: Amount;
+  creditNoteNumber: string | null;
+  lines: {
+    lineNo: number;
+    referenceCode: string;
+    referenceDescription: string | null;
+    finishCode: string;
+    origin: string;
+    good: number;
+    damaged: number;
+    amount: Amount;
+    baseAmount: Amount;
+  }[];
 }
 
 interface SummaryBucket {
@@ -71,6 +94,8 @@ export interface ExportSummaryRow {
   paid: SummaryBucket;
   pending: SummaryBucket;
   cash: SummaryBucket;
+  // Received returns of the seller's orders (base without tax).
+  returned: { returns: number; base: string; total: string };
 }
 
 export interface SalesExportData {
@@ -148,6 +173,9 @@ const ORDER_COLUMNS: Column[] = [
   { header: 'Ensamble (sin IVA)', key: 'assembly', width: 15, style: { numFmt: MONEY } },
   { header: 'Instalación (sin IVA)', key: 'installation', width: 15, style: { numFmt: MONEY } },
   { header: 'Total', key: 'total', width: 18, style: { numFmt: MONEY } },
+  { header: 'Devuelto (con IVA)', key: 'returned', width: 16, style: { numFmt: MONEY } },
+  { header: 'Base devuelta (sin IVA)', key: 'returnedBase', width: 16, style: { numFmt: MONEY } },
+  { header: 'Total neto', key: 'net', width: 18, style: { numFmt: MONEY } },
   { header: 'Requiere facturación', key: 'requiresBilling', width: 12 },
   { header: 'N° de factura', key: 'invoiceNumber', width: 16 },
   { header: 'Facturada el', key: 'billedAt', width: 17, style: { numFmt: DATE_TIME } },
@@ -180,6 +208,26 @@ const LINE_COLUMNS: Column[] = [
   { header: 'Total del renglón', key: 'lineTotal', width: 17, style: { numFmt: MONEY } },
 ];
 
+const RETURN_COLUMNS: Column[] = [
+  { header: 'Devolución', key: 'number', width: 13 },
+  { header: 'Recibida el', key: 'receivedAt', width: 17, style: { numFmt: DATE_TIME } },
+  { header: 'Orden', key: 'order', width: 13 },
+  { header: 'Vendedor', key: 'seller', width: 22 },
+  { header: 'Cliente', key: 'customerName', width: 30 },
+  { header: 'Motivo', key: 'reason', width: 26 },
+  { header: 'Renglón', key: 'lineNo', width: 9 },
+  { header: 'Referencia', key: 'referenceCode', width: 14 },
+  { header: 'Descripción', key: 'referenceDescription', width: 30 },
+  { header: 'Color', key: 'finishCode', width: 10 },
+  { header: 'Origen', key: 'origin', width: 10 },
+  { header: 'En buen estado (perfiles)', key: 'good', width: 12 },
+  { header: 'Dañados (perfiles)', key: 'damaged', width: 11 },
+  { header: 'Base devuelta (sin IVA)', key: 'baseAmount', width: 17, style: { numFmt: MONEY } },
+  { header: 'Valor devuelto (con IVA)', key: 'amount', width: 17, style: { numFmt: MONEY } },
+  { header: 'Dinero', key: 'settlement', width: 20 },
+  { header: 'N° de nota crédito', key: 'creditNoteNumber', width: 16 },
+];
+
 export async function renderSalesExport(data: SalesExportData): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Solualuminios';
@@ -187,8 +235,12 @@ export async function renderSalesExport(data: SalesExportData): Promise<Buffer> 
 
   const orders = sheet(workbook, 'Órdenes', ORDER_COLUMNS);
   const lines = sheet(workbook, 'Renglones', LINE_COLUMNS);
+  const returns = sheet(workbook, 'Devoluciones', RETURN_COLUMNS);
   for (const order of data.orders) {
     const createdAt = bogota(order.createdAt);
+    const returnedLines = order.returns.flatMap((item) => item.lines);
+    const returned = returnedLines.reduce((total, line) => Math.round((total + num(line.amount)) * 100) / 100, 0);
+    const returnedBase = returnedLines.reduce((total, line) => Math.round((total + num(line.baseAmount)) * 100) / 100, 0);
     const row = orders.addRow({
       number: order.number,
       createdAt,
@@ -210,6 +262,9 @@ export async function renderSalesExport(data: SalesExportData): Promise<Buffer> 
       assembly: num(order.assemblyAmount),
       installation: num(order.installationAmount),
       total: num(order.total),
+      returned,
+      returnedBase,
+      net: Math.round((num(order.total) - returned) * 100) / 100,
       requiresBilling: order.requiresBilling ? 'Sí' : 'No',
       invoiceNumber: order.invoiceNumber ?? (order.requiresBilling && !order.cancelled ? 'Pendiente' : ''),
       billedAt: order.billedAt ? bogota(order.billedAt) : null,
@@ -244,9 +299,33 @@ export async function renderSalesExport(data: SalesExportData): Promise<Buffer> 
       });
       if (order.cancelled) paintCancelled(lineRow, LINE_COLUMNS.length);
     }
+    for (const item of order.returns) {
+      for (const line of item.lines) {
+        returns.addRow({
+          number: item.number,
+          receivedAt: bogota(item.receivedAt),
+          order: order.number,
+          seller: order.seller,
+          customerName: order.customerName,
+          reason: item.reason,
+          lineNo: line.lineNo,
+          referenceCode: line.referenceCode,
+          referenceDescription: line.referenceDescription ?? '',
+          finishCode: line.finishCode,
+          origin: line.origin,
+          good: line.good,
+          damaged: line.damaged,
+          baseAmount: num(line.baseAmount),
+          amount: num(line.amount),
+          settlement: item.settlement,
+          creditNoteNumber: item.creditNoteNumber ?? '',
+        });
+      }
+    }
   }
   finish(orders, ORDER_COLUMNS.length);
   finish(lines, LINE_COLUMNS.length);
+  finish(returns, RETURN_COLUMNS.length);
 
   const summary = workbook.addWorksheet('Resumen');
   summary.columns = [
@@ -257,6 +336,8 @@ export async function renderSalesExport(data: SalesExportData): Promise<Buffer> 
     { key: 'e', width: 20, style: { numFmt: MONEY } },
     { key: 'f', width: 20, style: { numFmt: MONEY } },
     { key: 'g', width: 20, style: { numFmt: MONEY } },
+    { key: 'h', width: 20, style: { numFmt: MONEY } },
+    { key: 'i', width: 20, style: { numFmt: MONEY } },
   ];
   summary.addRow(['Ventas por vendedor (base para comisiones)']).font = { bold: true, size: 14 };
   summary.addRow(['Generado', bogota(data.generatedAt)]).getCell(2).numFmt = DATE_TIME;
@@ -264,20 +345,40 @@ export async function renderSalesExport(data: SalesExportData): Promise<Buffer> 
   for (const [label, value] of data.filters) summary.addRow([label, value]);
   summary.addRow([]);
   summary.addRow([
-    'Base de comisión = materiales sin IVA después de descuentos. No incluye ensamble ni instalación. Las órdenes canceladas aparecen en rojo en las otras hojas y no suman aquí (salvo que se filtre por «Cancelada»).',
+    'Base de comisión = materiales sin IVA después de descuentos. No incluye ensamble ni instalación. Las órdenes canceladas aparecen en rojo en las otras hojas y no suman aquí (salvo que se filtre por «Cancelada»). Base devuelta = devoluciones recibidas de esas órdenes; base neta = base de comisión − base devuelta.',
   ]).getCell(1).alignment = { wrapText: false };
   summary.addRow([]);
-  const header = summary.addRow(['Vendedor', 'Órdenes', 'Base de comisión', 'Total con IVA', 'Base pagadas', 'Base pago pendiente', 'Base de contado']);
+  const header = summary.addRow([
+    'Vendedor',
+    'Órdenes',
+    'Base de comisión',
+    'Total con IVA',
+    'Base pagadas',
+    'Base pago pendiente',
+    'Base de contado',
+    'Base devuelta',
+    'Base neta',
+  ]);
   header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   header.fill = HEADER_FILL;
-  const totals = { orders: 0, base: 0, total: 0, paid: 0, pending: 0, cash: 0 };
+  const totals = { orders: 0, base: 0, total: 0, paid: 0, pending: 0, cash: 0, returned: 0, net: 0 };
   for (const row of data.summary) {
-    const values = { base: num(row.all.base), total: num(row.all.total), paid: num(row.paid.base), pending: num(row.pending.base), cash: num(row.cash.base) };
-    summary.addRow([row.seller.name, row.all.orders, values.base, values.total, values.paid, values.pending, values.cash]);
+    const values = {
+      base: num(row.all.base),
+      total: num(row.all.total),
+      paid: num(row.paid.base),
+      pending: num(row.pending.base),
+      cash: num(row.cash.base),
+      returned: num(row.returned.base),
+      net: minus(row.all.base, row.returned.base),
+    };
+    summary.addRow([row.seller.name, row.all.orders, values.base, values.total, values.paid, values.pending, values.cash, values.returned, values.net]);
     totals.orders += row.all.orders;
-    for (const key of ['base', 'total', 'paid', 'pending', 'cash'] as const) totals[key] = Math.round((totals[key] + values[key]) * 100) / 100;
+    for (const key of ['base', 'total', 'paid', 'pending', 'cash', 'returned', 'net'] as const) totals[key] = Math.round((totals[key] + values[key]) * 100) / 100;
   }
-  summary.addRow(['Total', totals.orders, totals.base, totals.total, totals.paid, totals.pending, totals.cash]).font = { bold: true };
+  summary
+    .addRow(['Total', totals.orders, totals.base, totals.total, totals.paid, totals.pending, totals.cash, totals.returned, totals.net])
+    .font = { bold: true };
 
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }

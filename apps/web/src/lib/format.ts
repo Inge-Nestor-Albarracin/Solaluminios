@@ -10,6 +10,7 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
   ADJUSTMENT_IN: 'Ajuste (+)',
   ADJUSTMENT_OUT: 'Ajuste (−)',
   OPENING: 'Apertura (pasa a sueltos)',
+  RETURN: 'Devolución de cliente',
 }
 
 export const MONTHS = [

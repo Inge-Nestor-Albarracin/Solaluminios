@@ -50,7 +50,19 @@ export function isCheckViolation(error: unknown): boolean {
   return /23514|check_violation|violates check constraint/i.test(`${error.message} ${JSON.stringify(meta ?? {})}`);
 }
 
-export async function nextNumber(tx: Tx, sequence: 'quote_number_seq' | 'sales_order_number_seq' | 'dispatch_number_seq' | 'stock_lot_code_seq' | 'material_request_number_seq', prefix: string) {
+export async function nextNumber(
+  tx: Tx,
+  sequence:
+    | 'quote_number_seq'
+    | 'sales_order_number_seq'
+    | 'dispatch_number_seq'
+    | 'stock_lot_code_seq'
+    | 'material_request_number_seq'
+    | 'accessory_entry_number_seq'
+    | 'accessory_exit_number_seq'
+    | 'sales_return_number_seq',
+  prefix: string,
+) {
   // Sequence names come from the fixed union above, never from input.
   const rows = await tx.$queryRawUnsafe<{ n: bigint }[]>(`SELECT nextval('${sequence}') AS n`);
   return `${prefix}-${String(rows[0].n).padStart(6, '0')}`;

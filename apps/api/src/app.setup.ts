@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import type { Express, NextFunction, Request, Response } from 'express';
+import { RejectNulPipe } from './infrastructure/http/reject-nul.pipe.js';
 import { RetryableErrorFilter } from './infrastructure/http/retryable.js';
 
 // Local Vite dev server. Override with CORS_ORIGIN (comma-separated list).
@@ -58,6 +59,8 @@ export function configureApp(app: INestApplication): void {
   app.useGlobalFilters(new RetryableErrorFilter(app.getHttpAdapter()));
 
   app.useGlobalPipes(
+    // A NUL character can never reach PostgreSQL (it answered 500): 400 first.
+    new RejectNulPipe(),
     new ValidationPipe({
       transform: true,
       whitelist: true,

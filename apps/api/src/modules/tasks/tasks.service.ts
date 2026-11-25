@@ -35,6 +35,10 @@ const taskInclude = {
   materialRequest: { select: { id: true, number: true, status: true } },
   // Billing tasks: the order to invoice (link only).
   salesOrder: { select: { id: true, number: true, customerName: true, invoiceNumber: true } },
+  // Accessory notices: the voucher the administrator is told about.
+  accessoryVoucher: { select: { id: true, number: true, kind: true } },
+  // Sales return tasks (authorise / receive / credit note): link only.
+  salesReturn: { select: { id: true, number: true, status: true } },
 } satisfies Prisma.TaskInclude;
 
 // Status is derived from the server clock: a task that was not completed
@@ -199,11 +203,19 @@ export class TasksService {
       data: { completedAt: now },
     });
 
-    const task = await this.prisma.task.findUnique({ where: { id }, include: taskInclude });
+    let task = await this.prisma.task.findUnique({ where: { id }, include: taskInclude });
     if (!task || !this.canSee(task, user)) {
       throw new NotFoundException('La tarea no existe');
     }
     if (updated.count === 1) return withStatus(task, now);
+    // An accessory notice has nothing to authorise: its assignee marks it as
+    // seen at any time, even after its date (like other flow tasks, it stays
+    // pending instead of becoming incomplete).
+    if (task.kind === 'ACCESSORY_NOTICE' && task.assigneeId === user.id && !task.completedAt && !task.cancelledAt) {
+      await this.prisma.task.updateMany({ where: { id, completedAt: null }, data: { completedAt: now } });
+      task = await this.prisma.task.findUniqueOrThrow({ where: { id }, include: taskInclude });
+      return withStatus(task, now);
+    }
     if (task.kind === 'DISPATCH') {
       throw new ConflictException(
         'Las tareas de despacho se completan al confirmar la salida del despacho, no desde aquí',
@@ -223,6 +235,15 @@ export class TasksService {
     }
     if (task.kind === 'BILLING') {
       throw new ConflictException('La tarea de facturación se completa al registrar el número de factura en la orden');
+    }
+    if (task.kind === 'RETURN_APPROVAL' || task.kind === 'RETURN_RECEPTION' || task.kind === 'CREDIT_NOTE') {
+      throw new ConflictException(
+        task.kind === 'RETURN_APPROVAL'
+          ? 'La tarea se completa al autorizar o rechazar la devolución'
+          : task.kind === 'RETURN_RECEPTION'
+            ? 'La tarea se completa al registrar lo recibido en la devolución'
+            : 'La tarea se completa al registrar el número de la nota crédito en la devolución',
+      );
     }
     if (task.assigneeId !== user.id) {
       throw new ForbiddenException('Solo la persona asignada puede completar la tarea');

@@ -149,6 +149,7 @@ describe('Manual prices of quotes and their authorisation (e2e)', () => {
       await prisma.quoteDiscountRequest.updateMany({ where: { quoteId: { in: quotes } }, data: { replacedById: null } });
       await prisma.quoteDiscountRequest.deleteMany({ where: { quoteId: { in: quotes } } });
       await prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orders } } });
+      await prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orders } } });
       await prisma.salesOrder.deleteMany({ where: { id: { in: orders } } });
       await prisma.quote.deleteMany({ where: { id: { in: quotes } } });
       await prisma.customer.deleteMany({ where: { id: ids.customer } });

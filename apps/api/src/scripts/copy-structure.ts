@@ -73,7 +73,7 @@ async function main() {
       for (const location of locations.filter((l) => l.branchId === branch.id)) {
         const own = aisles.filter((a) => a.inventoryLocationId === location.id);
         const ownRacks = racks.filter((r) => own.some((a) => a.id === r.aisleId)).length;
-        console.log(`    ${location.code} · ${location.name} (${location.type === 'RETAIL_STORE' ? 'almacén' : 'bodega'}) · ${own.length} pasillos, ${ownRacks} burros`);
+        console.log(`    ${location.code} · ${location.name} (${location.type === 'RETAIL_STORE' ? 'almacén' : location.type === 'ACCESSORY_WAREHOUSE' ? 'bodega de accesorios' : 'bodega'}) · ${own.length} pasillos, ${ownRacks} burros`);
       }
     }
     for (const code of excludeBranches) console.log(`  Excluida: sucursal ${code} · ${allBranches.find((b) => b.code === code)?.name}`);

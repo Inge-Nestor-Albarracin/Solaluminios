@@ -81,6 +81,11 @@ export class LocationsService {
         `${location.name} es un almacén: los almacenes no manejan pasillos ni burros`,
       );
     }
+    if (location.type === 'ACCESSORY_WAREHOUSE') {
+      throw new BadRequestException(
+        `${location.name} es una bodega de accesorios: sus canastas no van por pasillo ni burro`,
+      );
+    }
     return this.createUnique(
       () => this.prisma.aisle.create({
         data: {

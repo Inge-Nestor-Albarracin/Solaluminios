@@ -13,6 +13,9 @@ datasource db {
 enum InventoryLocationType {
   WAREHOUSE
   RETAIL_STORE
+  // Accessories warehouse: only accessory baskets (no aisles nor racks), run
+  // by the ACCESSORIES role (docs/accesorios-fase-1.md).
+  ACCESSORY_WAREHOUSE
 }
 
 enum ArrivalDatePrecision {
@@ -31,6 +34,8 @@ enum InventoryMovementType {
   // The bundle is opened: its profiles become loose in the same place. Not an
   // exit: quantity before = after = quantity.
   OPENING
+  // Profiles a customer gave back (sales return), into the bundle they left.
+  RETURN
 }
 
 enum UserRole {
@@ -96,6 +101,8 @@ model InventoryLocation {
   readerDevices        ReaderDevice[]
   materialRequestsFrom MaterialRequest[]   @relation("MaterialRequestSource")
   materialRequestsTo   MaterialRequest[]   @relation("MaterialRequestDestination")
+  accessoryVouchers    AccessoryVoucher[]
+  salesReturns         SalesReturn[]
 
   @@unique([branchId, code], map: "warehouses_branchId_code_key")
   @@map("warehouses")
@@ -241,6 +248,8 @@ model User {
   ordersCreated             SalesOrder[]             @relation("OrderCreator")
   ordersConverted           SalesOrder[]             @relation("OrderConverter")
   orderPaymentStatuses      SalesOrder[]             @relation("OrderPaymentStatus")
+  orderPaymentsCreated      SalesOrderPayment[]      @relation("OrderPaymentCreator")
+  orderPaymentsEdited       SalesOrderPayment[]      @relation("OrderPaymentEditor")
   billedOrders              SalesOrder[]             @relation("OrderBilledBy")
   bundlesOpened             Bundle[]                 @relation("BundleOpener")
   reservationsCreated       StockReservation[]       @relation("ReservationCreator")
@@ -260,6 +269,15 @@ model User {
   materialRequestsReceived  MaterialRequest[]        @relation("MaterialRequestReceiver")
   materialRequestsCancelled MaterialRequest[]        @relation("MaterialRequestCanceller")
   materialRequestPicks      MaterialRequestPick[]
+  accessoryVouchers         AccessoryVoucher[]
+  returnsRequested          SalesReturn[]            @relation("ReturnRequester")
+  returnsToApprove          SalesReturn[]            @relation("ReturnApprover")
+  returnsDecided            SalesReturn[]            @relation("ReturnDecider")
+  returnsToReceive          SalesReturn[]            @relation("ReturnReceiver")
+  returnsReceived           SalesReturn[]            @relation("ReturnReceivedBy")
+  returnsRefunded           SalesReturn[]            @relation("ReturnRefundedBy")
+  returnsCreditNotes        SalesReturn[]            @relation("ReturnCreditNoteBy")
+  returnsCancelled          SalesReturn[]            @relation("ReturnCancelledBy")
 
   @@index([defaultInventoryLocationId])
   @@map("users")
@@ -286,6 +304,11 @@ model Bundle {
   // bundle is opened once (trigger bundle_opened_is_final).
   openedAt             DateTime?            @db.Timestamptz(3)
   openedById           String?
+  // Accessory basket (docs/accesorios-fase-1.md): a fixed basket of the
+  // accessories warehouse with one chip, refilled by entries and taken by
+  // parts. One per reference, finish and location (partial unique index).
+  // Never opened nor transferred; only the accessories flows move it.
+  basket               Boolean              @default(false)
   createdAt            DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime             @updatedAt @db.Timestamptz(3)
 
@@ -328,12 +351,18 @@ model InventoryMovement {
   dispatchId            String?
   // Set on transfers shipped for a material request (warehouse → branch).
   materialRequestId     String?
+  // Set on the ENTRY / EXIT movements of an accessory voucher (its lines).
+  accessoryVoucherId    String?
+  // Set on RETURN movements (and only on them): the line of the sales return.
+  salesReturnLineId     String?
   createdAt             DateTime              @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime              @updatedAt @db.Timestamptz(3)
 
   bundle              Bundle             @relation(fields: [bundleId], references: [id], onDelete: Restrict)
   dispatch            Dispatch?          @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
   materialRequest     MaterialRequest?   @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
+  accessoryVoucher    AccessoryVoucher?  @relation(fields: [accessoryVoucherId], references: [id], onDelete: Restrict)
+  salesReturnLine     SalesReturnLine?   @relation(fields: [salesReturnLineId], references: [id], onDelete: Restrict)
   performedBy         User               @relation(fields: [performedById], references: [id], onDelete: Restrict)
   sourceLocation      InventoryLocation? @relation("MovementSourceLocation", fields: [sourceLocationId], references: [id], onDelete: Restrict)
   destinationLocation InventoryLocation? @relation("MovementDestinationLocation", fields: [destinationLocationId], references: [id], onDelete: Restrict)
@@ -349,6 +378,8 @@ model InventoryMovement {
   @@index([destinationRackId])
   @@index([dispatchId])
   @@index([materialRequestId])
+  @@index([accessoryVoucherId])
+  @@index([salesReturnLineId])
   @@map("inventory_movements")
 }
 
@@ -372,6 +403,14 @@ enum TaskKind {
   MATERIAL_RECEPTION
   // Invoice a sales order (completed by recording the invoice number).
   BILLING
+  // Notice to the administrator of an accessory voucher (entry or exit
+  // without a sale). Nothing to authorise: marked as seen.
+  ACCESSORY_NOTICE
+  // Sales returns: authorise (admin), receive (warehouse) and the credit
+  // note of an invoiced order (billing). Completed by their flow.
+  RETURN_APPROVAL
+  RETURN_RECEPTION
+  CREDIT_NOTE
 }
 
 model Task {
@@ -390,6 +429,10 @@ model Task {
   materialRequestId String?
   // BILLING tasks only (CHECK): the order to invoice.
   salesOrderId      String?
+  // ACCESSORY_NOTICE tasks only (CHECK): the voucher the administrator sees.
+  accessoryVoucherId String?  @unique
+  // RETURN_APPROVAL, RETURN_RECEPTION and CREDIT_NOTE tasks only (CHECK).
+  salesReturnId     String?
   cancelledAt       DateTime? @db.Timestamptz(3)
   createdAt         DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
@@ -400,11 +443,15 @@ model Task {
   discountRequest QuoteDiscountRequest? @relation(fields: [discountRequestId], references: [id], onDelete: Restrict)
   materialRequest MaterialRequest?      @relation(fields: [materialRequestId], references: [id], onDelete: Restrict)
   salesOrder      SalesOrder?           @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  accessoryVoucher AccessoryVoucher?    @relation(fields: [accessoryVoucherId], references: [id], onDelete: Restrict)
+  salesReturn     SalesReturn?          @relation(fields: [salesReturnId], references: [id], onDelete: Restrict)
 
   // One preparation task and one reception task per request.
   @@unique([materialRequestId, kind])
   // One billing task per order (reopened if billing is requested again).
   @@unique([salesOrderId, kind])
+  // One task of each kind per sales return.
+  @@unique([salesReturnId, kind])
   @@index([assigneeId, completedAt, dueAt])
   @@index([createdById])
   @@index([dueAt])
@@ -499,6 +546,22 @@ enum LotKind {
   CHINA_SHIPMENT
   MANUAL_ENTRY
   OPENING
+  // Lot of an accessory basket: only its origin (a basket is refilled by many
+  // purchases of one origin; no supplier nor cost here).
+  ACCESSORY_BASKET
+}
+
+// Accessory vouchers: an entry (purchase put in the baskets, with its
+// support) or an exit without a sale. Their lines are the movements.
+enum AccessoryVoucherKind {
+  ENTRY
+  EXIT
+}
+
+enum AccessoryExitType {
+  // Sold outside the system (detail required).
+  UNREGISTERED_SALE
+  INTERNAL_USE
 }
 
 // Canonical provenance and acquisition cost of a group of bundles: one
@@ -744,6 +807,7 @@ model Customer {
   createdBy User         @relation("CustomerCreator", fields: [createdById], references: [id], onDelete: Restrict)
   quotes    Quote[]
   orders    SalesOrder[]
+  returns   SalesReturn[]
 
   @@index([name])
   @@map("customers")
@@ -777,6 +841,43 @@ enum PaymentMethod {
   TRANSFER // Contado – transferencia
   PARTIAL // Abono
   CREDIT // Cartera (crédito)
+  // Contado repartido libremente entre efectivo y transferencia (la suma es
+  // el total de la orden).
+  CASH_TRANSFER
+}
+
+// Medium of money actually received: one payment record of an order.
+enum PaymentMedium {
+  CASH
+  TRANSFER
+  // The customer's credit from returns (saldo a favor, docs: devoluciones):
+  // no money changes hands; the balance is derived (returns − payments).
+  CREDIT_BALANCE
+}
+
+// Return of delivered material by the customer (documento DV).
+// REQUESTED → (admin) APPROVED or REJECTED; APPROVED → (warehouse) RECEIVED.
+// REQUESTED / APPROVED can be CANCELLED. RECEIVED is final.
+enum SalesReturnStatus {
+  REQUESTED
+  APPROVED
+  RECEIVED
+  REJECTED
+  CANCELLED
+}
+
+enum SalesReturnReason {
+  SELLER_ERROR // Error del vendedor
+  CUSTOMER_ERROR // El cliente se equivocó o cambió de idea
+  WAREHOUSE_ERROR // Error de bodega
+  DEFECTIVE // Material defectuoso
+}
+
+// What happens with the money the customer had already paid beyond the new
+// net total of the order (the rest of the value just lowers its balance).
+enum SalesReturnSettlement {
+  CREDIT // Saldo a favor del cliente
+  REFUND // Reintegro en efectivo o transferencia
 }
 
 // Collection state of an order paid by abono or on credit (cartera). Cash and
@@ -1015,6 +1116,8 @@ model SalesOrder {
   createdBy         User               @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
   convertedBy       User?              @relation("OrderConverter", fields: [convertedById], references: [id], onDelete: Restrict)
   paymentStatusBy   User?              @relation("OrderPaymentStatus", fields: [paymentStatusById], references: [id], onDelete: Restrict)
+  payments          SalesOrderPayment[]
+  returns           SalesReturn[]
   billedBy          User?              @relation("OrderBilledBy", fields: [billedById], references: [id], onDelete: Restrict)
   lines             SalesOrderLine[]
   dispatches        Dispatch[]
@@ -1063,6 +1166,7 @@ model SalesOrderLine {
   manualApprovedBy User?              @relation("OrderLinePriceApprover", fields: [manualApprovedById], references: [id], onDelete: Restrict)
   reservations     StockReservation[]
   dispatchLines    DispatchLine[]
+  returnLines      SalesReturnLine[]
 
   @@unique([salesOrderId, lineNo])
   @@map("sales_order_lines")
@@ -1493,4 +1597,200 @@ model MaterialRequestPick {
   @@index([bundleId])
   @@index([requestLineId])
   @@map("material_request_picks")
+}
+
+// Accessory voucher (docs/accesorios-fase-1.md): an entry of purchased units
+// into the baskets (IA-…, with its support) or an exit without a sale
+// (SS-…, with its type and detail). Its lines are the ENTRY / EXIT movements
+// that point to it, one per basket. Never edited nor deleted; the
+// administrator corrects with an adjustment. Each one leaves an
+// ACCESSORY_NOTICE task to the administrator.
+model AccessoryVoucher {
+  id                  String               @id @default(cuid())
+  number              String               @unique
+  kind                AccessoryVoucherKind
+  inventoryLocationId String
+  // ENTRY only (CHECK): who sold it, invoice or delivery note, arrival day.
+  supplierName        String?
+  documentNumber      String?
+  arrivalDate         DateTime?            @db.Date
+  // EXIT only (CHECK): why it left and the detail (always required).
+  exitType            AccessoryExitType?
+  detail              String?
+  receivedBy          String?
+  notes               String?
+  operationKey        String               @unique
+  createdById         String
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+
+  inventoryLocation InventoryLocation   @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  createdBy         User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  movements         InventoryMovement[]
+  task              Task?
+
+  @@index([kind, createdAt])
+  @@index([inventoryLocationId])
+  @@index([createdById])
+  @@map("accessory_vouchers")
+}
+
+// Money received for a sales order: one record per payment (contado, split
+// in cash and transfer, or each abono), with its own amount, day and medium.
+// The order total never changes; paid = Σ amount ≤ total (trigger) and the
+// balance is total − paid. Abono / cartera orders with records derive their
+// payment status from them (PAID when the balance is zero). Corrections edit
+// the record (never a new payment) and are audited (PAYMENT_EDITED).
+// Orders converted before this table have no records: nothing is invented.
+model SalesOrderPayment {
+  id           String        @id @default(cuid())
+  salesOrderId String
+  medium       PaymentMedium
+  amount       Decimal       @db.Decimal(18, 2)
+  // Day the money was received (business day, chosen by the user).
+  paidOn       DateTime      @db.Date
+  note         String?
+  // Recorded with the conversion of a contado order (its amount is fixed:
+  // the contado always adds up to the order total).
+  atSale       Boolean       @default(false)
+  // Transfers only (CHECK): where Solaluminios received the money (its
+  // account), for reports per entity. Required for every new transfer and
+  // when a payment becomes a transfer (trigger); null on a transfer means
+  // «Sin especificar» (recorded before the entity was asked). Cash: null.
+  transferEntityId String?
+  operationKey String        @unique
+  createdById  String
+  createdAt    DateTime      @default(now()) @db.Timestamptz(3)
+  // Last correction (null: never edited); every change is in audit_events.
+  updatedById  String?
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(3)
+
+  salesOrder     SalesOrder      @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  createdBy      User            @relation("OrderPaymentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy      User?           @relation("OrderPaymentEditor", fields: [updatedById], references: [id], onDelete: Restrict)
+  transferEntity TransferEntity? @relation(fields: [transferEntityId], references: [id], onDelete: Restrict)
+
+  @@index([salesOrderId, paidOn])
+  @@index([createdById])
+  @@index([updatedById])
+  @@index([transferEntityId, paidOn])
+  @@map("sales_order_payments")
+}
+
+// Entities where Solaluminios receives transfers (Nequi, Banco Caja Social…):
+// the only list of them. Stable ids (never renamed); a new entity is a new row
+// (added by a migration when the client asks; no screen yet). Inactive ones
+// stay for history but are not offered.
+model TransferEntity {
+  id        String   @id
+  name      String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  payments SalesOrderPayment[]
+  refunds  SalesReturn[]
+
+  @@map("transfer_entities")
+}
+
+// Return of delivered material (documento DV-000001), from one order.
+// - Request: ADMIN or the owner seller, with lines (quantity per order line,
+//   at most what was delivered and not yet returned), reason and settlement.
+//   A seller's request waits for an administrator (task); an admin's is
+//   approved at once.
+// - Reception: warehouse staff of the place the material left from count
+//   what came back (good / damaged). Good profiles go back to the bundles
+//   they left (RETURN movements, same origin and lot); a closed bundle read
+//   by its chip comes back closed. Damaged ones never enter the stock.
+// - Money (at reception): `amount` is the value of what came back (with
+//   tax; `baseAmount` without tax, for commissions). It first lowers what the
+//   customer still owed; `settledAmount` is what they had paid beyond the new
+//   net total: saldo a favor (CREDIT) or reintegro (REFUND, recorded later
+//   with its medium).
+// - Invoiced order: a task to billing for the credit note (nota crédito),
+//   made in the billing software; its number is recorded here.
+model SalesReturn {
+  id                     String                @id @default(cuid())
+  number                 String                @unique
+  salesOrderId           String
+  // The order's customer (its saldo a favor).
+  customerId             String
+  // Where it is received: the place the delivered material left from.
+  inventoryLocationId    String
+  status                 SalesReturnStatus
+  reason                 SalesReturnReason
+  notes                  String?
+  settlement             SalesReturnSettlement
+  createOperationKey     String                @unique
+  requestedById          String
+  // Administrator the seller asked (task); null when an admin requested it.
+  approverId             String?
+  decidedById            String?
+  decidedAt              DateTime?             @db.Timestamptz(3)
+  decisionNote           String?
+  // Warehouse person with the reception task.
+  receiverId             String?
+  receivedById           String?
+  receivedAt             DateTime?             @db.Timestamptz(3)
+  receiveOperationKey    String?               @unique
+  receptionNote          String?
+  amount                 Decimal?              @db.Decimal(18, 2)
+  baseAmount             Decimal?              @db.Decimal(18, 2)
+  settledAmount          Decimal?              @db.Decimal(18, 2)
+  refundMedium           PaymentMedium?
+  refundTransferEntityId String?
+  refundedOn             DateTime?             @db.Date
+  refundNote             String?
+  refundedAt             DateTime?             @db.Timestamptz(3)
+  refundedById           String?
+  creditNoteNumber       String?
+  creditNoteAt           DateTime?             @db.Timestamptz(3)
+  creditNoteById         String?
+  cancelledAt            DateTime?             @db.Timestamptz(3)
+  cancelledById          String?
+  cancelReason           String?
+  createdAt              DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime              @updatedAt @db.Timestamptz(3)
+
+  salesOrder           SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  customer             Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  inventoryLocation    InventoryLocation @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  requestedBy          User              @relation("ReturnRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  approver             User?             @relation("ReturnApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  decidedBy            User?             @relation("ReturnDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  receiver             User?             @relation("ReturnReceiver", fields: [receiverId], references: [id], onDelete: Restrict)
+  receivedBy           User?             @relation("ReturnReceivedBy", fields: [receivedById], references: [id], onDelete: Restrict)
+  refundedBy           User?             @relation("ReturnRefundedBy", fields: [refundedById], references: [id], onDelete: Restrict)
+  creditNoteBy         User?             @relation("ReturnCreditNoteBy", fields: [creditNoteById], references: [id], onDelete: Restrict)
+  cancelledBy          User?             @relation("ReturnCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  refundTransferEntity TransferEntity?   @relation(fields: [refundTransferEntityId], references: [id], onDelete: Restrict)
+  lines                SalesReturnLine[]
+  tasks                Task[]
+
+  @@index([salesOrderId])
+  @@index([customerId, status])
+  @@index([inventoryLocationId, status])
+  @@index([status, createdAt])
+  @@map("sales_returns")
+}
+
+// One order line in a return: requested profiles, and at reception the good
+// and damaged ones with their value (proportional to the order line).
+model SalesReturnLine {
+  id               String  @id @default(cuid())
+  salesReturnId    String
+  salesOrderLineId String
+  quantity         Int
+  goodQuantity     Int?
+  damagedQuantity  Int?
+  amount           Decimal? @db.Decimal(18, 2)
+  baseAmount       Decimal? @db.Decimal(18, 2)
+
+  salesReturn    SalesReturn         @relation(fields: [salesReturnId], references: [id], onDelete: Restrict)
+  salesOrderLine SalesOrderLine      @relation(fields: [salesOrderLineId], references: [id], onDelete: Restrict)
+  movements      InventoryMovement[]
+
+  @@unique([salesReturnId, salesOrderLineId])
+  @@index([salesOrderLineId])
+  @@map("sales_return_lines")
 }

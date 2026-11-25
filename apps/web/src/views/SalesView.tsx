@@ -7,6 +7,7 @@ import { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, formatMoney, hasLabour, type 
 import { formatDateTime } from '../lib/format'
 import { RequestUpdatesNotice } from '../components/RequestUpdatesNotice'
 import { useRequestUpdates } from '../lib/requestUpdates'
+import { RETURN_STATUS_BADGE, RETURN_STATUS_LABEL, RETURN_REASONS, type ReturnRow } from '../lib/returns'
 import { useLoad } from '../lib/useLoad'
 import { useSession } from '../session/session-context'
 import type { Navigate } from './navigation'
@@ -57,6 +58,8 @@ interface SellerSummary {
   paid: SummaryBucket
   pending: SummaryBucket
   cash: SummaryBucket
+  // Received returns of the seller's orders (with these filters).
+  returned: { returns: number; base: string; total: string }
 }
 
 interface OrderFilters {
@@ -76,13 +79,14 @@ const filterQuery = (filters: OrderFilters) =>
     .join('')
 
 // Money of a summary cell: base before VAT (commission base) and total.
-function Amount({ bucket }: { bucket: SummaryBucket }) {
+function Amount({ bucket, unit }: { bucket: SummaryBucket; unit?: 'devoluciones' }) {
   if (bucket.orders === 0) return <span className="cell-sub">—</span>
+  const count = unit ? `${bucket.orders} ${bucket.orders === 1 ? 'devolución' : 'devoluciones'}` : `${bucket.orders} ${bucket.orders === 1 ? 'orden' : 'órdenes'}`
   return (
     <>
       <strong>{formatMoney(bucket.base)}</strong>
       <span className="cell-sub">
-        {' '}con IVA {formatMoney(bucket.total)} · {bucket.orders} {bucket.orders === 1 ? 'orden' : 'órdenes'}
+        {' '}con IVA {formatMoney(bucket.total)} · {count}
       </span>
     </>
   )
@@ -92,10 +96,13 @@ const QUOTE_STATUS = { DRAFT: 'Borrador', CONVERTED: 'Convertida en orden', CANC
 
 // Sales: quotes (no stock effect) and orders (reservations and dispatches).
 // SALES sees only its own documents; ADMIN all (enforced by the API).
-export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navigate; initialTab?: 'quotes' | 'orders' }) {
+type Tab = 'quotes' | 'orders' | 'returns'
+const TAB_LABEL: Record<Tab, string> = { quotes: 'Cotizaciones', orders: 'Órdenes de venta', returns: 'Devoluciones' }
+
+export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navigate; initialTab?: Tab }) {
   const { user } = useSession()
   const isAdmin = user?.role === 'ADMIN'
-  const [tab, setTab] = useState<'quotes' | 'orders'>(initialTab)
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [page, setPage] = useState(1)
   // ADMIN: who sold what and whether it is paid (commissions).
   const [filters, setFilters] = useState<OrderFilters>(NO_FILTERS)
@@ -104,8 +111,9 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
   const orders = useLoad<Page<OrderRow>>(tab === 'orders' ? `/sales-orders?page=${page}&pageSize=20${query}` : null)
   const summary = useLoad<SellerSummary[]>(tab === 'orders' && isAdmin ? `/sales-orders/summary?${query.slice(1)}` : null)
   const users = useLoad<AdminUser[]>(tab === 'orders' && isAdmin ? '/users' : null)
+  const returns = useLoad<Page<ReturnRow>>(tab === 'returns' ? `/sales-returns?page=${page}&pageSize=20` : null)
   const sellers = (users.data ?? []).filter((u) => u.role === 'SALES' || u.role === 'ADMIN').sort((a, b) => a.name.localeCompare(b.name))
-  const current = tab === 'quotes' ? quotes : orders
+  const current = tab === 'quotes' ? quotes : tab === 'orders' ? orders : returns
   const requestUpdates = useRequestUpdates(true)
   const setFilter = (patch: Partial<OrderFilters>) => {
     setFilters((value) => ({ ...value, ...patch }))
@@ -126,7 +134,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
       />
       <RequestUpdatesNotice updates={requestUpdates.data} onOpen={(id) => navigate({ name: 'quote', id })} />
       <div className="tabs" role="tablist">
-        {(['quotes', 'orders'] as const).map((id) => (
+        {(['quotes', 'orders', 'returns'] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -138,7 +146,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
               setPage(1)
             }}
           >
-            {id === 'quotes' ? 'Cotizaciones' : 'Órdenes de venta'}
+            {TAB_LABEL[id]}
           </button>
         ))}
       </div>
@@ -195,7 +203,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                 <table className="seller-summary">
                   <thead>
                     <tr>
-                      <th>Vendedor</th><th className="num">Vendido</th><th className="num">Pagado</th><th className="num">Pago pendiente</th><th className="num">Contado</th>
+                      <th>Vendedor</th><th className="num">Vendido</th><th className="num">Pagado</th><th className="num">Pago pendiente</th><th className="num">Contado</th><th className="num">Devuelto</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,6 +216,13 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                         <td className="num" data-label="Pagado"><Amount bucket={row.paid} /></td>
                         <td className="num" data-label="Pago pendiente"><Amount bucket={row.pending} /></td>
                         <td className="num" data-label="Contado"><Amount bucket={row.cash} /></td>
+                        <td className="num" data-label="Devuelto">
+                          {row.returned.returns > 0 ? (
+                            <Amount bucket={{ orders: row.returned.returns, base: row.returned.base, total: row.returned.total }} unit="devoluciones" />
+                          ) : (
+                            <span className="cell-sub">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -217,7 +232,7 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
           ) : null}
           <p className="field-hint">
             Valores sin IVA después de descuentos (base de comisión) y, debajo, con IVA. El vendedor es quien hizo la cotización. Pagada / pendiente aplica a
-            abono y crédito; las ventas de contado no llevan seguimiento de pago.
+            abono y crédito; las ventas de contado no llevan seguimiento de pago. Devuelto: devoluciones recibidas de esas órdenes (se restan de la base en el Excel).
           </p>
         </section>
       ) : null}
@@ -284,6 +299,33 @@ export function SalesView({ navigate, initialTab = 'quotes' }: { navigate: Navig
                     ) : isAdmin ? (
                       <span className="badge badge-muted">Contado</span>
                     ) : null}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+      {tab === 'returns' && returns.data ? (
+        returns.data.items.length === 0 ? (
+          <Empty title="Sin devoluciones">Se registran desde una orden con material entregado: «Registrar devolución».</Empty>
+        ) : (
+          <ul className="doc-list">
+            {returns.data.items.map((item) => (
+              <li key={item.id}>
+                <button type="button" className="doc-row" onClick={() => navigate({ name: 'return', id: item.id })}>
+                  <span className="doc-main">
+                    <strong>{item.number}</strong>
+                    <small>
+                      {item.order.customerName} · orden {item.order.number} · {RETURN_REASONS.find((r) => r.id === item.reason)?.label ?? item.reason} ·{' '}
+                      {formatDateTime(item.createdAt)}
+                      {isAdmin ? ` · pidió ${item.requestedBy.name}` : ''}
+                    </small>
+                  </span>
+                  <span className="doc-side">
+                    {item.amount ? <strong>{formatMoney(item.amount)}</strong> : null}
+                    {item.refundPending ? <span className="badge badge-warning">Reintegro pendiente</span> : null}
+                    <span className={RETURN_STATUS_BADGE[item.status]}>{RETURN_STATUS_LABEL[item.status]}</span>
                   </span>
                 </button>
               </li>

@@ -48,6 +48,7 @@ const order = (patch: Partial<ExportOrder> = {}): ExportOrder => ({
   invoiceNumber: 'FE-1001',
   billedAt: new Date('2026-11-10T15:00:00Z'),
   lines: [line()],
+  returns: [],
   ...patch,
 });
 
@@ -69,7 +70,7 @@ const data: SalesExportData = {
       lines: [line(), line({ lineNo: 2, referenceCode: '8025', origin: 'China', manualPrice: true })],
     }),
   ],
-  summary: [{ seller: { name: 'Wesales' }, all: { orders: 1, base: '87300.00', total: '103887.00' }, paid: { orders: 0, base: '0.00', total: '0.00' }, pending: { orders: 1, base: '87300.00', total: '103887.00' }, cash: { orders: 0, base: '0.00', total: '0.00' } }],
+  summary: [{ seller: { name: 'Wesales' }, all: { orders: 1, base: '87300.00', total: '103887.00' }, paid: { orders: 0, base: '0.00', total: '0.00' }, pending: { orders: 1, base: '87300.00', total: '103887.00' }, cash: { orders: 0, base: '0.00', total: '0.00' }, returned: { returns: 0, base: '0.00', total: '0.00' } }],
 };
 
 async function read(buffer: Buffer) {
@@ -82,9 +83,9 @@ const header = (ws: ExcelJS.Worksheet) => (ws.getRow(1).values as unknown[]).sli
 const value = (ws: ExcelJS.Worksheet, row: number, title: string) => ws.getRow(row).getCell(header(ws).indexOf(title) + 1);
 
 describe('renderSalesExport', () => {
-  it('writes orders, lines and summary sheets in that order', async () => {
+  it('writes orders, lines, returns and summary sheets in that order', async () => {
     const workbook = await read(await renderSalesExport(data));
-    expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Órdenes', 'Renglones', 'Resumen']);
+    expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Órdenes', 'Renglones', 'Devoluciones', 'Resumen']);
     expect(workbook.getWorksheet('Órdenes')!.rowCount).toBe(3);
     expect(workbook.getWorksheet('Renglones')!.rowCount).toBe(4);
   });
@@ -145,8 +146,42 @@ describe('renderSalesExport', () => {
   it('summarises per seller with a total row', async () => {
     const ws = (await read(await renderSalesExport(data))).getWorksheet('Resumen')!;
     const rows = (ws.getSheetValues() as unknown[][]).filter(Boolean).map((row) => row.slice(1));
-    expect(rows).toContainEqual(['Wesales', 1, 87300, 103887, 0, 87300, 0]);
-    expect(rows).toContainEqual(['Total', 1, 87300, 103887, 0, 87300, 0]);
+    expect(rows).toContainEqual(['Wesales', 1, 87300, 103887, 0, 87300, 0, 0, 87300]);
+    expect(rows).toContainEqual(['Total', 1, 87300, 103887, 0, 87300, 0, 0, 87300]);
     expect(rows).toContainEqual(['Vendedor', 'Wesales']);
+  });
+
+  it('subtracts received returns: order columns, a row per returned line and the net base', async () => {
+    const returned = order({
+      returns: [
+        {
+          number: 'DV-000001',
+          receivedAt: new Date('2026-11-12T15:00:00Z'),
+          reason: 'Error del vendedor',
+          settlement: 'Saldo a favor',
+          settledAmount: '10388.70',
+          creditNoteNumber: 'NC-7',
+          lines: [
+            { lineNo: 1, referenceCode: '744', referenceDescription: 'Jamba', finishCode: 'NP', origin: 'Nacional', good: 9, damaged: 1, amount: '10388.70', baseAmount: '8730.00' },
+          ],
+        },
+      ],
+    });
+    const summary = [{ ...data.summary[0], returned: { returns: 1, base: '8730.00', total: '10388.70' } }];
+    const workbook = await read(await renderSalesExport({ ...data, orders: [returned], summary }));
+    const orders = workbook.getWorksheet('Órdenes')!;
+    expect(value(orders, 2, 'Devuelto (con IVA)').value).toBe(10388.7);
+    expect(value(orders, 2, 'Base devuelta (sin IVA)').value).toBe(8730);
+    expect(value(orders, 2, 'Total neto').value).toBe(93498.3);
+    const returns = workbook.getWorksheet('Devoluciones')!;
+    expect(returns.rowCount).toBe(2);
+    expect(value(returns, 2, 'Devolución').value).toBe('DV-000001');
+    expect(value(returns, 2, 'Orden').value).toBe('OV-000001');
+    expect(value(returns, 2, 'En buen estado (perfiles)').value).toBe(9);
+    expect(value(returns, 2, 'Dañados (perfiles)').value).toBe(1);
+    expect(value(returns, 2, 'Valor devuelto (con IVA)').value).toBe(10388.7);
+    expect(value(returns, 2, 'N° de nota crédito').value).toBe('NC-7');
+    const rows = (workbook.getWorksheet('Resumen')!.getSheetValues() as unknown[][]).filter(Boolean).map((row) => row.slice(1));
+    expect(rows).toContainEqual(['Wesales', 1, 87300, 103887, 0, 87300, 0, 8730, 78570]);
   });
 });

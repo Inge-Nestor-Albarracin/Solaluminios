@@ -81,6 +81,7 @@ describe('Order billing (e2e)', () => {
       await prisma.task.deleteMany({ where: { OR: [{ salesOrderId: { in: orderIds } }, { assigneeId: { in: users } }, { createdById: { in: users } }] } });
       await prisma.notificationOutbox.deleteMany({ where: { userId: { in: users } } });
       await prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orderIds } } });
+      await prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orderIds } } });
       await prisma.salesOrder.deleteMany({ where: { id: { in: orderIds } } });
       await prisma.quote.deleteMany({ where: { id: { in: quotes } } });
       await prisma.customer.deleteMany({ where: { id: ids.customer } });

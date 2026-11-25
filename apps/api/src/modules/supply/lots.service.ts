@@ -112,6 +112,8 @@ export class LotsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
     const where: Prisma.StockLotWhereInput = {
+      // Basket lots only carry a basket's origin; they are seen from Accesorios.
+      kind: { not: 'ACCESSORY_BASKET' },
       ...(query.referenceId ? { referenceId: query.referenceId } : {}),
       ...(query.finishId ? { finishId: query.finishId } : {}),
       ...(query.origin ? { origin: query.origin } : {}),

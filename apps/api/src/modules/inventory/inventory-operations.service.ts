@@ -47,6 +47,9 @@ type MovementData = BundleMovementData;
 
 interface Operation {
   operationKey: string;
+  // Accessory baskets only take the administrator's adjustments here: their
+  // entries and exits go through the accessories vouchers.
+  allowBasket?: boolean;
   // Decides whether a stored movement with the same key is the same request.
   matches: (movement: InventoryMovement) => boolean;
   // Runs with the bundle row locked; updates the bundle and describes the
@@ -292,6 +295,7 @@ export class InventoryOperationsService {
   adjust(bundleId: string, dto: BundleAdjustmentDto, user: SafeUser) {
     return this.execute(bundleId, user, {
       operationKey: dto.operationKey,
+      allowBasket: true,
       matches: (m) =>
         m.type === dto.type &&
         m.quantity === dto.quantity &&
@@ -358,6 +362,7 @@ export class InventoryOperationsService {
           const bundle = await tx.bundle.findUniqueOrThrow({
             where: { id: bundleId },
           });
+          if (bundle.basket && !operation.allowBasket) throw basketNotHere();
           const { opening, ...data } = await operation.apply(tx, bundle);
           const occurredAt = new Date();
           const movement = await tx.inventoryMovement.create({
@@ -463,7 +468,14 @@ export class InventoryOperationsService {
 // Why a bundle cannot move to this place (null when it can). Reservations
 // belong to the dispatch location: moving reserved material would
 // invalidate them.
+function basketNotHere() {
+  return new BadRequestException(
+    'Es una canasta de accesorios: sus ingresos y salidas se registran desde Accesorios, y solo el administrador la ajusta',
+  );
+}
+
 function notMovable(bundle: Bundle, reserved: number, place: Place): Error | null {
+  if (bundle.basket) return basketNotHere();
   if (bundle.quantity === 0) {
     return new ConflictException('El paquete está agotado y no se puede trasladar');
   }

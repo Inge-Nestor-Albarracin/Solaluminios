@@ -3,9 +3,12 @@ import type { View } from '../views/navigation'
 // Views that a URL (?view=…, manifest shortcuts, a reload) or a notification
 // may open. Anything else is ignored; the role checks of each view and of the
 // API still apply after login.
-export type LaunchView = Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch' | 'request' | 'requests' | 'billing'>
+export type LaunchView = Exclude<
+  View['name'],
+  'bundle' | 'quote' | 'order' | 'dispatch' | 'request' | 'requests' | 'billing' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'
+>
 
-const ALLOWED = new Set<LaunchView>(['home', 'register', 'lookup', 'bulk', 'bundles', 'summary', 'tasks', 'admin', 'receive', 'sales', 'dispatches'])
+const ALLOWED = new Set<LaunchView>(['home', 'register', 'lookup', 'bulk', 'bundles', 'summary', 'tasks', 'admin', 'receive', 'sales', 'dispatches', 'accessories', 'vouchers'])
 
 export function parseView(value: unknown): LaunchView | null {
   return typeof value === 'string' && ALLOWED.has(value as LaunchView) ? (value as LaunchView) : null

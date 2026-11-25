@@ -3078,7 +3078,8 @@ rol: todavía sin canastas, ingresos, ventas ni despachos de accesorios.
   existentes no cambian;
 - `migrate status`: 21 migraciones, al día;
 - `migrate diff` entre la base y el esquema: «No difference detected»;
-- no se aplicó en `solaluminios_ensayo_manual` ni en producción.
+- no se aplicó en producción. En `solaluminios_ensayo_manual` se aplicó
+  después, junto con la de la entrega 1 (ver «Accesorios, entrega 1»).
 
 **API:**
 - `RolesGuard`: la lista `RESTRICTED_ROLES` (`CHINA_OPERATOR`, `BILLING` y
@@ -3110,9 +3111,700 @@ rol: todavía sin canastas, ingresos, ventas ni despachos de accesorios.
 
 **Pendiente:**
 - crear en la app la «Bodega de accesorios» y el usuario real, y asignarle esa
-  ubicación;
+  ubicación. El usuario indicó que va en la sede de la **139**: «116» fue un
+  error suyo y **solo se renombra en producción**, si allí existe (por
+  confirmar con la salida del paso A3 de `docs/deploy/base-limpia.md`; el
+  cambio sería un `UPDATE` del nombre o el código, sin cambiar IDs). Por
+  decisión del usuario, los manuales, `seed-manual.mjs`, la base de
+  demostración y las pruebas conservan «Bodega 116» como ejemplo;
 - desplegar la migración cuando se publique;
 - las preguntas del diseño antes de la primera entrega.
+
+## Accesorios, entrega 1: inventario por canastas (24/11/2026)
+
+**Decisiones del usuario (mismo día):**
+- los rollos se sacan completos;
+- no hay accesorios sin color;
+- las salidas sin venta son «Venta no registrada» o «Consumo interno»;
+- una sola persona tendrá el rol;
+- la bodega de accesorios va en la sede de la 139.
+
+Diseño completo en `docs/accesorios-fase-1.md`. Las compras y los precios de
+accesorios pasan a la entrega 2.
+
+**Migración `20261124130000_accessory_inventory`** (aditiva; aplicada en
+`solaluminios_dev`; `migrate diff`: «No difference detected»):
+- enums:
+  - `InventoryLocationType.ACCESSORY_WAREHOUSE`;
+  - `LotKind.ACCESSORY_BASKET`;
+  - `TaskKind.ACCESSORY_NOTICE`;
+  - `AccessoryVoucherKind` (`ENTRY`, `EXIT`);
+  - `AccessoryExitType` (`UNREGISTERED_SALE`, `INTERNAL_USE`);
+- `bundles.basket` (por defecto `false`: nada existente cambia);
+- tabla `accessory_vouchers`, más `accessoryVoucherId` en
+  `inventory_movements` y en `tasks`;
+- reglas en la base:
+  - una canasta por referencia, color y ubicación (índice único parcial);
+  - una canasta nunca se abre;
+  - el lote de canasta puede ser nacional sin proveedor (se rehízo
+    `stock_lots_national_supplier`);
+  - encabezado válido según el tipo de comprobante;
+  - las líneas de un comprobante son movimientos `ENTRY` o `EXIT`, una por
+    canasta;
+  - la tarea `ACCESSORY_NOTICE` siempre apunta a su comprobante;
+- secuencias `IA-` (ingresos) y `SS-` (salidas sin venta).
+
+**API (módulo `accessories`, solo `ADMIN` y `ACCESSORIES`):**
+- `GET /accessories/catalog`: accesorios, colores y bodegas de accesorios
+  (para Accesorios, solo la suya);
+- `GET /accessories/baskets` (búsqueda), `GET /accessories/baskets/epc/:epc` y
+  `GET /accessories/baskets/:id`, este último con su historial;
+- `POST /accessories/baskets`: registro con chip, accesorio, color, origen y
+  conteo de hoy.
+  - Crea un lote `ACCESSORY_BASKET` con solo el origen.
+  - Con 0 unidades no hay movimiento (la base exige cantidad > 0): el
+    historial empieza con el primer ingreso. Los reintentos se reconocen por
+    la clave guardada en la auditoría.
+- `GET /accessories/vouchers` y `GET /accessories/vouchers/:id`;
+- `POST /accessories/vouchers/entries`: proveedor, factura o remisión y fecha
+  de llegada;
+- `POST /accessories/vouchers/exits`: tipo y detalle obligatorios, y quién
+  recibe;
+- en cada comprobante:
+  - todas las canastas cambian o ninguna, con bloqueo de filas, clave de
+    operación idempotente y sin superar el saldo libre de reservas;
+  - auditoría `ACCESSORY_ENTRY_CREATED` o `ACCESSORY_EXIT_CREATED`;
+  - si lo hace Accesorios, una tarea `ACCESSORY_NOTICE` al administrador
+    activo más antiguo, con aviso `accessory-entry` o `accessory-exit`. El
+    administrador la marca como vista en cualquier momento.
+- **Protecciones en los flujos de perfiles:**
+  - salida, apertura y traslado (uno o varios) rechazan una canasta; solo el
+    ajuste del administrador la toca;
+  - `requirePlace` rechaza la bodega de accesorios;
+  - no se crean pasillos en ella;
+  - Paquetes y Resumen no muestran canastas;
+  - los lotes de canasta no salen en Administración → Lotes.
+
+**Web:**
+- **Accesorios:** menú Inicio, Canastas, Comprobantes y Tareas.
+- **Pantallas:**
+  - Canastas: leer chip o buscar; ofrece registrar un chip desconocido;
+  - Registrar canasta;
+  - detalle de la canasta con su kárdex;
+  - Ingreso y Salida sin venta: el chip se lee con la pistola o se elige la
+    canasta; la pantalla no deja guardar una salida mayor que lo disponible;
+  - Comprobantes y su detalle.
+- **Administrador:** entrada «Accesorios» y tarjeta en Inicio.
+- **Tareas:** el aviso tiene «Ver IA-…» y «Marcar como visto».
+- **Service worker:** textos de los dos avisos nuevos.
+
+**Pruebas** (`accessories-inventory.e2e-spec.ts`, 6):
+- registro, reintento y canasta repetida;
+- chip ajeno, referencia de perfil y usuario sin bodega;
+- ingreso con tarea y aviso, reintento y clave reutilizada;
+- salida que no supera el saldo, kárdex y consistencia del historial
+  (`ledgerProblems`);
+- el aviso solo lo cierra el administrador;
+- protecciones de perfiles: salida, traslado, apertura, registro y pasillos;
+  el ajuste del administrador sí funciona;
+- alcance por bodega: Accesorios solo ve y mueve su bodega.
+
+**Verificación:**
+- API: `build`, `oxlint`, `pnpm test` 52/52.
+- API `pnpm test:e2e`:
+  - en paralelo, por defecto, hubo tiempos de espera vencidos en archivos que
+    pasan solos (`authorization-idor`, `security`, `sales-dispatch`, entre
+    otros);
+  - con `--maxWorkers=2`: **234/234** en 30 archivos.
+  - En este equipo la corrida en paralelo es sensible a la carga.
+- Web: `build`, `oxlint` y pruebas (7/7 y 14/14).
+- **Navegador** (API aparte en el puerto 3101 y web en el 5174, sobre
+  `solaluminios_dev`, con un usuario de Accesorios de prueba):
+  - menú del rol;
+  - registro de canasta (40);
+  - ingreso IA-000001 (+10, de 40 a 50) con el chip leído;
+  - la pantalla bloquea una salida de 60;
+  - salida SS-000001 (Consumo interno, −3, de 50 a 47);
+  - vista de celular; sin errores en la consola.
+  - No se probó como administrador en el navegador (marcar el aviso como
+    visto está cubierto por la prueba e2e).
+
+**Datos de prueba creados en `solaluminios_dev`** (se conservan para que el
+usuario los vea):
+- sucursal `139` «Sede 139» con la ubicación `ACCESORIOS-139` «Bodega de
+  accesorios»;
+- usuario «QA Accesorios» (`qa-accesorios@test.local`, rol Accesorios); sus
+  credenciales están en `.env.browser-test`, ignorado por Git;
+- la canasta `E2800QA00010001` (rodachina 744 doble nailon, NP), con
+  IA-000001 y SS-000001;
+- dos tareas de aviso para el administrador «Wetracking».
+
+**Base de demostración** (`solaluminios_ensayo_manual`), a pedido del
+usuario:
+- se aplicaron las dos migraciones de accesorios con
+  `node docs/manual/herramientas/demo-db.mjs run solaluminios_ensayo_manual pnpm exec prisma migrate deploy`;
+- `migrate status`: 22, al día;
+- `migrate diff`: «No difference detected»;
+- `counts` antes y después: mismas filas en todas las tablas, más la tabla
+  nueva `accessory_vouchers`, vacía. Ninguna canasta.
+
+**Pendiente:**
+- reiniciar el API local del usuario (`pnpm start:dev`): seguía sin el módulo
+  y respondía 404 en `/accessories/...`;
+- **las referencias «por metro» no se bloquean al registrar una canasta.** El
+  catálogo no tiene un campo que las distinga; decidir si se marca en el
+  catálogo;
+- producción:
+  - desplegar las dos migraciones;
+  - crear la bodega de accesorios en la sede 139 y asignarla al usuario;
+- entrega 2 (compras, precios y venta de mostrador) y entrega 3 (órdenes
+  mixtas; antes, confirmar qué pasa con una orden mixta sin existencias).
+
+## Pagos de contado mixtos y abonos en la orden (24/11/2026)
+
+Pedido del cliente: contado en efectivo y transferencia combinados, y abonos
+sucesivos con fecha, valor y saldo.
+
+**Cómo funcionaba antes:**
+- **Cotización:** guardaba la forma de pago esperada (`CASH`, `TRANSFER`,
+  `PARTIAL` o `CREDIT`) y unas condiciones en texto libre; no registraba
+  dinero.
+- **Conversión:** exigía la forma de pago y la copiaba a la orden.
+- **Orden:**
+  - contado: sin estado («pagada al vender»);
+  - abono o cartera: empezaba en `PENDING`, y el dueño o el administrador la
+    marcaba `PAID` a mano, con auditoría `PAYMENT_STATUS_CHANGED`;
+  - no se guardaban valores, fechas ni medios.
+
+**Migración `20261124140000_order_payments`** (aditiva; aplicada en
+`solaluminios_dev`):
+- `PaymentMethod.CASH_TRANSFER` («Contado – efectivo y transferencia») y
+  el enum `PaymentMedium` (`CASH` o `TRANSFER`);
+- tabla `sales_order_payments`: orden, medio, valor `Decimal(18,2)`, fecha
+  del pago (`DATE`), observación, `atSale` (contado registrado al
+  convertir), `operationKey` única, autor, y autor y fecha de la última
+  corrección;
+- reglas en la base:
+  - CHECK de valor mayor que 0;
+  - un trigger que bloquea la orden y rechaza que los pagos superen su total;
+  - un trigger que impide mover un pago a otra orden.
+- **Registros anteriores:** no se crea ningún pago (no se inventan valores,
+  fechas ni medios).
+  - Una orden de contado anterior sigue entendiéndose como pagada al vender,
+    sin detalle de medios.
+  - Una de abono o cartera conserva su estado, que se sigue cambiando a mano
+    mientras no tenga abonos registrados.
+
+**API:**
+- **Al convertir** (`POST /quotes/:id/convert`), con `cashAmount` y
+  `transferAmount` opcionales (`order-payments.ts`, `contadoSplit`):
+  - `CASH` o `TRANSFER` registran un pago por el total en ese medio, fechado
+    hoy;
+  - `CASH_TRANSFER` exige ambos valores mayores que 0 y que sumen
+    exactamente el total. Si no, responde 400 con lo que falta o sobra.
+  - Abono y cartera no aceptan reparto.
+- **`POST /sales-orders/:id/payments`** (`ADMIN` y `SALES` dueño):
+  - abono con valor, fecha y medio, y observación opcional;
+  - solo en órdenes de abono o cartera, no canceladas;
+  - el valor debe ser mayor que 0 y no superar el saldo; la fecha, real y no
+    posterior a hoy;
+  - idempotente por `operationKey`.
+  - Una orden marcada pagada a mano sin abonos pide volverla a pendiente.
+- **`PATCH /sales-orders/:id/payments/:paymentId`** (mismos roles):
+  - corrige valor, fecha, medio u observación;
+  - el saldo se calcula reemplazando el valor anterior;
+  - en un pago de contado el valor no cambia; el medio, la fecha y la
+    observación sí;
+  - auditoría `PAYMENT_EDITED`, con autor y cada campo de antes y después;
+  - repetir la misma corrección no cambia nada.
+- **Estado de pago:** en abono o cartera con abonos se calcula solo (`PAID`
+  con saldo 0; `PENDING` si una corrección lo reabre), auditado. El cambio
+  manual (`PATCH …/payment-status`) responde 409 si hay abonos.
+- **`GET /sales-orders/:id`** agrega `payments` y `paymentSummary` (total,
+  abonado, saldo, completo), y las correcciones de cada pago.
+  - Solo para `ADMIN` y el vendedor dueño. Facturación lee la orden sin
+    ellos.
+  - Los autores solo los ve el administrador, como en el resto de la orden.
+- **Concurrencia:** cada escritura bloquea la fila de la orden
+  (`lockOrder`, que también aplica el alcance por rol) antes de leer el
+  saldo.
+
+**Web:**
+- **Cotización:** la forma de pago ofrece «Contado – efectivo y
+  transferencia».
+- **Diálogo de conversión:**
+  - con el contado mixto pide efectivo y transferencia y muestra, mientras se
+    escribe, cuánto falta por distribuir o cuánto sobra;
+  - no deja convertir si no suma el total;
+  - con contado de un solo medio informa que se registra el total.
+- **Orden: panel «Pagos»** (`OrderPaymentsPanel`):
+  - total, abonado, saldo y «Pago completo»;
+  - historial con fecha, medio, valor, observación y correcciones;
+  - «Agregar abono»: valor, fecha (hoy por defecto) y medio; muestra el saldo
+    que quedará;
+  - «Editar» en cada pago.
+  - Los botones manuales de estado se ocultan cuando hay abonos.
+
+**Pruebas:**
+- `order-payments.e2e-spec.ts` (6):
+  - contado de un solo medio;
+  - contado mixto 35.000 / 65.000 sobre 100.000;
+  - suma que falta o que sobra, rechazada y sin crear la orden;
+  - abonos de 5.000 (ayer, efectivo) y 1.000 (hoy, transferencia): 6.000
+    abonados y 4.000 pendientes;
+  - corrección del segundo a 1.500: 6.500 y 3.500, con auditoría;
+  - rechazo de 0, negativos, más que el saldo y fecha futura;
+  - abono final con saldo 0, pagada;
+  - doble clic con la misma clave (un solo abono) y dos abonos simultáneos
+    que no caben (uno pasa, el otro 400);
+  - permisos;
+  - órdenes anteriores sin registros.
+- `order-payments.spec.ts` (5 unitarias): reparto con centavos y validación
+  de fechas.
+- **Ajuste a 8 pruebas existentes:** su limpieza borra sus propias órdenes de
+  prueba y ahora borra antes sus pagos, porque la llave foránea es RESTRICT.
+  - Un corte de esa limpieza dejó en la base de pruebas dos valores de
+    configuración (`china.supplierId` y `dispatch.supervisorUserId`), del
+    administrador de prueba de esa corrida. Se borraron solo esas dos filas.
+
+**Verificación:**
+- API: `build`, `oxlint`, `pnpm test` 57/57;
+- `test:e2e --maxWorkers=2`: **240/240** en 31 archivos;
+- web: `build`, `oxlint` y pruebas.
+- **Navegador** (API aparte en el puerto 3101 y web en el 5174, sobre
+  `solaluminios_dev`, con el usuario de prueba «QA Ventas»):
+  - COT-000033 → OV-000031 con contado mixto:
+    - el aviso mostró «falta por distribuir $1.145,75» y no dejó convertir;
+    - con $5.000 + $7.145,75 quedó pagada, saldo $0, «Pago completo».
+  - COT-000034 → OV-000032 con abono:
+    - $5.000 en efectivo el 23/11 y $1.000 por transferencia el 24/11:
+      abonado $6.000;
+    - «Editar» el segundo a $1.500: abonado $6.500 y saldo $5.645,75, con la
+      nota «Corregido … Valor $1.000 → $1.500»;
+    - los botones manuales de estado se ocultaron.
+  - Vista de celular sin desborde de página.
+
+**Migración en las bases locales** (24/11/2026, a pedido del usuario):
+- `solaluminios_dev` y `solaluminios_dev_e2e_test`: 23, al día.
+- `solaluminios_ensayo_manual`: se aplicó `20261124140000_order_payments` con
+  `demo-db.mjs run … pnpm exec prisma migrate deploy`.
+  - `migrate status`: al día; `migrate diff`: «No difference detected».
+  - `counts` antes y después: mismas filas, más la tabla
+    `sales_order_payments`, vacía.
+- En producción sigue pendiente: se aplica con el script de despliegue.
+
+**Datos de prueba en `solaluminios_dev`:**
+- el usuario «QA Ventas» (`qa-ventas@test.local`); sus credenciales están en
+  `.env.browser-test`, ignorado por Git;
+- COT-000033 / OV-000031 y COT-000034 / OV-000032, con sus pagos.
+
+**Pendiente (decisiones del usuario):**
+- **Quién corrige un abono ya registrado:** hoy los mismos que lo registran
+  (el vendedor dueño y el administrador); no se amplió a nadie más. ¿Solo el
+  administrador?
+- **Botones manuales de estado:** en órdenes nuevas de abono o cartera sin
+  abonos siguen visibles «Marcar como pagada» y «Volver a pendiente», como
+  antes. ¿Se ocultan para que solo decidan los abonos?
+- **Reparto de un contado ya registrado:** se corrigen el medio, la fecha y la
+  observación, no los valores (por ejemplo, 30/70 en lugar de 35/65).
+- **Abono registrado por error:** no se puede anular ni borrar; solo
+  corregir.
+- **Cartera:** también recibe abonos; confirmar.
+- **Facturación:** no ve los abonos; confirmar si debe verlos en solo
+  lectura.
+- **Sin cambios:** el PDF y el Excel de comisiones no muestran lo abonado ni
+  el saldo (fuera del alcance pedido).
+
+## Entidad donde se recibe cada transferencia (24/11/2026)
+
+Pedido: guardar dónde recibió Solaluminios cada transferencia (por ejemplo,
+Nequi), para informes futuros.
+
+**Cómo quedó almacenado:**
+- **Tabla `transfer_entities`:** es la única lista de entidades. Tiene `id`
+  estable en texto, `name`, `active` y `sortOrder`. Empieza con `NEQUI`
+  (Nequi) y `BANCO_CAJA_SOCIAL` (Banco Caja Social). Una entidad nueva es una
+  fila más, agregada por migración; no hay pantalla.
+- **`sales_order_payments.transferEntityId`:** llave foránea a esa tabla, en
+  cada pago. Así cada importe transferido lleva su entidad, su fecha y su
+  valor; no se guarda en la orden ni como texto libre.
+- **Informe por entidad:** `SUM(amount) … GROUP BY "transferEntityId"` sobre
+  los pagos con medio `TRANSFER`.
+- **Reglas en la base:**
+  - CHECK: solo una transferencia tiene entidad;
+  - trigger: toda transferencia nueva, y todo pago que pasa a transferencia,
+    exige entidad, y una entidad conocida no se borra.
+
+**Migración `20261124150000_transfer_entities`** (aditiva; aplicada en
+`solaluminios_dev`, `solaluminios_dev_e2e_test` y
+`solaluminios_ensayo_manual`):
+- crea la tabla, las dos filas, la columna y las reglas;
+- **registros anteriores:** las transferencias ya registradas quedan sin
+  entidad y se muestran como «Sin especificar»; no se asigna ninguna por
+  suposición.
+
+**API:**
+- **`GET /transfer-entities`** (`ADMIN` y `SALES`): entidades activas.
+- **`POST /quotes/:id/convert`** con `transferEntityId`:
+  - obligatorio en `TRANSFER` y en la parte transferida de `CASH_TRANSFER`;
+  - rechazado con `CASH`;
+  - debe ser de la lista y estar activa.
+- **`POST /sales-orders/:id/payments`:** la misma regla, según el medio.
+- **`PATCH /sales-orders/:id/payments/:paymentId`:**
+  - pasar a efectivo quita la entidad;
+  - pasar a transferencia la exige;
+  - se puede cambiar por otra de la lista;
+  - una transferencia «Sin especificar» puede corregir su fecha u
+    observación sin inventarle entidad;
+  - todo cambio queda en `PAYMENT_EDITED` (`transferEntityId` de → a).
+- **`GET /sales-orders/:id`:** cada pago trae `transferEntity` (`id` y
+  `name`, o null).
+
+**Web:**
+- **Conversión:** con «Contado – transferencia» y con la parte transferida del
+  contado mixto aparece el desplegable obligatorio «¿Dónde se recibió la
+  transferencia?».
+  - Empieza en «Selecciona una entidad», sin opción por defecto.
+  - No deja convertir sin elegir.
+- **«Agregar abono» y «Editar»:** el mismo desplegable aparece al elegir
+  Transferencia y desaparece con Efectivo. Una transferencia histórica
+  muestra «Sin especificar (sin cambiar)».
+- **Historial de pagos:** muestra la entidad bajo «Transferencia», o «Sin
+  especificar», y las correcciones como «Entidad Nequi → Banco Caja Social».
+
+**Pruebas:**
+- `order-payments.e2e-spec.ts`, ahora con 9 casos. Los 3 nuevos:
+  - **aceptación:** orden de $100.000 = $35.000 en efectivo (sin entidad) +
+    $65.000 por transferencia a Banco Caja Social. El `groupBy` por entidad
+    da `BANCO_CAJA_SOCIAL = 65.000`, no el total. Se rechazan una
+    transferencia sin entidad, una entidad fuera de la lista y efectivo con
+    entidad;
+  - **dos abonos de una orden** en Nequi (ayer) y Banco Caja Social (hoy),
+    cada uno con su fecha e importe. Se rechazan el abono por transferencia
+    sin entidad, una entidad inexistente y efectivo con entidad. Pasar a
+    efectivo quita la entidad, con auditoría de antes y después; volver a
+    transferencia la exige; cambiar a otra entidad queda auditado;
+  - **transferencia histórica:** escrita sin entidad con los triggers
+    desactivados en la sesión. Se ve «Sin especificar», se corrige su
+    observación sin asignarle entidad, y la base rechaza una transferencia
+    nueva sin entidad aunque se inserte fuera del API.
+- Las transferencias de los casos anteriores ahora envían su entidad.
+- **Ajuste de 2 pruebas existentes** que convertían «Contado – transferencia»
+  sin entidad (`sales-commissions` y `sales-dispatch`): ahora envían
+  `NEQUI`.
+- `order-payments.spec.ts`: 6 unitarias.
+
+**Verificación:**
+- API: `build`, `oxlint`, `pnpm test` 58/58;
+- `test:e2e --maxWorkers=2`: **243/243** en 31 archivos;
+- web: `build`, `oxlint` y pruebas.
+- **Navegador** (API aparte en el puerto 3101 y web en el 5174, «QA
+  Ventas»):
+  - COT-000035 con «Contado – transferencia»: el desplegable empieza en
+    «Selecciona una entidad» con Nequi y Banco Caja Social, no deja convertir
+    sin elegir y desaparece con efectivo. Con Nequi, OV-000033 muestra
+    «Transferencia · Nequi $12.145,75».
+  - En OV-000032:
+    - el abono por transferencia registrado antes se ve «Sin especificar»;
+    - un abono nuevo por transferencia exige la entidad; con Banco Caja Social
+      se ve como tal;
+    - «Editar» muestra la entidad guardada; al pasarlo a efectivo el
+      desplegable desaparece y la corrección dice «Medio Transferencia →
+      Efectivo · Entidad Banco Caja Social → (sin entidad)»;
+    - la transferencia histórica muestra «Sin especificar (sin cambiar)» y
+      deja guardar.
+
+**Pendiente:**
+- desplegar la migración en producción;
+- agregar las entidades que indique el cliente (una fila por entidad, por
+  migración);
+- el informe por entidad, que queda para después, como se pidió.
+
+## Buscador de familia en la cotización (24/11/2026)
+
+Pedido: al cotizar, un campo para escribir que filtre la lista de familias, y
+solo la de familias.
+
+- **`CatalogSelectors`:** prop nueva `searchFamily`; por defecto toma el valor
+  de `requireFamily`, así que Registrar paquete sigue igual.
+  - Muestra «Buscar por nombre o código» sobre la lista de familias, que se
+    reduce a las que contienen lo escrito (nombre o código, sin tildes ni
+    mayúsculas).
+  - La familia sigue siendo opcional en la cotización.
+  - La referencia, el acabado y el resto de pantallas no cambian.
+- **`QuoteView`:** cada renglón usa `searchFamily`.
+- **Verificación:**
+  - web: `build`, `oxlint` y pruebas;
+  - navegador, con «QA Ventas» en una cotización nueva: «kim» deja «KALIMA -
+    KIMBAYA (14)» y «puerta» deja 744, 7038 y 8025 PUERTA CORREDIZA.
+
+## Devoluciones de clientes con saldo a favor (25/11/2026)
+
+Pedido: desarrollar la opción 3 del plan de devoluciones (devolución formal
+con saldo a favor). Caso típico: el cliente se llevó la referencia X en negro
+y necesitaba la Y en blanco. Diseño completo, reglas y decisiones en
+`docs/devoluciones.md`.
+
+**Flujo:**
+1. **Solicitud.** Ventas, o el administrador, registra la devolución desde la
+   orden (`DV-000001`):
+   - perfiles por renglón, hasta lo entregado y no devuelto;
+   - motivo, saldo a favor o reintegro, y observación.
+2. **Autorización.** El administrador que eligió el vendedor la autoriza o la
+   rechaza, por tarea. Si la pide un administrador, queda autorizada al
+   guardar.
+3. **Recepción.** Un bodeguero de la ubicación de salida la recibe por tarea:
+   - cuenta los perfiles en buen estado y los dañados;
+   - lee el chip de los paquetes que vuelven cerrados.
+4. **Inventario.** Lo bueno vuelve a los paquetes de donde salió, con
+   movimientos `RETURN`. Lo dañado no entra al inventario.
+5. **Valor.** Es proporcional al renglón, con y sin IVA.
+   - Primero baja lo que el cliente debía.
+   - Lo pagado de más queda como saldo a favor del cliente o como reintegro
+     por registrar.
+6. **Orden facturada.** Facturación recibe la tarea de nota crédito.
+7. **Saldo a favor.** Se usa al convertir una cotización y en «Agregar
+   abono».
+
+**Migración `20261125120000_sales_returns`** (aditiva; aplicada en
+`solaluminios_dev`, `solaluminios_dev_e2e_test` y
+`solaluminios_ensayo_manual`; `migrate status` con 25 migraciones y sin
+diferencias):
+- **Tablas:** `sales_returns` y `sales_return_lines`.
+- **Enums nuevos:** estado, motivo y liquidación.
+- **Valores nuevos en enums existentes:**
+  - `InventoryMovementType.RETURN`;
+  - `PaymentMedium.CREDIT_BALANCE`;
+  - `TaskKind`: `RETURN_APPROVAL`, `RETURN_RECEPTION` y `CREDIT_NOTE`.
+- **Columnas nuevas:** `inventory_movements.salesReturnLineId` y
+  `tasks.salesReturnId`.
+- **Secuencia:** `sales_return_number_seq`.
+- **Reglas en la base:**
+  - CHECK de cada estado: quién y cuándo, valor, reintegro, nota crédito y
+    cancelación;
+  - CHECK de los renglones;
+  - `RETURN` suma al saldo y siempre va ligado a un renglón de devolución;
+  - devolución recibida inmodificable (trigger);
+  - pagos ≤ total neto: se reemplaza la función
+    `sales_order_payments_within_total`;
+  - pagos con saldo a favor ≤ lo acreditado al cliente (trigger con bloqueo
+    del cliente).
+
+**API:**
+- **Módulo `returns`:**
+  - `GET /sales-orders/:id/returnable`;
+  - `POST /sales-orders/:id/returns`;
+  - `GET /sales-returns` y `GET /sales-returns/:id`;
+  - `POST /sales-returns/:id/approve`, `reject`, `cancel`, `receive`,
+    `refund` y `credit-note`.
+- **Roles:**
+  - Ventas: solo sus órdenes;
+  - Bodega: su ubicación o lo que tiene asignado, sin valores;
+  - Facturación: las recibidas de órdenes con factura.
+- **Ventas:**
+  - `GET /customers/:id/credit`;
+  - `creditAmount` al convertir, con cualquier forma de pago;
+  - medio `CREDIT_BALANCE` en abonos;
+  - saldo y estado de pago con devoluciones;
+  - `getOrder` trae `returns`, `returnSummary` y `customerCredit`.
+- **Excel y resumen:**
+  - el resumen por vendedor trae `returned`;
+  - el Excel suma columnas en Órdenes, la hoja «Devoluciones» y la base neta
+    en el Resumen.
+- **Tareas y avisos:** las tareas nuevas solo se completan con su flujo; hay
+  7 avisos push nuevos.
+
+**Web:**
+- **Orden:** tarjeta «Devoluciones», con «Registrar devolución».
+- **Pantalla nueva «Registrar devolución».**
+- **Pantalla de la devolución:**
+  - autorizar o rechazar;
+  - recibir, con conteo y lectura de chips;
+  - reintegro;
+  - nota crédito;
+  - cancelar.
+- **Ventas:** pestaña «Devoluciones».
+- **Pagos:**
+  - total neto en el panel;
+  - medio «Saldo a favor» en el panel de pagos;
+  - «Usar saldo a favor» al convertir.
+- **Otros:** columna «Devuelto» en el resumen por vendedor, botón de la tarea
+  y textos de los avisos.
+
+**Pruebas:**
+- **`sales-returns.e2e-spec.ts`** (5 casos):
+  - contado con un paquete que vuelve cerrado por chip, y saldo a favor;
+  - carrera por el saldo a favor entre dos conversiones (una gana);
+  - abono con perfiles sueltos y uno dañado: baja el saldo y lo demás es
+    reintegro;
+  - cartera facturada: rechazo, cancelación, recepción repetida con la misma
+    clave y nota crédito;
+  - resumen y Excel.
+- **`returns.spec.ts`:** 12 unitarias (proporción, saldo, reparto en
+  paquetes, saldo a favor en el contado).
+- **Ajustadas:** `sales-export.spec.ts` (columnas y hoja nuevas) y
+  `sales-commissions.e2e-spec.ts` (4 hojas).
+
+**Verificación:**
+- **API:**
+  - `build` y `oxlint`;
+  - `pnpm test`: 72/72;
+  - `test:e2e --maxWorkers=2`: **248/248** en 32 archivos (corrida final,
+    después de ajustar el nombre de las hojas en `sales-commissions`).
+- **Web:** `tsc`, `oxlint`, `build` y pruebas.
+- **Recorrido en `solaluminios_dev`** (API aparte en el puerto 3101), con
+  las mismas llamadas que hacen las pantallas, rol por rol:
+  1. OV-000036: 10 perfiles PRUEBA-001 NP entregados.
+  2. QA Ventas pide DV-000001 (aprox. $65.725,25); Bodega todavía no la ve.
+  3. QA Admin la autoriza; la tarea de recepción le llega a un bodeguero de
+     «Bodega de prueba».
+  4. Bodega la ve sin valores: 9 buenos y 1 dañado; los 9 vuelven a su
+     paquete.
+  5. Saldo a favor de $65.725,25; la orden queda con neto $0.
+  6. El reemplazo OV-000037, en CH, se paga con saldo a favor $65.725,25 +
+     efectivo $78.809,18.
+- **Navegador** (web en el puerto 5174 y API en el 3101; el usuario inició
+  cada sesión de prueba):
+  - **QA Accesorios:** no ve Ventas ni devoluciones.
+  - **QA Ventas:**
+    - cantidades 11, 2,5 y −1 bloqueadas; motivo y administrador
+      obligatorios;
+    - una observación con `'; DROP TABLE sales_returns;-- <script>…` se
+      guarda literal y se muestra como texto;
+    - el doble clic en «Enviar» crea una sola DV (DV-000002), y sin nada
+      por devolver no deja pedir otra.
+  - **QA Admin:**
+    - un rechazo con motivo de 2 letras queda bloqueado;
+    - el doble clic al autorizar crea una sola tarea de recepción (le tocó
+      a QA Bodega por turno) y una sola aprobación auditada;
+    - la recepción bloquea 11 buenos y 0 + 0; con 8 buenos y 1 dañado, el
+      paquete pasa de 799 a 807 una sola vez y el valor es $59.152,73;
+    - al convertir COT-000040 se bloquea un saldo a favor mayor al
+      disponible o con texto hostil; con saldo $59.152,73 + efectivo
+      $50.000 + Nequi $35.381,70 queda OV-000038, una sola orden;
+    - la DV-000003, pedida por el administrador para el perfil que faltó,
+      sale autorizada y se recibe como dañado, sin volver al inventario;
+    - el reintegro con fecha futura se rechaza y por Banco Caja Social se
+      registra;
+    - las dos DV de la OV-000035 suman exactamente su total;
+    - el resumen por vendedor muestra lo devuelto (base $110.462,60).
+  - **Corregido durante la prueba:**
+    - el valor aproximado redondeaba ($65.725,30 en vez de $65.725,25);
+    - faltaba el aviso «no queda nada por devolver»;
+    - la fecha del reintegro no se validaba antes de enviar y se mostraba
+      como AAAA-MM-DD;
+    - en la recepción faltaba «ya volvieron N».
+- **Pruebas de choque, `test/sales-returns-hardening.e2e-spec.ts`** (22
+  casos, base de pruebas):
+  - **Concurrencia:** peticiones simultáneas reales, con barrera al inicio
+    de la transacción:
+    - 6 solicitudes por lo mismo, con distinta clave → 1 creada;
+    - la misma clave 6 veces → 1 devolución;
+    - autorizar contra rechazar, y autorizar contra cancelar;
+    - 6 recepciones → el inventario se mueve una vez;
+    - recibir contra cancelar;
+    - dos recepciones de la misma orden → lo devuelto al cliente nunca
+      supera lo pagado;
+    - carrera por el saldo a favor en abonos y conversiones → nunca
+      negativo;
+    - nota crédito y reintegro simultáneos.
+  - **Entradas hostiles:**
+    - 15 ids con inyección SQL (`' OR '1'='1`, `DROP TABLE`, `UNION`…) en
+      las 12 rutas → 404, sin cambios;
+    - 17 filtros hostiles → 400;
+    - enums e ids hostiles en el cuerpo → 400;
+    - textos con SQL y `<script>` → guardados literales.
+  - **Permisos:**
+    - otro vendedor y otra bodega → 404;
+    - bodega sin valores en pesos;
+    - Facturación limitada;
+    - solo lectura, accesorios y operador China → 403;
+    - sin sesión → 401.
+  - **Validaciones:** 31 cuerpos inválidos en la solicitud, 23 en la
+    recepción, reintegro, nota crédito y saldo a favor.
+  - **Reglas de la base, saltándose el API:** devolución recibida
+    inmodificable, movimientos `RETURN`, saldo a favor, total neto, estados
+    y tareas.
+- **Defectos que encontró la batería, corregidos** (respondían 500; los
+  datos nunca quedaban mal):
+  1. **Misma clave de operación en dos órdenes a la vez:** ahora responde
+     409 «ya se usó con otra orden».
+  2. **Clave de recepción ya usada por otra devolución:** ahora responde 409.
+     Se revisa antes de recibir, y el servicio traduce cualquier choque de
+     clave a 409.
+  3. **Carácter nulo (`\u0000`) en una ruta o un texto:** PostgreSQL no lo
+     acepta y el error afectaba a **todo el API**. Nuevo pipe global
+     `RejectNulPipe` (`src/infrastructure/http/reject-nul.pipe.ts`, con
+     prueba unitaria), registrado en `app.setup.ts` antes de la
+     validación: responde 400 en rutas, filtros y cuerpos.
+- **Ajuste de una prueba existente** (`quote-discounts.e2e-spec.ts`): buscaba
+  su tarea en la primera página de «todas las pendientes» del
+  administrador. Con más datos en la base de pruebas quedaba en otra página.
+  Ahora filtra por el administrador asignado, también en la comprobación de
+  «ya no está pendiente», que antes pasaba aunque estuviera mal.
+- **Verificación final:**
+  - **API:** `build` y `oxlint`; `pnpm test` 75/75; `test:e2e
+    --maxWorkers=2` **270/270** en 33 archivos.
+  - **Web:** `tsc`, `oxlint`, `build` y pruebas.
+
+**Datos de prueba creados en `solaluminios_dev`:**
+- usuarios locales «QA Admin» (`ADMIN`) y «QA Bodega» (`WAREHOUSE`, en
+  Bodega de prueba), con credenciales en `.env.browser-test` (ignorado por
+  Git);
+- COT-000037 → OV-000035, con DV-000002 (saldo a favor) y DV-000003
+  (reintegro);
+- COT-000038 → OV-000036, con DV-000001;
+- COT-000039 → OV-000037;
+- COT-000040 → OV-000038, pagada con saldo a favor, efectivo y Nequi.
+
+No se borró nada.
+
+**Pendiente:**
+- desplegar la migración en producción;
+- probar en el navegador la pantalla de bodega (QA Bodega) y la lectura de
+  chips de paquetes cerrados (cubiertas por API y pruebas automáticas);
+- confirmar las 7 decisiones por defecto de `docs/devoluciones.md`;
+- desactivar los usuarios QA si ya no se usan.
+
+## Decimales al escribir pesos (25/11/2026)
+
+Reporte del usuario: en el reparto «Contado – efectivo y transferencia», al
+escribir la coma decimal, el monto «se reiniciaba».
+
+**Causa:**
+- El campo no se borraba. `parseMoney` no aceptaba un monto con la coma o el
+  punto final todavía sin decimales («3.453,»): lo dejaba como inválido.
+- Mientras se escribía, el cálculo tomaba ese campo como vacío y el aviso
+  saltaba a «falta por distribuir $3.453,11» hasta escribir el primer
+  decimal.
+- Pasaba en todos los campos de dinero: reparto, saldo a favor, abonos y
+  precios manuales.
+
+**Corrección:**
+- **`lib/numbers.ts`:** el separador final sin decimales cuenta como el
+  número entero («3.453,» = 3453; «3453.» = 3453). Lo demás no cambia:
+  formato colombiano con punto de miles y coma decimal. Se agregaron 10
+  casos a `scripts/numbers.test.mts`, que ahora tiene 24.
+- **Conversión con contado repartido:** botón «Poner lo que falta: $…» en
+  efectivo o en transferencia. Llena el valor exacto, centavos incluidos, y
+  solo aparece cuando el otro medio ya tiene un monto.
+- **«Agregar abono»:** botón «Pagar todo el saldo: $…».
+
+**Verificación:**
+- **Web:** `tsc`, `oxlint`, pruebas (24/24) y `build`.
+- **Navegador** (5174, QA Ventas):
+  - **COT-000042 ($14.453,44):** se escribió «11.453,44» tecla por tecla
+    en transferencia, con $3.000 en efectivo.
+    - Con «11.453» y con «11.453,» el aviso dice «falta $0,44», sin
+      saltar.
+    - Con «11.453,4» dice «falta $0,04»; con «11.453,44», «distribución
+      completa».
+    - «Poner lo que falta» llena «11453,44».
+    - Convertida: OV-000039, efectivo $3.000 + Nequi $11.453,44.
+  - **OV-000040 (abono):**
+    - «5.000,» calcula el saldo después en $9.453,44;
+    - «Pagar todo el saldo» llena «14453,44»;
+    - guardado: la orden queda «Pagada».
 
 ## Pendiente
 

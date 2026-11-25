@@ -36,7 +36,10 @@ import {
   SetBillingDto,
   UpdateOrderLineDto,
   UpdatePaymentStatusDto,
+  AddOrderPaymentDto,
+  EditOrderPaymentDto,
 } from './dto/sales.dto.js';
+import { OrderPaymentsService } from './order-payments.service.js';
 import { SalesService } from './sales.service.js';
 
 function sessionUser(request: AuthenticatedRequest) {
@@ -58,7 +61,10 @@ function pdfResponse(response: Response, document: { number: string; pdf: Buffer
 // the warehouse (no prices).
 @Controller()
 export class SalesController {
-  constructor(private readonly sales: SalesService) {}
+  constructor(
+    private readonly sales: SalesService,
+    private readonly payments: OrderPaymentsService,
+  ) {}
 
   @Roles('ADMIN', 'SALES')
   @Get('customers')
@@ -83,6 +89,13 @@ export class SalesController {
   @Patch('customers/:id/billing-data')
   updateCustomerBillingData(@Param('id') id: string, @Body() dto: CustomerBillingDataDto) {
     return this.sales.updateCustomerBillingData(id, dto);
+  }
+
+  // Saldo a favor of the customer (from sales returns), usable as a payment.
+  @Roles('ADMIN', 'SALES')
+  @Get('customers/:id/credit')
+  customerCredit(@Param('id') id: string) {
+    return this.sales.customerCreditOf(id);
   }
 
   @Roles('ADMIN', 'SALES', 'WAREHOUSE')
@@ -284,6 +297,35 @@ export class SalesController {
   @Patch('sales-orders/:id/payment-status')
   setPaymentStatus(@Param('id') id: string, @Body() dto: UpdatePaymentStatusDto, @Req() request: AuthenticatedRequest) {
     return this.sales.setPaymentStatus(id, dto.status, sessionUser(request));
+  }
+
+  // Where a transfer can be received (Nequi, Banco Caja Social…), for the
+  // payment forms.
+  @Roles('ADMIN', 'SALES')
+  @Get('transfer-entities')
+  transferEntities() {
+    return this.sales.transferEntities();
+  }
+
+  // Abonos of an abono / cartera order: who already records its payment
+  // state (the owner seller or ADMIN). Billing, warehouse and accessories
+  // only read orders; they do not record money.
+  @Roles('ADMIN', 'SALES')
+  @Post('sales-orders/:id/payments')
+  addPayment(@Param('id') id: string, @Body() dto: AddOrderPaymentDto, @Req() request: AuthenticatedRequest) {
+    return this.payments.add(id, dto, sessionUser(request));
+  }
+
+  // Correction of a payment already recorded (same roles).
+  @Roles('ADMIN', 'SALES')
+  @Patch('sales-orders/:id/payments/:paymentId')
+  editPayment(
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: EditOrderPaymentDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.payments.edit(id, paymentId, dto, sessionUser(request));
   }
 
   // The seller (own orders) or ADMIN marks whether the order needs an invoice.

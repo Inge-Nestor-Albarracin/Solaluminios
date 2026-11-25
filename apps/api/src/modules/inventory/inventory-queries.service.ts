@@ -259,6 +259,9 @@ export class InventoryQueriesService {
 
   private commonWhere(query: InventoryFiltersDto): Prisma.BundleWhereInput {
     return {
+      // Accessory baskets have their own screens (Accesorios), not Paquetes
+      // nor Resumen of the profiles.
+      basket: false,
       referenceId: query.referenceId,
       finishId: query.finishId,
       inventoryLocationId: query.inventoryLocationId,

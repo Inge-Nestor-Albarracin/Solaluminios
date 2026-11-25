@@ -87,6 +87,8 @@ export type MovementType =
   | 'ADJUSTMENT_IN'
   | 'ADJUSTMENT_OUT'
   | 'OPENING'
+  // A customer gave profiles back (sales return).
+  | 'RETURN'
 
 export interface Bundle {
   id: string

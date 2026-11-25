@@ -57,7 +57,9 @@ describe('Sales by seller and payment state (e2e)', () => {
       .set(as(seller))
       .send({ customerId: ids.customer, paymentMethod, lines: [{ referenceId: ids.ref, finishId: ids.finish, origin: 'NATIONAL', quantity, discountPercent: '3', taxRatePercent: '19' }] })
       .expect(201);
-    return (await http().post(`/quotes/${quote.body.id}/convert`).set(as(converter)).send({ operationKey: randomUUID() }).expect(200)).body as OrderRow;
+    // A contado by transfer says where it was received.
+    const entity = paymentMethod === 'TRANSFER' ? { transferEntityId: 'NEQUI' } : {};
+    return (await http().post(`/quotes/${quote.body.id}/convert`).set(as(converter)).send({ operationKey: randomUUID(), ...entity }).expect(200)).body as OrderRow;
   };
   const list = async (query: string, who = 'ADMIN') => ((await http().get(`/sales-orders?pageSize=100&${query}`).set(as(who)).expect(200)).body.items as OrderRow[]);
   const summary = async (query: string) => (await http().get(`/sales-orders/summary?${query}`).set(as('ADMIN')).expect(200)).body as SummaryRow[];
@@ -113,6 +115,7 @@ describe('Sales by seller and payment state (e2e)', () => {
       const orderIds = (await prisma.salesOrder.findMany({ where: { quoteId: { in: quotes } }, select: { id: true } })).map((o) => o.id);
       await prisma.notificationOutbox.deleteMany({ where: { userId: { in: users } } });
       await prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orderIds } } });
+      await prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orderIds } } });
       await prisma.salesOrder.deleteMany({ where: { id: { in: orderIds } } });
       await prisma.quote.deleteMany({ where: { id: { in: quotes } } });
       await prisma.customer.deleteMany({ where: { id: ids.customer } });
@@ -181,7 +184,7 @@ describe('Sales by seller and payment state (e2e)', () => {
     expect(response.headers['content-disposition']).toMatch(new RegExp(`filename="ventas_e2e_sales_sc${S.toLowerCase()}b_${today}_a_${today}\\.xlsx"`));
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(response.body as ArrayBuffer);
-    expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Órdenes', 'Renglones', 'Resumen']);
+    expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Órdenes', 'Renglones', 'Devoluciones', 'Resumen']);
     const sheet = workbook.getWorksheet('Órdenes')!;
     const titles = (sheet.getRow(1).values as unknown[]).slice(1);
     const rows = [2, 3].map((n) => sheet.getRow(n));

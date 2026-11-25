@@ -215,21 +215,77 @@ export interface DispatchSummary {
   _count: { incidents: number }
 }
 
-export type PaymentMethod = 'CASH' | 'TRANSFER' | 'PARTIAL' | 'CREDIT'
+export type PaymentMethod = 'CASH' | 'TRANSFER' | 'CASH_TRANSFER' | 'PARTIAL' | 'CREDIT'
 
+// Insertion order is the order of the selectors.
 export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
   CASH: 'Contado – efectivo',
   TRANSFER: 'Contado – transferencia',
+  CASH_TRANSFER: 'Contado – efectivo y transferencia',
   PARTIAL: 'Abono',
   CREDIT: 'Cartera (crédito)',
 }
+
+// Paid in full at the sale (the money is recorded with the conversion).
+export const CONTADO_METHODS: PaymentMethod[] = ['CASH', 'TRANSFER', 'CASH_TRANSFER']
 
 // Example for the free terms field, by method.
 export const PAYMENT_TERMS_HINT: Record<PaymentMethod, string> = {
   CASH: 'Opcional.',
   TRANSFER: 'Opcional, p. ej. la cuenta o el plazo de la transferencia.',
-  PARTIAL: 'P. ej. «anticipo del 50 %, saldo contra entrega».',
-  CREDIT: 'P. ej. «30 días».',
+  CASH_TRANSFER: 'Opcional. El reparto entre efectivo y transferencia se escribe al convertir en orden.',
+  PARTIAL: 'P. ej. «anticipo del 50 %, saldo contra entrega». Cada abono se registra en la orden.',
+  CREDIT: 'P. ej. «30 días». Los pagos se registran en la orden como abonos.',
+}
+
+// Medium of money actually received. CREDIT_BALANCE: the customer's saldo
+// a favor (from returns, see lib/returns.ts); no money changes hands.
+export type PaymentMedium = 'CASH' | 'TRANSFER' | 'CREDIT_BALANCE'
+export const PAYMENT_MEDIUM_LABEL: Record<PaymentMedium, string> = { CASH: 'Efectivo', TRANSFER: 'Transferencia', CREDIT_BALANCE: 'Saldo a favor' }
+
+// One payment of an order: contado (atSale) or an abono. Amounts in pesos as
+// decimal strings; `changes` are the corrections (author for ADMIN only).
+// Where Solaluminios receives transfers (the list comes from the API:
+// GET /transfer-entities; ids are stable).
+export interface TransferEntity {
+  id: string
+  name: string
+}
+export const ENTITY_QUESTION = '¿Dónde se recibió la transferencia?'
+export const ENTITY_PLACEHOLDER = 'Selecciona una entidad'
+// A transfer recorded before the entity was asked: never assumed.
+export const ENTITY_UNKNOWN = 'Sin especificar'
+
+export interface OrderPayment {
+  id: string
+  medium: PaymentMedium
+  // Transfers only; null on a transfer = «Sin especificar».
+  transferEntity: TransferEntity | null
+  amount: string
+  paidOn: string
+  note: string | null
+  atSale: boolean
+  createdAt: string
+  updatedAt: string
+  edited: boolean
+  createdBy?: { id: string; name: string }
+  updatedBy?: { id: string; name: string } | null
+  changes: { at: string; changed: Record<string, { from: string | null; to: string | null }>; by?: { id: string; name: string } }[]
+}
+
+// Computed by the API (never typed): total, paid and balance of the order.
+// With returns: net = total − returned; balance = net − (paid − settled),
+// where `settled` is what was given back to the customer (saldo a favor or
+// reintegro).
+export interface PaymentSummary {
+  recorded: boolean
+  total: string
+  returned: string
+  settled: string
+  net: string
+  paid: string
+  balance: string
+  complete: boolean
 }
 
 // «Contado – efectivo · condiciones»; documents saved before have none.
@@ -257,6 +313,9 @@ export interface SalesOrder {
   paymentStatusAt: string | null
   // ADMIN only: who recorded the current payment state.
   paymentStatusBy?: { id: string; name: string } | null
+  // ADMIN and the seller only (billing reads the order without them).
+  payments?: OrderPayment[]
+  paymentSummary?: PaymentSummary
   // ADMIN only (the API omits them for other roles).
   createdBy?: { id: string; name: string }
   convertedBy?: { id: string; name: string } | null
@@ -284,6 +343,27 @@ export interface SalesOrder {
   invoiceNumber?: string | null
   billedAt?: string | null
   billedBy?: { id: string; name: string } | null
+  // Sales returns (documento DV) of the order; value and net total.
+  returns?: OrderReturn[]
+  returnSummary?: { returned: string; net: string }
+  // ADMIN and the seller: the customer's saldo a favor.
+  customerCredit?: string
+}
+
+export interface OrderReturn {
+  id: string
+  number: string
+  status: 'REQUESTED' | 'APPROVED' | 'RECEIVED' | 'REJECTED' | 'CANCELLED'
+  reasonLabel: string
+  settlement: 'CREDIT' | 'REFUND'
+  settlementLabel: string
+  lines: number
+  amount: string | null
+  settledAmount: string | null
+  createdAt: string
+  receivedAt: string | null
+  creditNoteNumber: string | null
+  refundPending: boolean
 }
 
 export interface Shortage {

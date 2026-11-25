@@ -4474,3 +4474,56 @@ button.doc-row:focus-visible {
 .billing-invoice {
   margin-top: 12px;
 }
+
+/* Payments of a sales order: total, paid, balance and the abonos. */
+.payments-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.order-payments .kpis,
+.payment-complete {
+  margin-bottom: 12px;
+}
+
+.payment-form {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+
+.payment-form > p {
+  margin-bottom: 8px;
+}
+
+.payments-table .cell-sub {
+  display: block;
+}
+
+.payment-change {
+  color: var(--blue-ink);
+}
+
+/* Split of a «Contado – efectivo y transferencia» while converting. */
+.payment-split {
+  margin-top: 10px;
+}
+
+.split-status {
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+}
+
+.split-status.done {
+  border-left-color: var(--success-border);
+  background: var(--success-bg);
+}

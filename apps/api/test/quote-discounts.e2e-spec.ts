@@ -138,6 +138,7 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
       await prisma.task.deleteMany({ where: { OR: [{ assigneeId: { in: users } }, { createdById: { in: users } }] } });
       await prisma.quoteDiscountRequest.deleteMany({ where: { quoteId: { in: quotes } } });
       await prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orders } } });
+      await prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orders } } });
       await prisma.salesOrder.deleteMany({ where: { id: { in: orders } } });
       await prisma.quote.deleteMany({ where: { id: { in: quotes } } });
       await prisma.customer.deleteMany({ where: { id: ids.customer } });
@@ -201,7 +202,9 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     expect(await prisma.quoteDiscountRequest.count({ where: { quoteId: q.id } })).toBe(1);
 
     // Task of the chosen administrator (and a push notice queued for them).
-    const tasks = (await http().get('/tasks?status=pending').set(as('ADMIN')).expect(200)).body.items as { id: string; kind: string; discountRequest: { quote: { number: string } } | null }[];
+    // Filtered by assignee: an administrator lists every pending task of the
+    // shared test database, and other files leave many of them.
+    const tasks = (await http().get(`/tasks?status=pending&assigneeId=${U.ADMIN}`).set(as('ADMIN')).expect(200)).body.items as { id: string; kind: string; discountRequest: { quote: { number: string } } | null }[];
     const task = tasks.find((t) => t.discountRequest?.quote.number === q.number);
     expect(task?.kind).toBe('DISCOUNT_APPROVAL');
     expect(await prisma.notificationOutbox.count({ where: { userId: U.ADMIN, kind: 'discount-requested', dedupeKey: { contains: requestId } } })).toBe(1);
@@ -253,7 +256,7 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     await answer(q.id, withdrawnId, 'cancel', 'SALES').expect(200);
     const withdrawnTask = await prisma.task.findUniqueOrThrow({ where: { discountRequestId: withdrawnId } });
     expect(withdrawnTask.cancelledAt).not.toBeNull();
-    const pending = (await http().get('/tasks?status=pending').set(as('ADMIN')).expect(200)).body.items as { id: string }[];
+    const pending = (await http().get(`/tasks?status=pending&assigneeId=${withdrawnTask.assigneeId}`).set(as('ADMIN')).expect(200)).body.items as { id: string }[];
     expect(pending.map((t) => t.id)).not.toContain(withdrawnTask.id);
     await answer(q.id, withdrawnId, 'approve').expect(409);
 

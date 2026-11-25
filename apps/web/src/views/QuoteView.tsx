@@ -9,6 +9,9 @@ import {
   ORIGIN_LABEL,
   PAYMENT_METHOD_LABEL,
   PAYMENT_TERMS_HINT,
+  ENTITY_PLACEHOLDER,
+  ENTITY_QUESTION,
+  type TransferEntity,
   PRICING_LABEL,
   SELLER_GLOBAL_DISCOUNT_LIMIT,
   formatMoney,
@@ -74,6 +77,8 @@ const newLine = (): LineDraft => ({
 })
 
 const decimal = (value: string) => value.trim().replace(',', '.')
+// Cents as people type them here: «3453» or «3453,11» (read back by parseMoney).
+const typedPesos = (cents: number) => (cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2).replace('.', ','))
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/
 // Manual price: pesos with up to 2 decimals (the API's rule).
 const MANUAL_PRICE = /^\d{1,12}(\.\d{1,2})?$/
@@ -493,7 +498,8 @@ function LineEditor({
     <fieldset className="card quote-line">
       <legend className="quote-line-title">Renglón {index + 1}</legend>
       <div className="form-grid">
-        <CatalogSelectors mode="form" value={line.catalog} onChange={(catalog) => set({ catalog })} />
+        {/* Typing filters the family list (only the family). */}
+        <CatalogSelectors mode="form" searchFamily value={line.catalog} onChange={(catalog) => set({ catalog })} />
         <Field label="Origen requerido" hint="China y Nacional son restricciones distintas aunque coincidan referencia y color.">
           <select value={line.origin} onChange={(e) => set({ origin: e.target.value as MaterialOrigin, supplierId: '' })}>
             <option value="CHINA">China</option>
@@ -667,7 +673,20 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const convertKey = useRef<string | null>(null)
   // Converting: payment method (required for the order) and whether it
   // needs an electronic invoice (then the customer needs NIT / ID and e-mail).
-  const [converting, setConverting] = useState<{ method: PaymentMethod | ''; terms: string; billing: boolean; taxId: string; email: string } | null>(null)
+  // `cash` / `transfer`: split of a «Contado – efectivo y transferencia», as typed.
+  const [converting, setConverting] = useState<{
+    method: PaymentMethod | ''
+    terms: string
+    billing: boolean
+    taxId: string
+    email: string
+    cash: string
+    transfer: string
+    // Where the transfer (or its part) was received: required, never preset.
+    entity: string
+    // Part paid with the customer's saldo a favor (from returns); '' = none.
+    credit: string
+  } | null>(null)
   // One request at a time: a double click must not create two quotes (the
   // state update of `busy` arrives one render too late to stop it).
   const inFlight = useRef(false)
@@ -851,7 +870,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
     }
   })
 
-  const convert = (payment: { method: PaymentMethod; terms: string; billing: boolean; customerData: { taxId: string; email: string } | null }) => once(async () => {
+  const convert = (payment: {
+    method: PaymentMethod
+    terms: string
+    billing: boolean
+    customerData: { taxId: string; email: string } | null
+    split: { cashAmount: string; transferAmount: string } | null
+    transferEntityId: string | null
+    creditAmount: string | null
+  }) => once(async () => {
     if (!id) return
     setBusy(true)
     setError(null)
@@ -867,6 +894,9 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           paymentMethod: payment.method,
           paymentTerms: payment.terms.trim(),
           ...(payment.billing ? { requiresBilling: true } : {}),
+          ...(payment.split ?? {}),
+          ...(payment.transferEntityId ? { transferEntityId: payment.transferEntityId } : {}),
+          ...(payment.creditAmount ? { creditAmount: payment.creditAmount } : {}),
         },
       })
       navigate({ name: 'order', id: data.id })
@@ -891,6 +921,62 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   // Billing needs the customer's NIT / ID and e-mail (asked in the dialog).
   const customerNeedsData = !quote?.customer?.taxId?.trim() || !quote?.customer?.email?.trim()
   const billingDataMissing = Boolean(converting?.billing && customerNeedsData && (!converting.taxId.trim() || !converting.email.trim()))
+  // «Contado – efectivo y transferencia»: a free split that must add up to the
+  // total (the API checks it again). In cents, never with float sums.
+  const toCents = (value: string) => {
+    const text = parseMoney(value)
+    return /^\d{1,12}(\.\d{1,2})?$/.test(text) ? Math.round(Number(text) * 100) : null
+  }
+  const totalCents = Math.round(Number(quote?.total ?? 0) * 100)
+  // Saldo a favor of the customer (from returns): may pay part or all of it.
+  const customerCredit = useLoad<{ available: string }>(converting && quote ? `/customers/${encodeURIComponent(quote.customerId)}/credit` : null)
+  const availableCents = Math.round(Number(customerCredit.data?.available ?? 0) * 100)
+  const creditText = converting?.credit.trim() ?? ''
+  const creditCents = creditText ? toCents(creditText) : 0
+  const creditProblem =
+    creditCents === null
+      ? 'escribe el saldo a favor a usar en pesos'
+      : creditCents > availableCents
+        ? `el cliente tiene ${formatMoney(availableCents / 100)} de saldo a favor`
+        : creditCents > totalCents
+          ? 'el saldo a favor usado no puede superar el total'
+          : null
+  // What is left to pay after the saldo a favor.
+  const restCents = totalCents - (creditCents ?? 0)
+  const mixed = converting?.method === 'CASH_TRANSFER' && restCents > 0
+  const cashCents = mixed ? toCents(converting.cash) : null
+  const transferCents = mixed ? toCents(converting.transfer) : null
+  const splitRemaining = restCents - (cashCents ?? 0) - (transferCents ?? 0)
+  // «Poner lo que falta»: the exact rest (cents included) in one medium, given
+  // what the other one already has, so nobody has to type the cents.
+  // Offered only once the other medium has an amount (a split needs both).
+  const cashFill = transferCents && transferCents > 0 ? restCents - transferCents : 0
+  const transferFill = cashCents && cashCents > 0 ? restCents - cashCents : 0
+  const splitProblem = !mixed
+    ? null
+    : cashCents === null || transferCents === null
+      ? 'escribe cuánto se pagó en efectivo y cuánto por transferencia'
+      : cashCents <= 0 || transferCents <= 0
+        ? 'ambos valores deben ser mayores que cero (si fue un solo medio, elige contado en efectivo o por transferencia)'
+        : splitRemaining !== 0
+          ? creditCents
+            ? 'la suma debe ser igual a lo que queda después del saldo a favor'
+            : 'la suma debe ser igual al total de la orden'
+          : null
+  // A transfer (whole or the transferred part) says where it was received.
+  const needsEntity = (converting?.method === 'TRANSFER' || converting?.method === 'CASH_TRANSFER') && restCents > 0
+  const transferEntities = useLoad<TransferEntity[]>(converting && needsEntity ? '/transfer-entities' : null)
+  const convertProblem = creditProblem ?? splitProblem ?? (needsEntity && !converting?.entity ? 'selecciona dónde se recibió la transferencia' : null)
+  const entityField = converting && needsEntity ? (
+    <Field label={ENTITY_QUESTION} hint={transferEntities.error ?? 'La entidad de Solaluminios que recibió el dinero (no la del cliente).'}>
+      <select required value={converting.entity} disabled={busy} onChange={(e) => setConverting({ ...converting, entity: e.target.value })}>
+        <option value="">{ENTITY_PLACEHOLDER}</option>
+        {(transferEntities.data ?? []).map((entity) => (
+          <option key={entity.id} value={entity.id}>{entity.name}</option>
+        ))}
+      </select>
+    </Field>
+  ) : null
   // What is missing to save, shown next to the button (a tooltip is not
   // visible on phones).
   const blocker = !customerId
@@ -1227,6 +1313,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                     billing: false,
                     taxId: quote?.customer?.taxId ?? '',
                     email: quote?.customer?.email ?? '',
+                    cash: '',
+                    transfer: '',
+                    entity: '',
+                    credit: '',
                   })
                 }
               >
@@ -1253,6 +1343,95 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                   <input value={converting.terms} disabled={busy} maxLength={300} onChange={(e) => setConverting({ ...converting, terms: e.target.value })} />
                 </Field>
               </div>
+              {availableCents > 0 ? (
+                <div className="payment-split">
+                  <div className="form-grid">
+                    <Field
+                      label="Usar saldo a favor (opcional)"
+                      hint={`El cliente tiene ${formatMoney(availableCents / 100)} de saldo a favor por devoluciones. Lo que uses se resta de lo que paga.`}
+                    >
+                      <input
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={converting.credit}
+                        disabled={busy}
+                        onChange={(e) => setConverting({ ...converting, credit: e.target.value })}
+                      />
+                    </Field>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() => setConverting({ ...converting, credit: String(Math.min(availableCents, totalCents) / 100) })}
+                  >
+                    Usar {formatMoney(Math.min(availableCents, totalCents) / 100)}
+                  </button>
+                  {creditCents && creditProblem === null ? (
+                    <p className="field-hint" aria-live="polite">
+                      Queda por pagar <strong>{formatMoney(restCents / 100)}</strong>
+                      {restCents === 0 ? ': el saldo a favor cubre todo.' : '.'}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {mixed ? (
+                <div className="payment-split">
+                  <div className="form-grid">
+                    <Field label="Efectivo recibido">
+                      <input
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={converting.cash}
+                        disabled={busy}
+                        onChange={(e) => setConverting({ ...converting, cash: e.target.value })}
+                      />
+                      {cashFill > 0 && cashFill !== cashCents ? (
+                        <button type="button" className="text-button" disabled={busy} onClick={() => setConverting({ ...converting, cash: typedPesos(cashFill) })}>
+                          Poner lo que falta: {formatMoney(cashFill / 100)}
+                        </button>
+                      ) : null}
+                    </Field>
+                    <Field label="Transferencia recibida">
+                      <input
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={converting.transfer}
+                        disabled={busy}
+                        onChange={(e) => setConverting({ ...converting, transfer: e.target.value })}
+                      />
+                      {transferFill > 0 && transferFill !== transferCents ? (
+                        <button type="button" className="text-button" disabled={busy} onClick={() => setConverting({ ...converting, transfer: typedPesos(transferFill) })}>
+                          Poner lo que falta: {formatMoney(transferFill / 100)}
+                        </button>
+                      ) : null}
+                    </Field>
+                    {entityField}
+                  </div>
+                  <p className={`split-status${splitRemaining === 0 ? ' done' : ''}`} aria-live="polite">
+                    {creditCents ? 'Queda por pagar' : 'Total de la orden'} <strong>{formatMoney(restCents / 100)}</strong> ·{' '}
+                    {splitRemaining === 0
+                      ? 'distribución completa'
+                      : splitRemaining > 0
+                        ? <>falta por distribuir <strong>{formatMoney(splitRemaining / 100)}</strong></>
+                        : <>sobran <strong>{formatMoney(-splitRemaining / 100)}</strong></>}
+                  </p>
+                  <p className="field-hint">Reparte el total como quieras. Si solo recibió una parte, elige «Abono» y registra lo recibido desde la orden.</p>
+                </div>
+              ) : restCents <= 0 && converting.method ? (
+                <p className="field-hint">El saldo a favor cubre todo el total: no se registra efectivo ni transferencia.</p>
+              ) : converting.method === 'CASH' || converting.method === 'TRANSFER' ? (
+                <>
+                  {converting.method === 'TRANSFER' ? <div className="form-grid">{entityField}</div> : null}
+                  <p className="field-hint">
+                    Se registra el pago {creditCents ? 'de lo que queda' : 'completo'}, {formatMoney(restCents / 100)}, en {converting.method === 'CASH' ? 'efectivo' : 'transferencia'}, con fecha de hoy. Si solo recibió una parte, elige «Abono».
+                  </p>
+                </>
+              ) : converting.method ? (
+                <p className="field-hint">
+                  {creditCents ? 'El saldo a favor queda como el primer abono. ' : ''}Cada pago se registra después en la orden con «Agregar abono»: valor, fecha y medio.
+                </p>
+              ) : null}
               <label className="check billing-check">
                 <input type="checkbox" checked={converting.billing} disabled={busy} onChange={(e) => setConverting({ ...converting, billing: e.target.checked })} />
                 <span>Requiere facturación</span>
@@ -1278,7 +1457,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                 <button
                   type="button"
                   className="button"
-                  disabled={busy || !converting.method || billingDataMissing}
+                  disabled={busy || !converting.method || billingDataMissing || convertProblem !== null}
+                  title={convertProblem ? `Para convertir: ${convertProblem}` : undefined}
                   onClick={() =>
                     converting.method &&
                     void convert({
@@ -1286,11 +1466,15 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                       terms: converting.terms,
                       billing: converting.billing,
                       customerData: converting.billing && customerNeedsData ? { taxId: converting.taxId.trim(), email: converting.email.trim() } : null,
+                      split: mixed ? { cashAmount: parseMoney(converting.cash), transferAmount: parseMoney(converting.transfer) } : null,
+                      transferEntityId: needsEntity ? converting.entity : null,
+                      creditAmount: creditCents ? String(creditCents / 100) : null,
                     })
                   }
                 >
                   {busy ? 'Convirtiendo…' : 'Convertir en orden de venta'}
                 </button>
+                {convertProblem && !busy ? <span className="cell-sub save-blocker">Para convertir: {convertProblem}</span> : null}
                 <button type="button" className="text-button" disabled={busy} onClick={() => setConverting(null)}>Volver</button>
                 {!converting.method ? (
                   <span className="cell-sub">Para convertir: elige la forma de pago.</span>

@@ -25,7 +25,10 @@ de Claude es acompañarlo:
 - revisar las salidas que pegue;
 - ajustar el CSV del catálogo si hay correcciones (por ejemplo, las 9
   referencias «por validar»);
-- resolver dudas del paso A5: el dueño de la base y la configuración regional.
+- resolver dudas del paso A5: el dueño de la base y la configuración regional;
+- si la salida del paso A3 muestra una ubicación o sucursal «116», preparar el
+  `UPDATE` para renombrarla a «139» después del paso B8 (decisión del usuario
+  del 24/11/2026: solo en producción).
 
 Nunca se ejecuta nada contra producción desde aquí.
 
@@ -76,12 +79,42 @@ El diseño completo está en `docs/accesorios-fase-1.md`:
 - se sugiere entregarla en tres partes: inventario, venta de mostrador y
   ventas mixtas.
 
-**Hecho el 24/11/2026:** el rol `ACCESSORIES` (migración, guard restringido,
-tareas y avisos, menú Inicio y Tareas).
+**Hecho el 24/11/2026, en local:**
+- el rol `ACCESSORIES`;
+- la **entrega 1**: canastas, ingresos, salidas sin venta, aviso al
+  administrador y protecciones de los flujos de perfiles.
 
-**No programar el resto** hasta que el usuario responda las preguntas de la
-sección «Por confirmar» de ese documento. El orden frente a las tareas 1 a 3
-también está por confirmar con el usuario.
+Migraciones `20261124120000_accessories_role` y
+`20261124130000_accessory_inventory`, todavía no desplegadas.
+
+**Siguiente: entrega 2** (compras y precios de accesorios, y venta de
+mostrador de Accesorios).
+- Antes de la entrega 3, confirmar con el usuario qué pasa con una orden mixta
+  sin existencias.
+- El orden frente a las tareas 1 a 3 está por confirmar con el usuario.
+- **En producción hace falta:** desplegar las dos migraciones y crear la
+  «Bodega de accesorios» (tipo `ACCESSORY_WAREHOUSE`) en la sede de la 139,
+  por el API (`POST /locations/inventory-locations`). Luego asignarla al
+  usuario de Accesorios en Administración → Usuarios.
+
+### Hecho en local el 24/11/2026: pagos mixtos y abonos
+
+- **Qué hace:**
+  - contado en efectivo, en transferencia o repartido entre ambos, que se
+    registra al convertir;
+  - abonos con fecha, valor y medio en la orden, con «Agregar abono» y
+    «Editar».
+- **Migración:** `20261124140000_order_payments`, todavía no desplegada.
+- **Detalle y decisiones pendientes:** en la bitácora, «Pagos de contado
+  mixtos y abonos en la orden».
+
+### Hecho en local el 25/11/2026: devoluciones de clientes
+
+- **Qué hace:** devolución formal (DV) desde la orden, autorizada por el
+  administrador y recibida por bodega. Lo pagado de más queda como saldo a
+  favor o reintegro, y la orden facturada genera la tarea de nota crédito.
+- **Migración:** `20261125120000_sales_returns`, todavía no desplegada.
+- **Detalle, decisiones por confirmar y límites:** `docs/devoluciones.md`.
 
 ## Pendientes sin fecha (no empezar sin decisión del usuario)
 

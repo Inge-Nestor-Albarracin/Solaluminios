@@ -152,6 +152,7 @@ describe('Opened bundles and loose profiles (e2e)', () => {
         () => prisma.dispatchLine.deleteMany({ where: { dispatchId: { in: dIds } } }),
         () => prisma.dispatch.deleteMany({ where: { id: { in: dIds } } }),
         () => prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: oIds } } }),
+        () => prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: oIds } } }),
         () => prisma.salesOrder.deleteMany({ where: { id: { in: oIds } } }),
         () => prisma.quote.deleteMany({ where: { createdById: { in: users } } }),
         () => prisma.customer.deleteMany({ where: { id: ids.customer } }),

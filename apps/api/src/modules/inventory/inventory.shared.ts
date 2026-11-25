@@ -86,7 +86,7 @@ export const movementInclude = {
 // and rack. Retail stores (almacenes) have neither: what arrives there is
 // sold loose, so every bundle placed in one is opened (loose = true).
 export interface Place {
-  location: { id: string; code: string; name: string; type: 'WAREHOUSE' | 'RETAIL_STORE' };
+  location: { id: string; code: string; name: string; type: 'WAREHOUSE' | 'RETAIL_STORE' | 'ACCESSORY_WAREHOUSE' };
   rackId: string | null;
   loose: boolean;
 }
@@ -107,6 +107,13 @@ export async function requirePlace(
     throw new BadRequestException('La ubicación o su sucursal está inactiva');
   }
   const place = { id: location.id, code: location.code, name: location.name, type: location.type };
+  // Profile flows never place a bundle there: baskets are registered and
+  // moved only by the accessories flows.
+  if (location.type === 'ACCESSORY_WAREHOUSE') {
+    throw new BadRequestException(
+      `${location.name} es una bodega de accesorios: allí solo hay canastas, que se manejan desde Accesorios`,
+    );
+  }
   if (location.type === 'RETAIL_STORE') {
     if (rackId) {
       throw new BadRequestException(

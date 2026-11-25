@@ -3,7 +3,7 @@ import { IconChevron } from '../components/icons'
 import { DevicePanel } from '../pwa/DevicePanel'
 import type { Navigate, View } from './navigation'
 
-type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch' | 'request'>
+type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch' | 'request' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'>
 
 interface Tile {
   name: Section
@@ -96,6 +96,21 @@ const TILE_ICONS: Record<Section, (stroke: string) => ReactNode> = {
       <path d="M26 10h14M26 15h9" />
     </g>
   ),
+  // A basket seen from the front, with its chip.
+  accessories: (s) => (
+    <g stroke={s}>
+      <path d="M7 18h34l-4 22H11L7 18Z" />
+      <path d="M14 18l6-10M34 18l-6-10" />
+      <path d="M17 25v8M24 25v8M31 25v8" />
+    </g>
+  ),
+  vouchers: (s) => (
+    <g stroke={s}>
+      <rect x="10" y="6" width="28" height="36" rx="3" />
+      <path d="M16 15h16M16 21h16M16 27h10" />
+      <path d="M29 34l3 3 6-6" />
+    </g>
+  ),
   admin: (s) => (
     <g stroke={s}>
       <circle cx="24" cy="24" r="6" />
@@ -124,7 +139,7 @@ export function HomeView({
   dispatcher: boolean
   // Billing role: only its orders to invoice and its tasks.
   billing?: boolean
-  // Accessories role: for now only its tasks (its screens come later).
+  // Accessories role: its baskets, vouchers and tasks.
   accessories?: boolean
   pendingQueue: number
   openTasks: number
@@ -132,8 +147,12 @@ export function HomeView({
 }) {
   const gradient = `tile-${useId().replace(/:/g, '')}`
   const taskTile: Tile = { name: 'tasks', title: 'Tareas', subtitle: openTasks > 0 ? `${openTasks} ${openTasks === 1 ? 'pendiente' : 'pendientes'}` : 'Al día', icon: TILE_ICONS.tasks }
+  const accessoryTiles: Tile[] = [
+    { name: 'accessories', title: 'Canastas', subtitle: 'Leer chip, ingresos y salidas', icon: TILE_ICONS.accessories },
+    { name: 'vouchers', title: 'Comprobantes', subtitle: 'Ingresos y salidas sin venta', icon: TILE_ICONS.vouchers },
+  ]
   const tiles: Tile[] = accessories
-    ? [taskTile]
+    ? [...accessoryTiles, taskTile]
     : billing
     ? [{ name: 'billing', title: 'Facturación', subtitle: 'Órdenes por facturar', icon: TILE_ICONS.billing }, taskTile]
     : [
@@ -149,6 +168,7 @@ export function HomeView({
       ...(seller || operator ? [{ name: 'requests' as const, title: 'Solicitudes', subtitle: 'Materiales a bodega y almacén', icon: TILE_ICONS.requests }] : []),
       ...(operator ? [{ name: 'receive' as const, title: 'Recepción China', subtitle: 'Paquetes prerregistrados', icon: TILE_ICONS.receive }] : []),
       ...(seller ? [{ name: 'sales' as const, title: 'Ventas', subtitle: 'Cotizaciones y órdenes', icon: TILE_ICONS.sales }] : []),
+      ...(admin ? [{ name: 'accessories' as const, title: 'Accesorios', subtitle: 'Canastas y comprobantes', icon: TILE_ICONS.accessories }] : []),
       ...(admin ? [{ name: 'admin' as const, title: 'Administración', subtitle: 'Catálogo y usuarios', icon: TILE_ICONS.admin }] : []),
     ]
   const firstName = name.trim().split(/\s+/)[0] ?? ''

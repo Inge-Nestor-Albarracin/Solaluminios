@@ -70,6 +70,15 @@ const MESSAGES: Record<string, { body: string; view: View }> = {
   'billing-cancelled': { body: 'Una orden que tenías por facturar ya no requiere factura.', view: 'tasks' },
   'billing-void-needed': { body: 'Se canceló una orden ya facturada: revisa la anulación en Tareas.', view: 'tasks' },
   'order-billed': { body: 'Facturaron una de tus órdenes de venta.', view: 'sales' },
+  'accessory-entry': { body: 'Accesorios registró un ingreso de mercancía. Míralo en Tareas.', view: 'tasks' },
+  'accessory-exit': { body: 'Accesorios registró una salida sin venta. Mírala en Tareas.', view: 'tasks' },
+  'return-requested': { body: 'Un vendedor pide autorizar una devolución.', view: 'tasks' },
+  'return-approved': { body: 'Autorizaron una devolución que pediste.', view: 'sales' },
+  'return-rejected': { body: 'Rechazaron una devolución que pediste.', view: 'sales' },
+  'return-to-receive': { body: 'Tienes una devolución por recibir en bodega.', view: 'tasks' },
+  'return-received': { body: 'Bodega recibió una devolución de tus órdenes.', view: 'sales' },
+  'return-cancelled': { body: 'Se canceló una devolución que tenías pendiente.', view: 'tasks' },
+  'credit-note-needed': { body: 'Una orden facturada tuvo una devolución: registra la nota crédito.', view: 'tasks' },
 }
 const FALLBACK = { body: 'Tienes un aviso nuevo en Solualuminios.', view: 'home' as View }
 const ALLOWED_VIEWS = new Set<View>(['home', 'tasks', 'sales', 'dispatches'])

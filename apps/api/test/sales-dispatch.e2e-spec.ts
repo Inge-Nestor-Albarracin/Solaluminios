@@ -140,6 +140,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
         ['dispatchLines', () => prisma.dispatchLine.deleteMany({ where: { dispatchId: { in: dIds } } })],
         ['dispatches', () => prisma.dispatch.deleteMany({ where: { id: { in: dIds } } })],
         ['orderLines', () => prisma.salesOrderLine.deleteMany({ where: { salesOrderId: { in: orders.map((o) => o.id) } } })],
+        ['payments', () => prisma.salesOrderPayment.deleteMany({ where: { salesOrderId: { in: orders.map((o) => o.id) } } })],
         ['orders', () => prisma.salesOrder.deleteMany({ where: { id: { in: orders.map((o) => o.id) } } })],
         ['quotes', () => prisma.quote.deleteMany({ where: { createdById: { in: userIds } } })],
         ['customers', () => prisma.customer.deleteMany({ where: { createdById: { in: userIds } } })],
@@ -660,7 +661,7 @@ describe('Origin, purchases, sales, reservations and dispatch (e2e)', () => {
       .set(as('SALES'))
       .send({ customerId: ids.customer, paymentMethod: 'TRANSFER', lines: [quoteLine({ referenceId: ids.r1739, finishId: ids.np, origin: 'NATIONAL', quantity: 1 })] })
       .expect(201);
-    const cashOrder = (await http().post(`/quotes/${cashQuote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID() }).expect(200)).body;
+    const cashOrder = (await http().post(`/quotes/${cashQuote.body.id}/convert`).set(as('SALES')).send({ operationKey: randomUUID(), transferEntityId: 'NEQUI' }).expect(200)).body;
     expect(cashOrder.paymentStatus).toBeNull();
     await http().patch(`/sales-orders/${cashOrder.id}/payment-status`).set(as('ADMIN')).send({ status: 'PAID' }).expect(409);
     // The database refuses a state on a cash order even outside the API.

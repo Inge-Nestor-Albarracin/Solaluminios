@@ -19,11 +19,15 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { MaterialOrigin, PaymentMethod, SaleType, PaymentStatus } from '../../../generated/prisma/client.js';
+import { MaterialOrigin, PaymentMedium, PaymentMethod, SaleType, PaymentStatus } from '../../../generated/prisma/client.js';
 import { DECIMAL_PATTERN } from '../../../shared/money.js';
 
 // Assembly / installation: pesos with up to 2 decimals (no VAT, no discount).
 const SERVICE_AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
+// Money received for an order: pesos with up to 2 decimals, as text.
+const PAYMENT_AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
+// A calendar day (business day in Colombia).
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 import { PaginationQueryDto } from '../../inventory/dto/inventory-query.dto.js';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -187,7 +191,7 @@ export class SaveQuoteDto {
   // in a quote (it may be just an inquiry); required when it becomes an
   // order (ConvertQuoteDto).
   @IsOptional()
-  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, abono o cartera (crédito)' })
+  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, contado en efectivo y transferencia, abono o cartera (crédito)' })
   paymentMethod?: PaymentMethod;
 
   // Details agreed with the customer, e.g. advance amount or credit days.
@@ -342,7 +346,7 @@ export class ConvertQuoteDto {
   // Chosen when the customer confirms the purchase. Omitted: the one saved in
   // the quote; a quote without one cannot become an order.
   @IsOptional()
-  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, abono o cartera (crédito)' })
+  @IsEnum(PaymentMethod, { message: 'Indica la forma de pago: contado en efectivo, contado por transferencia, contado en efectivo y transferencia, abono o cartera (crédito)' })
   paymentMethod?: PaymentMethod;
 
   // Omitted: the terms saved in the quote; empty clears them.
@@ -357,6 +361,92 @@ export class ConvertQuoteDto {
   @IsOptional()
   @IsBoolean({ message: 'requiresBilling debe ser verdadero o falso' })
   requiresBilling?: boolean;
+
+  // Contado only: how the money received at the sale is split. With
+  // CASH_TRANSFER both are required (free split) and must add up to the
+  // order total; with CASH or TRANSFER the whole total is in that medium
+  // (omitted: the total). Pesos with up to 2 decimals.
+  @IsOptional()
+  @Matches(PAYMENT_AMOUNT_PATTERN, { message: 'cashAmount debe ser un valor en pesos, con hasta 2 decimales' })
+  cashAmount?: string;
+
+  @IsOptional()
+  @Matches(PAYMENT_AMOUNT_PATTERN, { message: 'transferAmount debe ser un valor en pesos, con hasta 2 decimales' })
+  transferAmount?: string;
+
+  // Part paid with the customer's saldo a favor (from returns), any method.
+  @IsOptional()
+  @Matches(PAYMENT_AMOUNT_PATTERN, { message: 'creditAmount debe ser un valor en pesos, con hasta 2 decimales' })
+  creditAmount?: string;
+
+  // Contado with a transfer (TRANSFER or the transferred part of
+  // CASH_TRANSFER): where Solaluminios received it (id of transfer_entities).
+  // Required then; never with cash.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  transferEntityId?: string;
+}
+
+// One payment (abono) received for an abono / cartera order: only what was
+// just received; the system adds it up. The day is chosen (today by default).
+export class AddOrderPaymentDto {
+  @IsUUID('4', { message: 'operationKey debe ser un UUID generado por el cliente' })
+  operationKey!: string;
+
+  @Matches(PAYMENT_AMOUNT_PATTERN, { message: 'El valor debe estar en pesos, con hasta 2 decimales' })
+  amount!: string;
+
+  @IsEnum(PaymentMedium, { message: 'El medio de pago es CASH (efectivo), TRANSFER (transferencia) o CREDIT_BALANCE (saldo a favor)' })
+  medium!: PaymentMedium;
+
+  // Transfer: where Solaluminios received it (required). Cash: not sent.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  transferEntityId?: string;
+
+  @Matches(DAY_PATTERN, { message: 'La fecha del pago debe tener el formato AAAA-MM-DD' })
+  paidOn!: string;
+
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+}
+
+// Correction of a payment already recorded: only the fields sent change.
+// `note` empty or null clears it.
+export class EditOrderPaymentDto {
+  @IsOptional()
+  @Matches(PAYMENT_AMOUNT_PATTERN, { message: 'El valor debe estar en pesos, con hasta 2 decimales' })
+  amount?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMedium, { message: 'El medio de pago es CASH (efectivo) o TRANSFER (transferencia)' })
+  medium?: PaymentMedium;
+
+  // Entity of a transfer. Required when a cash payment becomes a transfer;
+  // a change to cash removes it.
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  transferEntityId?: string;
+
+  @IsOptional()
+  @Matches(DAY_PATTERN, { message: 'La fecha del pago debe tener el formato AAAA-MM-DD' })
+  paidOn?: string;
+
+  @Transform(trim)
+  @IsOptional()
+  @ValidateIf((_object, value: unknown) => value !== null)
+  @IsString()
+  @MaxLength(300)
+  note?: string | null;
 }
 
 // Marks or unmarks an existing order as needing an invoice.

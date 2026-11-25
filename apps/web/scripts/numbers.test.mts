@@ -14,8 +14,17 @@ const cases: [string, string][] = [
   ['1500', '1500'],
   ['  9.000  ', '9000'],
   ['2.5', '2.5'],
+  // While typing the decimals: the mark alone counts as the whole number.
+  ['3.453,', '3453'],
+  ['3453,', '3453'],
+  ['3453.', '3453'],
+  ['12.000.', '12000'],
+  ['3.453,1', '3453.1'],
+  ['3.453,11', '3453.11'],
+  ['6.453,11', '6453.11'],
 ];
 for (const [typed, expected] of cases) assert.equal(parseMoney(typed), expected, typed);
 // Not numbers: returned as typed so the form rejects them.
-for (const bad of ['abc', '1,2,3', '12.00.0,5', '1.50,5x']) assert.ok(!/^\d+(\.\d+)?$/.test(parseMoney(bad)), bad);
-console.log(`numbers: ${cases.length + 4}/${cases.length + 4} OK`);
+const bads = ['abc', '1,2,3', '12.00.0,5', '1.50,5x', ',', '.', '$,'];
+for (const bad of bads) assert.ok(!/^\d+(\.\d+)?$/.test(parseMoney(bad)), bad);
+console.log(`numbers: ${cases.length + bads.length}/${cases.length + bads.length} OK`);

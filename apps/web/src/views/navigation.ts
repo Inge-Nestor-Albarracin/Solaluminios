@@ -11,7 +11,7 @@ export type View =
   | { name: 'admin' }
   | { name: 'bundle'; id: string }
   | { name: 'receive' }
-  | { name: 'sales'; tab?: 'quotes' | 'orders' }
+  | { name: 'sales'; tab?: 'quotes' | 'orders' | 'returns' }
   | { name: 'quote'; id?: string }
   | { name: 'order'; id: string }
   | { name: 'dispatches' }
@@ -19,5 +19,15 @@ export type View =
   | { name: 'requests' }
   | { name: 'billing' }
   | { name: 'request'; id?: string }
+  // Accessories warehouse (ACCESSORIES role and administrator).
+  | { name: 'accessories' }
+  | { name: 'basket'; id: string }
+  | { name: 'basketNew'; epc?: string }
+  | { name: 'vouchers' }
+  | { name: 'voucher'; id: string }
+  | { name: 'voucherNew'; kind: 'ENTRY' | 'EXIT' }
+  // Sales returns (documento DV): detail and the request from an order.
+  | { name: 'return'; id: string }
+  | { name: 'returnNew'; orderId: string }
 
 export type Navigate = (view: View) => void

@@ -35,6 +35,13 @@ import { TasksView } from './views/TasksView'
 import { BillingView } from './views/BillingView'
 import { MaterialRequestsView } from './views/MaterialRequestsView'
 import { MaterialRequestView } from './views/MaterialRequestView'
+import { AccessoriesView } from './views/AccessoriesView'
+import { BasketRegisterView } from './views/BasketRegisterView'
+import { BasketView } from './views/BasketView'
+import { AccessoryVoucherFormView } from './views/AccessoryVoucherFormView'
+import { AccessoryVouchersView, AccessoryVoucherView } from './views/AccessoryVouchersView'
+import { ReturnFormView } from './views/ReturnFormView'
+import { ReturnView } from './views/ReturnView'
 
 function App() {
   const { user } = useSession()
@@ -49,7 +56,7 @@ function App() {
 }
 
 interface NavTab {
-  name: Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch'>
+  name: Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'>
   label: string
   short: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -107,6 +114,8 @@ const VIEW_LABELS: Record<LaunchView, string> = {
   summary: 'Resumen',
   tasks: 'Tareas',
   admin: 'Administración',
+  accessories: 'Canastas de accesorios',
+  vouchers: 'Comprobantes de accesorios',
 }
 
 function Workspace() {
@@ -114,9 +123,10 @@ function Workspace() {
   const operator = canOperate(user?.role)
   // Billing role: its orders to invoice and its tasks, nothing else.
   const billing = user?.role === 'BILLING'
-  // Accessories role: for now only Inicio and its tasks; its own screens come
-  // in the next stages (docs/accesorios-fase-1.md).
+  // Accessories role: its baskets, vouchers and tasks only
+  // (docs/accesorios-fase-1.md). The administrator also opens those screens.
   const accessories = user?.role === 'ACCESSORIES'
+  const accessoryScreens = accessories || user?.role === 'ADMIN'
   // Pending registration list (not saved yet), shared by the register view,
   // the menu badge and the logout prompt.
   const queue = useRegistrationQueue(user?.id ?? 'anonymous')
@@ -151,7 +161,9 @@ function Workspace() {
 
   // Views this user may open from a URL, a shortcut or a notification.
   const allowed = (name: LaunchView) =>
-    (!(billing || accessories) || name === 'home' || name === 'tasks') &&
+    (!billing || name === 'home' || name === 'tasks') &&
+    (!accessories || name === 'home' || name === 'tasks' || name === 'accessories' || name === 'vouchers') &&
+    ((name !== 'accessories' && name !== 'vouchers') || accessoryScreens) &&
     (name !== 'register' || operator) &&
     (name !== 'receive' || operator) &&
     (name !== 'sales' || canSell(user?.role)) &&
@@ -211,6 +223,8 @@ function Workspace() {
   const tabs: NavTab[] = accessories
     ? [
         { name: 'home', label: 'Inicio', short: 'Inicio', icon: IconHome },
+        { name: 'accessories', label: 'Canastas', short: 'Canastas', icon: IconScan },
+        { name: 'vouchers', label: 'Comprobantes', short: 'Comprobantes', icon: IconList },
         { name: 'tasks', label: 'Tareas', short: 'Tareas', icon: IconTasks },
       ]
     : billing
@@ -235,6 +249,7 @@ function Workspace() {
       ? [{ name: 'requests' as const, label: 'Solicitudes a bodega', short: 'Solicitudes', icon: IconList, bottom: false as const }]
       : []),
     ...(operator ? [{ name: 'receive' as const, label: 'Recepción China', short: 'Recepción', icon: IconScan, bottom: false as const }] : []),
+    ...(user?.role === 'ADMIN' ? [{ name: 'accessories' as const, label: 'Accesorios', short: 'Accesorios', icon: IconScan, bottom: false as const }] : []),
     // UI hint only: the API enforces ADMIN on every admin endpoint.
     ...(user?.role === 'ADMIN' ? [{ name: 'admin' as const, label: 'Administración', short: 'Admin', icon: IconSettings }] : []),
   ]
@@ -244,11 +259,21 @@ function Workspace() {
       ? 'lookup'
       : view.name === 'order' && billing
         ? 'billing'
-        : view.name === 'quote' || view.name === 'order'
+        : view.name === 'quote' || view.name === 'order' || view.name === 'returnNew' || (view.name === 'return' && canSell(user?.role))
           ? 'sales'
+          : view.name === 'return'
+            ? 'tasks'
           : view.name === 'dispatch'
             ? 'dispatches'
-            : view.name
+            : view.name === 'basket' || view.name === 'basketNew' || view.name === 'voucherNew'
+              ? 'accessories'
+              : view.name === 'voucher'
+                ? accessories
+                  ? 'vouchers'
+                  : 'accessories'
+                : view.name === 'vouchers' && !accessories
+                  ? 'accessories'
+                  : view.name
 
   const navButtons = (variant: 'side' | 'bottom' | 'top') =>
     tabs.filter((tab) => variant !== 'bottom' || tab.bottom !== false).map((tab) => {
@@ -377,15 +402,29 @@ function Workspace() {
             onOpenQuote={(id) => navigate({ name: 'quote', id })}
             onOpenRequest={(id) => navigate({ name: 'request', id })}
             onOpenOrder={(id) => navigate({ name: 'order', id })}
+            onOpenVoucher={accessoryScreens ? (id) => navigate({ name: 'voucher', id }) : undefined}
+            onOpenReturn={(id) => navigate({ name: 'return', id })}
           />
         ) : null}
         {view.name === 'billing' && billing ? <BillingView navigate={navigate} /> : null}
+        {accessoryScreens ? (
+          <>
+            {view.name === 'accessories' ? <AccessoriesView navigate={navigate} /> : null}
+            {view.name === 'basketNew' ? <BasketRegisterView key={view.epc ?? ''} initialEpc={view.epc} navigate={navigate} /> : null}
+            {view.name === 'basket' ? <BasketView key={view.id} id={view.id} navigate={navigate} /> : null}
+            {view.name === 'voucherNew' ? <AccessoryVoucherFormView key={view.kind} kind={view.kind} navigate={navigate} /> : null}
+            {view.name === 'vouchers' ? <AccessoryVouchersView navigate={navigate} /> : null}
+            {view.name === 'voucher' ? <AccessoryVoucherView key={view.id} id={view.id} navigate={navigate} /> : null}
+          </>
+        ) : null}
         {view.name === 'requests' ? <MaterialRequestsView navigate={navigate} /> : null}
         {view.name === 'request' ? <MaterialRequestView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
         {view.name === 'receive' && operator ? <ReceiveView navigate={navigate} /> : null}
         {view.name === 'sales' && canSell(user?.role) ? <SalesView key={view.tab ?? 'quotes'} navigate={navigate} initialTab={view.tab} /> : null}
         {view.name === 'quote' ? <QuoteView key={view.id ?? 'new'} id={view.id} navigate={navigate} /> : null}
         {view.name === 'order' ? <OrderView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
+        {view.name === 'return' ? <ReturnView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
+        {view.name === 'returnNew' && canSell(user?.role) ? <ReturnFormView key={view.orderId} orderId={view.orderId} navigate={navigate} /> : null}
         {view.name === 'dispatches' ? <DispatchesView navigate={navigate} /> : null}
         {view.name === 'dispatch' ? <DispatchView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'admin' && user?.role === 'ADMIN' ? <AdminView /> : null}
@@ -417,6 +456,7 @@ function Workspace() {
 
 // One error boundary per screen: a failure stays on that screen.
 function viewKey(view: View): string {
+  if (view.name === 'returnNew') return `${view.name}:${view.orderId}`
   return 'id' in view && view.id ? `${view.name}:${view.id}` : view.name
 }
 
