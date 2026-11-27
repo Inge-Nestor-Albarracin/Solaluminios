@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useState, type ComponentType, type SVGProps } from 'react'
 import './App.css'
 import { BrandLogo } from './components/brand/BrandLogo'
-import { IconBulk, IconChart, IconHome, IconList, IconLogout, IconRegister, IconScan, IconSettings, IconTasks } from './components/icons'
+import { IconBulk, IconChart, IconHome, IconKey, IconList, IconLogout, IconRegister, IconScan, IconSettings, IconTasks } from './components/icons'
 import { ChinaView } from './views/ChinaView'
 import { DispatchesView } from './views/DispatchesView'
 import { DispatchView } from './views/DispatchView'
@@ -42,6 +42,7 @@ import { AccessoryVoucherFormView } from './views/AccessoryVoucherFormView'
 import { AccessoryVouchersView, AccessoryVoucherView } from './views/AccessoryVouchersView'
 import { ReturnFormView } from './views/ReturnFormView'
 import { ReturnView } from './views/ReturnView'
+import { ChangePasswordView } from './views/ChangePasswordView'
 
 function App() {
   const { user } = useSession()
@@ -50,13 +51,22 @@ function App() {
       {/* Connection and new-version notices, also on the login screen. */}
       <PwaBanners />
       {/* Remount on user change so no state survives a logout/login. */}
-      {!user ? <LoginView /> : user.role === 'CHINA_OPERATOR' ? <ChinaWorkspace key={user.id} /> : <Workspace key={user.id} />}
+      {/* With the initial password (ID number), only changing it. */}
+      {!user ? (
+        <LoginView />
+      ) : user.mustChangePassword ? (
+        <ChangePasswordView forced key={user.id} />
+      ) : user.role === 'CHINA_OPERATOR' ? (
+        <ChinaWorkspace key={user.id} />
+      ) : (
+        <Workspace key={user.id} />
+      )}
     </>
   )
 }
 
 interface NavTab {
-  name: Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'>
+  name: Exclude<View['name'], 'bundle' | 'quote' | 'order' | 'dispatch' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew' | 'password'>
   label: string
   short: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -326,8 +336,11 @@ function Workspace() {
           <span className="avatar" aria-hidden="true">{initials(user?.name ?? '')}</span>
           <span className="sidebar-user-text">
             <strong>{user?.name}</strong>
-            <small>{user ? ROLE_LABELS[user.role] : ''}</small>
+            <small>{user ? `${user.username} · ${ROLE_LABELS[user.role]}` : ''}</small>
           </span>
+          <button type="button" className="icon-button" aria-label="Cambiar mi contraseña" title="Cambiar mi contraseña" onClick={() => navigate({ name: 'password' })}>
+            <IconKey />
+          </button>
           <button type="button" className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={requestLogout}>
             <IconLogout />
           </button>
@@ -349,6 +362,9 @@ function Workspace() {
             <small>{user ? ROLE_LABELS[user.role] : ''}</small>
           </span>
           <span className="avatar" aria-hidden="true">{initials(user?.name ?? '')}</span>
+          <button type="button" className="icon-button" aria-label="Cambiar mi contraseña" title="Cambiar mi contraseña" onClick={() => navigate({ name: 'password' })}>
+            <IconKey />
+          </button>
           <button type="button" className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={requestLogout}>
             <IconLogout />
           </button>
@@ -428,6 +444,7 @@ function Workspace() {
         {view.name === 'dispatches' ? <DispatchesView navigate={navigate} /> : null}
         {view.name === 'dispatch' ? <DispatchView key={view.id} id={view.id} navigate={navigate} onChanged={reloadTaskSummary} /> : null}
         {view.name === 'admin' && user?.role === 'ADMIN' ? <AdminView /> : null}
+        {view.name === 'password' ? <ChangePasswordView /> : null}
         {view.name === 'bundle' ? <BundleDetailView key={view.id} id={view.id} navigate={navigate} /> : null}
         </ViewErrorBoundary>
       </main>

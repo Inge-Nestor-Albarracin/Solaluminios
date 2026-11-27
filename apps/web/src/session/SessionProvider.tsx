@@ -31,11 +31,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer)
   }, [session, logout])
 
-  const login = useCallback(async (email: string, password: string) => {
-    const { data } = await apiRequest<LoginResponse>('/auth/login', null, {
-      method: 'POST',
-      body: { email, password },
-    })
+  const start = useCallback((data: LoginResponse) => {
     setSession({
       token: data.access_token,
       user: data.user,
@@ -44,7 +40,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setNotice(null)
   }, [])
 
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const { data } = await apiRequest<LoginResponse>('/auth/login', null, {
+        method: 'POST',
+        body: { username, password },
+      })
+      start(data)
+    },
+    [start],
+  )
+
   const token = session?.token ?? null
+
+  // The API ends the sessions issued before the change and returns a new one.
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      if (!token) throw new ApiError(401, 'Debes iniciar sesión.')
+      const { data } = await apiRequest<LoginResponse>('/auth/change-password', token, {
+        method: 'POST',
+        body: { currentPassword, newPassword },
+      })
+      start(data)
+    },
+    [token, start],
+  )
   const request = useCallback(
     async <T,>(path: string, options?: RequestOptions) => {
       if (!token) throw new ApiError(401, 'Debes iniciar sesión.')
@@ -72,8 +92,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<SessionValue>(
-    () => ({ user: session?.user ?? null, notice, login, logout, request, download }),
-    [session, notice, login, logout, request, download],
+    () => ({ user: session?.user ?? null, notice, login, changePassword, logout, request, download }),
+    [session, notice, login, changePassword, logout, request, download],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

@@ -219,8 +219,19 @@ model Finish {
 model User {
   id                         String   @id @default(cuid())
   name                       String
-  email                      String   @unique
+  // Login name, e.g. «pedro.alvarez»: lowercase letters, digits and . _ -
+  // (CHECK). Users created without one (scripts, tests) get a random
+  // «usuario.xxxxxxxxxx» from the database; the administrator can change it.
+  username                   String   @unique @default(dbgenerated("('usuario.'::text || substr(md5((random())::text), 1, 10))"))
+  // Optional contact; still accepted to log in during the change to usernames.
+  email                      String?  @unique
   passwordHash               String
+  // The initial password (the user's ID number, set by the administrator) must
+  // be replaced at the first login: until then only /auth/me and
+  // /auth/change-password answer.
+  mustChangePassword         Boolean  @default(false)
+  // Sessions issued before this moment stop working (password changed or reset).
+  passwordChangedAt          DateTime? @db.Timestamptz(3)
   role                       UserRole @default(READ_ONLY)
   defaultInventoryLocationId String?
   active                     Boolean  @default(true)
@@ -278,6 +289,8 @@ model User {
   returnsRefunded           SalesReturn[]            @relation("ReturnRefundedBy")
   returnsCreditNotes        SalesReturn[]            @relation("ReturnCreditNoteBy")
   returnsCancelled          SalesReturn[]            @relation("ReturnCancelledBy")
+  loginEvents               LoginEvent[]             @relation("LoginEventUser")
+  loginEventsActed          LoginEvent[]             @relation("LoginEventActor")
 
   @@index([defaultInventoryLocationId])
   @@map("users")
@@ -1793,4 +1806,39 @@ model SalesReturnLine {
   @@unique([salesReturnId, salesOrderLineId])
   @@index([salesOrderLineId])
   @@map("sales_return_lines")
+}
+
+// What happened with an access attempt or a password.
+enum LoginEventType {
+  LOGIN_OK
+  LOGIN_FAILED // wrong user or password (also unknown users)
+  LOGIN_LOCKED // too many failures: refused without checking the password
+  LOGIN_INACTIVE // right password, deactivated user
+  PASSWORD_CHANGED // by the user
+  PASSWORD_RESET // by an administrator (back to the ID number, must change it)
+}
+
+// Log of logins, failed attempts and password changes, for the administrator
+// (Administración → Usuarios). `identifier` is what was typed as user (never
+// the password); `userId` is set when it matched an account.
+model LoginEvent {
+  id         String         @id @default(cuid())
+  type       LoginEventType
+  identifier String
+  userId     String?
+  // Administrator who reset the password (PASSWORD_RESET).
+  actorId    String?
+  ip         String?
+  userAgent  String?
+  at         DateTime       @default(now()) @db.Timestamptz(3)
+
+  // The log outlives a deleted user (it keeps what was typed); users are
+  // normally deactivated, never deleted.
+  user  User? @relation("LoginEventUser", fields: [userId], references: [id], onDelete: SetNull)
+  actor User? @relation("LoginEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([at])
+  @@index([userId, at])
+  @@index([actorId])
+  @@map("login_events")
 }

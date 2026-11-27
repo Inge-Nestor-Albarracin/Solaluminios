@@ -3806,6 +3806,120 @@ escribir la coma decimal, el monto «se reiniciaba».
     - «Pagar todo el saldo» llena «14453,44»;
     - guardado: la orden queda «Pagada».
 
+## Ingreso por usuario y cédula como clave inicial (27/11/2026)
+
+Pedido del cliente: ingresar con un usuario tipo `pedro.alvarez` y la cédula
+como contraseña.
+
+Decisión del usuario (26/11/2026): la cédula **solo como clave inicial**, con
+cambio obligatorio en el primer ingreso. Diseño, protecciones y transición en
+`docs/usuarios-y-contrasenas.md`.
+
+**Migraciones** (aditivas; aplicadas en `solaluminios_dev`,
+`solaluminios_dev_e2e_test` y `solaluminios_ensayo_manual`; 27 en total,
+`migrate status` al día y sin diferencias):
+- **`20261127120000_usernames_password_policy`:**
+  - **`users.username`:** único y obligatorio, con CHECK de formato. Los
+    usuarios existentes reciben lo que va antes de la @ de su correo; si dos
+    coinciden, se numeran.
+  - **`users.mustChangePassword` y `users.passwordChangedAt`.**
+  - **`users.email`:** pasa a opcional, en minúsculas (CHECK).
+  - **Tabla `login_events`** (enum `LoginEventType`), con CHECK de textos
+    acotados.
+- **`20261127130000_login_events_outlive_users`:** el registro se conserva si
+  se borra un usuario (vínculo a `SET NULL`). La necesitaron las limpiezas de
+  las pruebas.
+
+**API:**
+- **`POST /auth/login`:** con `username`. Un correo se acepta en ese mismo
+  campo o en `email`, durante la transición. El mensaje es único: «Usuario o
+  contraseña incorrectos».
+- **Bloqueo:** el contador es por cuenta, se escriba el usuario o el correo.
+- **Registro:** cada intento queda en `login_events`, con IP y navegador.
+- **`POST /auth/change-password`:**
+  - valida la clave actual y las reglas (`auth/password-policy.ts`);
+  - devuelve una sesión nueva;
+  - lo pueden usar todos los roles.
+- **Guardia:**
+  - con `mustChangePassword`, solo responde `/auth/me` y el cambio; lo demás
+    responde 403 `PASSWORD_CHANGE_REQUIRED`;
+  - los tokens emitidos antes de `passwordChangedAt` responden 401.
+- **Usuarios** (rol ADMIN):
+  - crear con `username` + `idNumber` (cédula de 5 a 12 dígitos) + correo
+    opcional, con cambio obligatorio;
+  - `POST /users/:id/reset-password`: no sobre la propia cuenta;
+  - `PATCH /users/:id/username`;
+  - `GET /users/login-events` (filtro por usuario y por tipo);
+  - la lista trae el último ingreso.
+- **Errores de reglas:** una violación de CHECK responde 400, nunca 500.
+- **`create-admin` y `Create-Admin.ps1`:** piden el usuario.
+  `docs/deploy/base-limpia.md`, actualizado.
+
+**Web:**
+- **Ingreso:** campo «Usuario (p. ej. pedro.alvarez)», con la ayuda del primer
+  ingreso.
+- **Primer ingreso:** pantalla obligatoria «Es tu primer ingreso», con las
+  reglas en vivo.
+- **Cambiar mi contraseña:** con el ícono de llave junto a «Cerrar sesión».
+- **Administración → Usuarios:**
+  - formulario con usuario sugerido desde el nombre, cédula (solo dígitos) y
+    correo opcional;
+  - acciones «Restablecer clave» y «Cambiar usuario»;
+  - marca «Con clave inicial» y el último ingreso;
+  - «Registro de ingresos» con filtros.
+
+**Pruebas:**
+- **Nuevas:**
+  - `users-login.e2e-spec.ts` (6 casos): primer ingreso y bloqueo, reglas,
+    fin de sesiones viejas, errores iguales, nombres hostiles, correo
+    aceptado, bloqueo por cuenta, restablecimiento, cambio de usuario,
+    registro sin contraseñas y reglas de la base;
+  - `password-policy.spec.ts` (3 unitarias).
+- **Ajustadas:**
+  - `users-admin` y `accessories-role`: crean usuarios con el formato nuevo;
+  - `users-admin`: cada petición sale de su propia dirección, por el límite
+    de creaciones;
+  - `tasks`: la lista de todas las pendientes del administrador dependía de
+    la primera página de una base de pruebas compartida.
+- **Defectos que encontraron las pruebas:**
+  - el cambio de contraseña estaba bloqueado por el guardia de roles para
+    todos menos ADMIN;
+  - un usuario de 2 letras respondía 500;
+  - al pegar una cédula con puntos, el límite del campo la cortaba.
+
+**Verificación:**
+- **API:** `build` y `oxlint`; `pnpm test` 78/78; `test:e2e --maxWorkers=2`
+  **276/276** en 34 archivos.
+- **Web:** `tsc`, `oxlint`, pruebas y `build`.
+- **Navegador** (5174, el usuario ingresó como QA Admin):
+  - **Lista de usuarios:** muestra usuario, correo, último ingreso y las
+    acciones nuevas.
+  - **Usuario de prueba creado** «Prueba Cédula Gómez»:
+    - se sugirió `prueba.cedula`;
+    - la cédula pegada con puntos queda completa.
+  - **Primer ingreso:** con `Prueba.Cedula` (mayúsculas) y la cédula aparece
+    «Es tu primer ingreso».
+    - Las reglas bloquean la cédula como clave nueva, la que contiene el
+      usuario y la repetición distinta.
+    - Con `Perfiles2026` entra como Ventas.
+  - **Después del cambio:** la cédula ya no entra y la clave nueva entra sin
+    la pantalla obligatoria.
+  - **«Cambiar mi contraseña»:** se abre desde la llave.
+  - **Registro en la base:** 6 eventos (fallido con usuario inexistente,
+    ingreso del administrador por correo, primer ingreso, cambio, fallido con
+    la cédula vieja e ingreso), sin contraseñas.
+
+**Datos de prueba en `solaluminios_dev`:**
+- el usuario «Prueba Cédula Gómez» (`prueba.cedula`, Ventas);
+- los eventos de ingreso de este recorrido.
+
+**Pendiente:**
+- desplegar las 2 migraciones en producción y avisar a los usuarios su nombre
+  de usuario (el correo sigue sirviendo mientras tanto);
+- actualizar los manuales de Ventas y Bodega, que dicen «correo»;
+- botón de cambio de contraseña para el operador China;
+- decidir cuándo dejar de aceptar el correo.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

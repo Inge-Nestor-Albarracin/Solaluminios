@@ -5,7 +5,10 @@ import type { SessionUser, UserRole } from '../api/types'
 export interface SessionValue {
   user: SessionUser | null
   notice: string | null
-  login: (email: string, password: string) => Promise<void>
+  // By user name («pedro.alvarez»); an e-mail is still accepted.
+  login: (username: string, password: string) => Promise<void>
+  // Own password; the new session replaces the current one.
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: (notice?: string) => void
   request: <T>(path: string, options?: RequestOptions) => Promise<{ status: number; data: T }>
   download: (path: string) => Promise<{ blob: Blob; filename: string | null }>

@@ -4527,3 +4527,37 @@ button.doc-row:focus-visible {
   border-left-color: var(--success-border);
   background: var(--success-bg);
 }
+
+/* Own password (ChangePasswordView): forced first change and «Mi cuenta». */
+.password-card h1 {
+  margin: 0 0 10px;
+  color: var(--brand-blue);
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.password-card .login-help {
+  margin: 0 0 20px;
+  text-align: left;
+}
+
+.password-form {
+  display: grid;
+  gap: 14px;
+  text-align: left;
+}
+
+.password-rules {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.password-rules li.ok {
+  color: var(--success-border);
+  font-weight: 700;
+}

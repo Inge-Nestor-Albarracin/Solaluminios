@@ -140,6 +140,9 @@ El navegador nunca se conecta a la base.
   - JWT HS256 de 1 hora;
   - contraseñas con scrypt;
   - en cada petición se verifican el usuario activo y su rol;
+  - ingreso por **usuario** (p. ej. `pedro.alvarez`); la cédula es solo la
+    clave inicial y se cambia obligatoriamente en el primer ingreso; registro
+    de ingresos (`docs/usuarios-y-contrasenas.md`);
   - sin registro público ni recuperación de contraseña;
   - al recargar la página se vuelve a ingresar.
 - **Modelo:** 43 modelos en `apps/api/prisma/schema.prisma`, entre ellos
@@ -152,11 +155,14 @@ El navegador nunca se conecta a la base.
   lotes, reservas y entregas.
 - **Concurrencia:** bloqueos de fila e `operationKey` idempotente en las
   operaciones que se pueden repetir desde el frontend.
-- **Migraciones:** 25 en total; la última es
-  `20261125120000_sales_returns` (devoluciones de clientes y saldo a favor,
-  ver `docs/devoluciones.md`). Las del 24 y 25/11/2026 están aplicadas en las
-  bases locales, todavía no en producción:
-  - la de devoluciones (`20261125120000_sales_returns`);
+- **Migraciones:** 27 en total; la última es
+  `20261127130000_login_events_outlive_users`. Las del 24 al 27/11/2026 están
+  aplicadas en las bases locales, todavía no en producción:
+  - las de usuarios y contraseñas (`20261127120000_usernames_password_policy`
+    y `20261127130000_login_events_outlive_users`; ver
+    `docs/usuarios-y-contrasenas.md`);
+  - la de devoluciones (`20261125120000_sales_returns`, ver
+    `docs/devoluciones.md`);
   - las dos de accesorios (`20261124120000_accessories_role` y
     `20261124130000_accessory_inventory`);
   - la de pagos de las órdenes (`20261124140000_order_payments`);

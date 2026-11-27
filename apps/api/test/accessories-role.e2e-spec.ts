@@ -38,7 +38,7 @@ describe('Accessories role (e2e)', () => {
       await http()
         .post('/users')
         .set(as('ADMIN'))
-        .send({ name: 'Accesorios E2E', email: `e2e-acc-new-${S.toLowerCase()}@test.local`, password: 'Clave-de-prueba-123', role: 'ACCESSORIES' })
+        .send({ name: 'Accesorios E2E', username: `e2e.acc.new.${S.toLowerCase()}`, idNumber: '1234567890', role: 'ACCESSORIES' })
         .expect(201)
     ).body as { id: string; role: string };
     expect(created.role).toBe('ACCESSORIES');

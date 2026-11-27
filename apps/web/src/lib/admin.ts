@@ -16,11 +16,50 @@ export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
 export interface AdminUser {
   id: string
   name: string
-  email: string
+  username: string
+  email: string | null
   role: UserRole
   active: boolean
   defaultInventoryLocationId: string | null
+  // Still with the initial password (ID number).
+  mustChangePassword: boolean
+  passwordChangedAt: string | null
+  lastLoginAt: string | null
   createdAt: string
+}
+
+// «Pedro Álvarez Gómez» → «pedro.alvarez»: first name and first surname,
+// lowercase, without accents (same rules as the API).
+export const USERNAME_PATTERN = /^[a-z0-9]+([._-][a-z0-9]+)*$/
+export function suggestUsername(name: string): string {
+  const words = name
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  return (words.length > 1 ? `${words[0]}.${words[1]}` : (words[0] ?? '')).slice(0, 50)
+}
+
+export type LoginEventType = 'LOGIN_OK' | 'LOGIN_FAILED' | 'LOGIN_LOCKED' | 'LOGIN_INACTIVE' | 'PASSWORD_CHANGED' | 'PASSWORD_RESET'
+export const LOGIN_EVENT_LABEL: Record<LoginEventType, string> = {
+  LOGIN_OK: 'Ingresó',
+  LOGIN_FAILED: 'Intento fallido',
+  LOGIN_LOCKED: 'Bloqueado por intentos',
+  LOGIN_INACTIVE: 'Usuario inactivo',
+  PASSWORD_CHANGED: 'Cambió su contraseña',
+  PASSWORD_RESET: 'Contraseña restablecida',
+}
+export interface LoginEvent {
+  id: string
+  type: LoginEventType
+  identifier: string
+  ip: string | null
+  userAgent: string | null
+  at: string
+  user: { id: string; name: string; username: string } | null
+  actor: { id: string; name: string } | null
 }
 
 const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_'

@@ -3,10 +3,14 @@ export type UserRole = 'ADMIN' | 'WAREHOUSE' | 'SALES' | 'READ_ONLY' | 'CHINA_OP
 export interface SessionUser {
   id: string
   name: string
-  email: string
+  // Login name, e.g. «pedro.alvarez».
+  username: string
+  email: string | null
   role: UserRole
   active: boolean
   defaultInventoryLocationId: string | null
+  // Still with the initial password (ID number): must change it first.
+  mustChangePassword: boolean
 }
 
 export interface LoginResponse {

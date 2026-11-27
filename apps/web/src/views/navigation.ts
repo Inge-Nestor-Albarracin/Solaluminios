@@ -29,5 +29,7 @@ export type View =
   // Sales returns (documento DV): detail and the request from an order.
   | { name: 'return'; id: string }
   | { name: 'returnNew'; orderId: string }
+  // Own password (Mi cuenta).
+  | { name: 'password' }
 
 export type Navigate = (view: View) => void

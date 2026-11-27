@@ -1,8 +1,16 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Roles } from '../auth/auth.metadata.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
-import { CreateUserDto, UpdateUserActiveDto, UpdateUserLocationDto, UpdateUserRoleDto } from './dto/user.dto.js';
+import {
+  CreateUserDto,
+  LoginEventQueryDto,
+  ResetPasswordDto,
+  UpdateUserActiveDto,
+  UpdateUserLocationDto,
+  UpdateUserRoleDto,
+  UpdateUsernameDto,
+} from './dto/user.dto.js';
 import { UsersService } from './users.service.js';
 
 @Roles('ADMIN')
@@ -15,10 +23,29 @@ export class UsersController {
     return this.usersService.list();
   }
 
+  // Logins, failed attempts and password changes (newest first).
+  @Get('login-events')
+  loginEvents(@Query() query: LoginEventQueryDto) {
+    return this.usersService.loginEvents(query);
+  }
+
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post()
   create(@Body() dto: CreateUserDto) {
     return this.usersService.create(dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post(':id/reset-password')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto, @Req() request: AuthenticatedRequest) {
+    if (!request.user) throw new UnauthorizedException();
+    return this.usersService.resetPassword(id, dto.idNumber, request.user.id);
+  }
+
+  @Patch(':id/username')
+  setUsername(@Param('id') id: string, @Body() dto: UpdateUsernameDto) {
+    return this.usersService.setUsername(id, dto.username);
   }
 
   @Patch(':id/active')

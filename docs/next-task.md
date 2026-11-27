@@ -116,6 +116,23 @@ mostrador de Accesorios).
 - **Migración:** `20261125120000_sales_returns`, todavía no desplegada.
 - **Detalle, decisiones por confirmar y límites:** `docs/devoluciones.md`.
 
+### Hecho en local el 27/11/2026: ingreso por usuario y cédula como clave inicial
+
+- **Qué hace:**
+  - ingreso con un usuario tipo `pedro.alvarez`;
+  - la cédula es la clave inicial y se cambia obligatoriamente en el primer
+    ingreso;
+  - el administrador restablece claves y cambia usuarios;
+  - registro de ingresos.
+- **Usuarios existentes:** reciben como usuario lo que va antes de la @ de su
+  correo, y el correo sigue sirviendo para ingresar durante la transición.
+- **Migraciones:** `20261127120000_usernames_password_policy` y
+  `20261127130000_login_events_outlive_users`, todavía no desplegadas.
+- **Después de desplegar:**
+  - avisar a cada persona su nombre de usuario;
+  - actualizar los manuales de Ventas y Bodega, que dicen «correo».
+- **Detalle y pendientes:** `docs/usuarios-y-contrasenas.md`.
+
 ## Pendientes sin fecha (no empezar sin decisión del usuario)
 
 - Pruebas con la pistola Chafon real y con Android por HTTPS.

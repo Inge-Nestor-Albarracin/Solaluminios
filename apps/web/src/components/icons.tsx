@@ -32,6 +32,9 @@ export const IconChart = (p: P) => (
 export const IconLogout = (p: P) => (
   <Icon {...p}><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 16l-4-4 4-4M6 12h10" /></Icon>
 )
+export const IconKey = (p: P) => (
+  <Icon {...p}><circle cx="8" cy="15" r="4" /><path d="m10.8 12.2 8.7-8.7M16 7l2.5 2.5M14 9l2 2" /></Icon>
+)
 export const IconArrow = (p: P) => (
   <Icon {...p}><path d="M4 12h15m-6-6 6 6-6 6" /></Icon>
 )

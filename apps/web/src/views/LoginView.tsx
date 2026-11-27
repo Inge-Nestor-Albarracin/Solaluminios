@@ -9,7 +9,7 @@ import './LoginView.css'
 // logo, white card with "¡Bienvenido!", grey fields and a navy pill button.
 export function LoginView() {
   const { login, notice } = useSession()
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -21,7 +21,7 @@ export function LoginView() {
     setPending(true)
     setError(null)
     try {
-      await login(email.trim(), password)
+      await login(username.trim().toLowerCase(), password)
     } catch (err) {
       setError(describeError(err))
       setPending(false)
@@ -46,22 +46,22 @@ export function LoginView() {
 
             <div className="login-field">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M3.5 5h17A1.5 1.5 0 0 1 22 6.5v.4l-10 6.3L2 6.9v-.4A1.5 1.5 0 0 1 3.5 5Zm-1.5 4.2 9.5 6a1 1 0 0 0 1 0l9.5-6v8.3a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 17.5V9.2Z" />
+                <path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.5-8 5.5V21h16v-1.5c0-3-3.6-5.5-8-5.5Z" />
               </svg>
               <input
-                id="login-email"
-                name="email"
-                type="email"
+                id="login-username"
+                name="username"
+                type="text"
                 autoComplete="username"
                 autoCapitalize="none"
                 spellCheck={false}
                 placeholder=" "
                 required
                 disabled={pending}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
               />
-              <label htmlFor="login-email">Correo electrónico</label>
+              <label htmlFor="login-username">Usuario (p. ej. pedro.alvarez)</label>
             </div>
 
             <div className="login-field">
@@ -102,7 +102,10 @@ export function LoginView() {
             </button>
           </form>
 
-          <p className="login-help">¿Olvidaste tu contraseña o necesitas acceso? Consulta con tu administrador.</p>
+          <p className="login-help">
+            ¿Primer ingreso? Tu contraseña es tu número de cédula; al entrar te pedirá cambiarla. ¿La olvidaste o necesitas acceso? Consulta con tu
+            administrador.
+          </p>
           <p className="login-session-note">Al recargar o cerrar esta página, tendrás que ingresar de nuevo.</p>
         </section>
 

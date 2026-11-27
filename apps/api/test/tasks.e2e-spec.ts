@@ -124,10 +124,16 @@ describe('Tasks (e2e)', () => {
     await http().get(`/tasks/${warehouseTask.id}`).set(headers.SALES).expect(404);
     await http().get(`/tasks/${warehouseTask.id}`).set(headers.WAREHOUSE).expect(200);
 
+    // ADMIN sees every employee's tasks. Checked per employee: without a
+    // filter it lists the whole shared test database, where these may fall
+    // beyond the first page.
     const all = await list('?status=pending&pageSize=100', 'ADMIN').expect(200);
-    const assignees = new Set(all.body.items.map((t: { assigneeId: string }) => t.assigneeId));
-    expect(assignees.has(ids.WAREHOUSE) && assignees.has(ids.SALES)).toBe(true);
+    const ofWarehouse = await list(`?status=pending&assigneeId=${ids.WAREHOUSE}`, 'ADMIN').expect(200);
     const one = await list(`?status=pending&assigneeId=${ids.SALES}`, 'ADMIN').expect(200);
+    expect(ofWarehouse.body.items.length).toBeGreaterThan(0);
+    expect(one.body.items.length).toBeGreaterThan(0);
+    expect(all.body.total).toBeGreaterThanOrEqual(ofWarehouse.body.total + one.body.total);
+    expect(ofWarehouse.body.items.every((t: { assigneeId: string }) => t.assigneeId === ids.WAREHOUSE)).toBe(true);
     expect(one.body.items.every((t: { assigneeId: string }) => t.assigneeId === ids.SALES)).toBe(true);
 
     for (const bad of ['?status=done', '?pageSize=101', '?assigneeId=', '?foo=1']) {

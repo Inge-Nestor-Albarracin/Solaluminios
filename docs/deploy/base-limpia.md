@@ -205,14 +205,18 @@ La contraseña no se ve al escribirla ni queda en el historial:
 
 ```bash
 read -rp 'Nombre del administrador: ' BOOTSTRAP_ADMIN_NAME
-read -rp 'Correo del administrador: ' BOOTSTRAP_ADMIN_EMAIL
+read -rp 'Usuario para ingresar (p. ej. pedro.alvarez): ' BOOTSTRAP_ADMIN_USERNAME
+read -rp 'Correo del administrador (opcional, Enter para omitir): ' BOOTSTRAP_ADMIN_EMAIL
 read -rsp 'Contraseña (12 a 128 caracteres): ' BOOTSTRAP_ADMIN_PASSWORD; echo
-export BOOTSTRAP_ADMIN_NAME BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD
+export BOOTSTRAP_ADMIN_NAME BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD
 node dist/scripts/create-admin.js
-unset BOOTSTRAP_ADMIN_NAME BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD
+unset BOOTSTRAP_ADMIN_NAME BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD
 ```
 
-Debe imprimir «Administrador creado» con el nombre y el correo.
+Debe imprimir «Administrador creado» con el nombre y el usuario. Se ingresa
+con ese usuario (desde la migración `20261127120000_usernames_password_policy`
+el ingreso es por usuario; el correo todavía se acepta durante la
+transición).
 
 ### B10. Iniciar el API y comprobar
 

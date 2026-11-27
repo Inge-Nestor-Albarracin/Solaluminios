@@ -3,7 +3,7 @@ import { IconChevron } from '../components/icons'
 import { DevicePanel } from '../pwa/DevicePanel'
 import type { Navigate, View } from './navigation'
 
-type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch' | 'request' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'>
+type Section = Exclude<View['name'], 'bundle' | 'home' | 'quote' | 'order' | 'dispatch' | 'request' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew' | 'password'>
 
 interface Tile {
   name: Section

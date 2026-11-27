@@ -5,7 +5,7 @@ import type { View } from '../views/navigation'
 // API still apply after login.
 export type LaunchView = Exclude<
   View['name'],
-  'bundle' | 'quote' | 'order' | 'dispatch' | 'request' | 'requests' | 'billing' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew'
+  'bundle' | 'quote' | 'order' | 'dispatch' | 'request' | 'requests' | 'billing' | 'basket' | 'basketNew' | 'voucher' | 'voucherNew' | 'return' | 'returnNew' | 'password'
 >
 
 const ALLOWED = new Set<LaunchView>(['home', 'register', 'lookup', 'bulk', 'bundles', 'summary', 'tasks', 'admin', 'receive', 'sales', 'dispatches', 'accessories', 'vouchers'])
