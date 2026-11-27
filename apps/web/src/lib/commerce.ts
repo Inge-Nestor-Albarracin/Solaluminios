@@ -89,6 +89,10 @@ export interface QuoteLine {
   manualApprovedBy: { id: string; name: string } | null
   unitPrice: string
   discountPercent: string
+  // Enabled price with a discount above the seller's 3 %: the administrator
+  // who authorised it (null = not authorised; see the API's rule).
+  discountApprovedAt: string | null
+  discountApprovedBy: { id: string; name: string } | null
   taxRatePercent: string
   lineSubtotal: string
   discountAmount: string
@@ -172,8 +176,15 @@ export interface Quote {
   saleType: SaleType
   assemblyAmount: string
   installationAmount: string
-  // Highest global discount the viewer may apply without asking.
+  // Highest global discount the viewer may apply without asking (at the
+  // saved base).
   globalDiscountLimit: string
+  // A global discount above 3 % authorised by an administrator: up to that
+  // percentage while the base (subtotal − line discounts) does not grow.
+  globalDiscountApprovedPercent: string | null
+  globalDiscountApprovedBase: string | null
+  globalDiscountApprovedAt: string | null
+  globalDiscountApprovedBy: { id: string; name: string } | null
   discountRequests: DiscountRequest[]
   taxTotal: string
   total: string
@@ -319,6 +330,8 @@ export interface SalesOrder {
   // ADMIN only (the API omits them for other roles).
   createdBy?: { id: string; name: string }
   convertedBy?: { id: string; name: string } | null
+  // Who authorised a global discount above 3 % (null on older orders).
+  globalDiscountApprovedBy?: { id: string; name: string } | null
   subtotal: string
   discountTotal: string
   globalDiscountPercent: string

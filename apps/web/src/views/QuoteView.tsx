@@ -34,7 +34,7 @@ import {
 } from '../lib/commerce'
 import { EMPTY_CATALOG, type CatalogValue } from '../lib/forms'
 import { formatDateTime } from '../lib/format'
-import { parseMoney } from '../lib/numbers'
+import { parseMoney, percentOfCents } from '../lib/numbers'
 import { notifyRequestUpdatesChanged } from '../lib/requestUpdates'
 import { useLoad } from '../lib/useLoad'
 import { uuid } from '../lib/uuid'
@@ -55,9 +55,6 @@ interface LineDraft {
   manualPrice: string
   priceReason: string
   estimatedCost: string
-  // Discount saved with this line: a seller may keep it unchanged even above
-  // the 3 % limit (the API's rule).
-  savedDiscount?: string
 }
 
 // China preselected for new lines (agreed default), visible and editable.
@@ -97,12 +94,46 @@ const serviceValue = (text: string): string | null => {
   return MANUAL_PRICE.test(value) ? value : null
 }
 
+// Authorisation of a draft line's discount above the seller's 3 % on the
+// enabled price: who gave it, or (refused) up to how many profiles it was
+// given for this material and discount.
+type DiscountAuthorisation = { by: string } | { upTo: number } | null
+
+const discountKey = (referenceId: string, finishId: string, origin: string, supplierId: string | null, percent: string) =>
+  JSON.stringify([referenceId, finishId, origin, supplierId || null, Number(percent).toFixed(4)])
+
+// Same rule as the API: an administrator's discount (saved by an
+// administrator) covers one line with the same material and discount and
+// no more profiles, smallest fit first. A discount nobody authorised (a
+// manual price not authorised, a rejected request, older data) never counts.
+function discountAuthorisations(saved: QuoteLine[], drafts: LineDraft[]): Record<string, DiscountAuthorisation> {
+  const pool = new Map<string, { quantity: number; by: string }[]>()
+  for (const line of saved) {
+    if (line.manualPrice || !line.discountApprovedBy || Number(line.discountPercent) <= SELLER_LINE_DISCOUNT_LIMIT) continue
+    const key = discountKey(line.referenceId, line.finishId, line.origin, line.supplierId, line.discountPercent)
+    pool.set(key, [...(pool.get(key) ?? []), { quantity: line.quantity, by: line.discountApprovedBy.name }].sort((a, b) => a.quantity - b.quantity))
+  }
+  const result: Record<string, DiscountAuthorisation> = {}
+  for (const line of drafts) {
+    const value = decimal(line.discountPercent || '0')
+    result[line.key] = null
+    if (line.manual || !DECIMAL.test(value) || Number(value) <= SELLER_LINE_DISCOUNT_LIMIT) continue
+    const list = pool.get(discountKey(line.catalog.referenceId, line.catalog.finishId, line.origin, line.supplierId, value)) ?? []
+    const index = list.findIndex((item) => item.quantity >= Number(line.quantity))
+    if (index >= 0) result[line.key] = { by: list.splice(index, 1)[0].by }
+    else if (list.length > 0) result[line.key] = { upTo: list[list.length - 1].quantity }
+  }
+  return result
+}
+
 // Why the line discount cannot be saved (null when it can).
-function lineDiscountError(line: LineDraft, isAdmin: boolean): string | null {
+function lineDiscountError(line: LineDraft, isAdmin: boolean, authorisation: DiscountAuthorisation): string | null {
   const value = decimal(line.discountPercent || '0')
   if (!DECIMAL.test(value) || Number(value) > 100) return 'Escribe un porcentaje entre 0 y 100, p. ej. 2 o 2,5.'
-  const kept = line.savedDiscount !== undefined && Number(line.savedDiscount) === Number(value)
-  if (!isAdmin && !line.manual && Number(value) > SELLER_LINE_DISCOUNT_LIMIT && !kept) {
+  if (!isAdmin && !line.manual && Number(value) > SELLER_LINE_DISCOUNT_LIMIT && !(authorisation && 'by' in authorisation)) {
+    if (authorisation && 'upTo' in authorisation) {
+      return `Un administrador autorizó este descuento para hasta ${authorisation.upTo} perfiles de este material. Para más perfiles deja máximo ${SELLER_LINE_DISCOUNT_LIMIT} %, usa precio manual (lo autoriza un administrador) o pide un descuento global.`
+    }
     return `Puedes dar hasta ${SELLER_LINE_DISCOUNT_LIMIT} % por renglón. Para más, usa precio manual (lo autoriza un administrador) o pide un descuento global.`
   }
   return null
@@ -179,8 +210,8 @@ function lineAmounts(line: LineDraft, unitPrice: string | null): Amounts | null 
   const tax = decimal(line.taxRatePercent)
   if (!unitPrice || !Number.isInteger(quantity) || quantity < 1 || !DECIMAL.test(discount) || !DECIMAL.test(tax)) return null
   const cents = Math.round(Number(unitPrice) * 100) * quantity
-  const discountCents = Math.round((cents * Number(discount)) / 100)
-  const taxCents = Math.round(((cents - discountCents) * Number(tax)) / 100)
+  const discountCents = percentOfCents(cents, discount)
+  const taxCents = percentOfCents(cents - discountCents, tax)
   return { subtotal: cents / 100, discount: discountCents / 100, tax: taxCents / 100, total: (cents - discountCents + taxCents) / 100, taxRate: Number(tax) }
 }
 
@@ -198,20 +229,24 @@ function validGlobalDiscount(value: string) {
 function documentPreview(lines: Amounts[], globalPercent: number) {
   const bases = lines.map((line) => Math.round((line.subtotal - line.discount) * 100))
   const baseTotal = bases.reduce((total, base) => total + base, 0)
-  const globalCents = Math.round((baseTotal * globalPercent) / 100)
+  const globalCents = percentOfCents(baseTotal, globalPercent)
   const shares = bases.map(() => 0)
   if (baseTotal > 0 && globalCents > 0) {
-    const raw = bases.map((base) => (globalCents * base) / baseTotal)
-    raw.forEach((value, index) => (shares[index] = Math.floor(value)))
-    let remaining = globalCents - shares.reduce((total, share) => total + share, 0)
-    const order = raw.map((value, index) => ({ index, fraction: value - Math.floor(value) })).sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+    // Exact proportions (integers): the remainders decide the extra cents.
+    const raw = bases.map((base) => BigInt(globalCents) * BigInt(base))
+    const total = BigInt(baseTotal)
+    raw.forEach((value, index) => (shares[index] = Number(value / total)))
+    let remaining = globalCents - shares.reduce((sum, share) => sum + share, 0)
+    const order = raw
+      .map((value, index) => ({ index, remainder: value % total }))
+      .sort((a, b) => (b.remainder > a.remainder ? 1 : b.remainder < a.remainder ? -1 : a.index - b.index))
     for (const { index } of order) {
       if (remaining <= 0) break
       shares[index] += 1
       remaining -= 1
     }
   }
-  const taxCents = lines.reduce((total, line, index) => total + Math.round(((bases[index] - shares[index]) * line.taxRate) / 100), 0)
+  const taxCents = lines.reduce((total, line, index) => total + percentOfCents(bases[index] - shares[index], line.taxRate), 0)
   const cents = (value: number) => (value / 100).toFixed(2)
   return {
     subtotal: cents(lines.reduce((total, line) => total + Math.round(line.subtotal * 100), 0)),
@@ -441,6 +476,7 @@ function LineEditor({
   unitPrice,
   enabledPrice,
   authorisedBy,
+  discountAuthorisation,
   myLocation,
   onChange,
   onPrice,
@@ -456,13 +492,16 @@ function LineEditor({
   enabledPrice: string | null
   // Manual line: who authorised exactly this price (null = to authorise).
   authorisedBy: string | null
+  // Discount above 3 % on the enabled price: who authorised it.
+  discountAuthorisation: DiscountAuthorisation
   onChange: (line: LineDraft) => void
   onPrice: (unitPrice: string | null) => void
   onRemove: (() => void) | null
 }) {
   const { referenceId, finishId } = line.catalog
   const { user } = useSession()
-  const discountError = lineDiscountError(line, user?.role === 'ADMIN')
+  const discountError = lineDiscountError(line, user?.role === 'ADMIN', discountAuthorisation)
+  const discountBy = discountAuthorisation && 'by' in discountAuthorisation ? discountAuthorisation.by : null
   const enc = encodeURIComponent
   const availability = useLoad<AvailabilityGroup[]>(referenceId && finishId ? `/sales/availability?referenceId=${enc(referenceId)}&finishId=${enc(finishId)}` : null)
   // Sale price configured by administration (no cost or profit reaches sales).
@@ -512,7 +551,7 @@ function LineEditor({
         <Field label="Precio habilitado sin IVA" hint="Lo fija administración; si no hay, o el caso lo pide, usa precio manual.">
           <input readOnly value={enabledPrice ? `${formatMoney(enabledPrice)} / perfil` : 'Sin precio habilitado'} />
         </Field>
-        <Field label="Descuento (%)">
+        <Field label="Descuento (%)" hint={discountBy && !discountError ? `Autorizado por ${discountBy}` : undefined}>
           <input inputMode="decimal" value={line.discountPercent} onChange={(e) => set({ discountPercent: e.target.value })} />
           {discountError ? <span className="field-error">{discountError}</span> : null}
         </Field>
@@ -644,7 +683,6 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
           manualPrice: line.manualPrice ? String(Number(line.unitPrice)) : '',
           priceReason: line.priceReason ?? '',
           estimatedCost: line.estimatedUnitCost ? String(Number(line.estimatedUnitCost)) : '',
-          savedDiscount: line.discountPercent,
         }))
       : [newLine()],
   )
@@ -719,13 +757,33 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const editable = !id || quote?.status === 'DRAFT'
   const globalValue = decimal(globalDiscount || '0')
   const globalValid = validGlobalDiscount(globalValue)
+  const draftAmounts = lines.map((line) => lineAmounts(line, linePrice(line, prices[line.key] ?? null)))
+  // Base of the global discount as drafted (subtotal − line discounts), in cents.
+  const draftBaseCents = draftAmounts.every((amounts) => amounts !== null)
+    ? (draftAmounts as Amounts[]).reduce((total, amounts) => total + Math.round((amounts.subtotal - amounts.discount) * 100), 0)
+    : null
+  // A global discount an administrator authorised covers its percentage
+  // while the base does not grow (the API's rule).
+  const approvedGlobal = quote?.globalDiscountApprovedPercent ? Number(quote.globalDiscountApprovedPercent) : null
+  const approvedBaseCents = quote?.globalDiscountApprovedBase ? Math.round(Number(quote.globalDiscountApprovedBase) * 100) : null
+  const approvalOutgrown =
+    !isAdmin && approvedGlobal !== null && approvedGlobal > SELLER_GLOBAL_DISCOUNT_LIMIT && approvedBaseCents !== null && draftBaseCents !== null && draftBaseCents > approvedBaseCents
   // What this user applies without asking (SALES: 3 %, or what was approved).
-  const globalLimit = isAdmin ? 100 : quote ? Number(quote.globalDiscountLimit) : SELLER_GLOBAL_DISCOUNT_LIMIT
+  const globalLimit = isAdmin
+    ? 100
+    : draftBaseCents === null
+      ? quote
+        ? Number(quote.globalDiscountLimit)
+        : SELLER_GLOBAL_DISCOUNT_LIMIT
+      : approvedGlobal !== null && !approvalOutgrown
+        ? Math.max(SELLER_GLOBAL_DISCOUNT_LIMIT, approvedGlobal)
+        : SELLER_GLOBAL_DISCOUNT_LIMIT
   const needsApproval = !isAdmin && globalValid && Number(globalValue) > globalLimit
   const pendingDiscount = quote?.discountRequests.find((r) => r.kind === 'GLOBAL_DISCOUNT' && r.status === 'PENDING') ?? null
   const pendingRequest = quote?.discountRequests.find((r) => r.status === 'PENDING') ?? null
-  // Asking: the quote keeps the discount it already has until approval.
-  const appliedGlobal = quote ? String(Number(quote.globalDiscountPercent)) : '0'
+  // Asking: the quote keeps the discount it already has until approval (no
+  // more than this user may apply alone at the drafted base).
+  const appliedGlobal = quote ? String(Math.min(Number(quote.globalDiscountPercent), globalLimit)) : '0'
   const willRequest = needsApproval && !pendingDiscount
   // Who authorised each manual draft line exactly as it is (same rule as the API).
   const authorisedBy = (() => {
@@ -739,7 +797,8 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   })()
   const manualToAuthorise = !isAdmin && lines.some((line) => line.manual && !authorisedBy[line.key])
   const manualValid = lines.every((line) => !line.manual || (linePrice(line, null) !== null && line.priceReason.trim().length >= PRICE_REASON_MIN && (!line.estimatedCost.trim() || (DECIMAL.test(parseMoney(line.estimatedCost)) && Number(parseMoney(line.estimatedCost)) > 0))))
-  const discountsValid = lines.every((line) => lineDiscountError(line, isAdmin) === null)
+  const discountApprovals = discountAuthorisations(quote?.lines ?? [], lines)
+  const discountsValid = lines.every((line) => lineDiscountError(line, isAdmin, discountApprovals[line.key]) === null)
   // Unauthorised manual lines as drafted vs. as saved (what an open request
   // covers): a difference means a new request (and losing the open one).
   const draftUnauthorised = lines
@@ -757,7 +816,6 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
   const needsApprover = willRequest || willRequestPrice
   const approvers = useLoad<{ id: string; name: string }[]>(needsApprover ? '/sales/discount-approvers' : null)
   const unauthorisedSaved = (quote?.lines ?? []).some((line) => line.manualPrice && !line.manualApprovedBy)
-  const draftAmounts = lines.map((line) => lineAmounts(line, linePrice(line, prices[line.key] ?? null)))
   const windows = saleType === 'WINDOWS'
   const assemblyValue = windows ? serviceValue(assembly) : '0'
   const installationValue = windows ? serviceValue(installation) : '0'
@@ -1127,6 +1185,7 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
               unitPrice={linePrice(line, prices[line.key] ?? null)}
               enabledPrice={prices[line.key] ?? null}
               authorisedBy={authorisedBy[line.key]}
+              discountAuthorisation={discountApprovals[line.key]}
               myLocation={myLocation}
               onChange={(next) => update(index, next)}
               onPrice={(price) => setPrices((current) => (current[line.key] === price ? current : { ...current, [line.key]: price }))}
@@ -1172,6 +1231,19 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
               ) : null}
             </div>
             {!globalValid ? <p className="field-error">Usa 0 o un porcentaje entre 0,1 y 100, con hasta 2 decimales.</p> : null}
+            {quote?.globalDiscountApprovedBy && approvedGlobal !== null && approvedGlobal > SELLER_GLOBAL_DISCOUNT_LIMIT && !approvalOutgrown ? (
+              <p className="cell-sub">
+                {quote.globalDiscountApprovedBy.name} autorizó hasta {formatPercent(approvedGlobal)} de descuento global mientras el valor de los materiales (sin IVA ni
+                descuentos por renglón) no supere {formatMoney(quote.globalDiscountApprovedBase ?? 0)}.
+              </p>
+            ) : null}
+            {approvalOutgrown && Number(globalValue) > SELLER_GLOBAL_DISCOUNT_LIMIT ? (
+              <Notice kind="warning">
+                {quote?.globalDiscountApprovedBy?.name ?? 'Un administrador'} autorizó {formatPercent(approvedGlobal ?? 0)} para un valor de materiales de hasta{' '}
+                {formatMoney(quote?.globalDiscountApprovedBase ?? 0)}; con estos cambios es {formatMoney((draftBaseCents ?? 0) / 100)}. Ese descuento ya no cubre la
+                cotización: hay que pedir la autorización de nuevo.
+              </Notice>
+            ) : null}
             {willRequest ? (
               <Notice kind="warning">
                 Más de {formatPercent(globalLimit)} necesita autorización. La cotización se guarda con {formatPercent(appliedGlobal)} de descuento global y la
@@ -1248,7 +1320,10 @@ function QuoteEditor({ id, quote, reload, navigate }: { id?: string; quote: Quot
                       )}
                     </td>
                     <td className="num" data-label="Unitario">{formatMoney(line.unitPrice)}</td>
-                    <td className="num" data-label="Desc.">{formatMoney(line.discountAmount)}</td>
+                    <td className="num" data-label="Desc.">
+                      {formatMoney(line.discountAmount)}
+                      {line.discountApprovedBy ? <span className="cell-sub"> {formatPercent(Number(line.discountPercent))} autorizado por {line.discountApprovedBy.name}</span> : null}
+                    </td>
                     <td className="num" data-label="IVA">{formatMoney(line.taxAmount)}</td>
                     <td className="num" data-label="Total">{formatMoney(line.lineTotal)}</td>
                   </tr>

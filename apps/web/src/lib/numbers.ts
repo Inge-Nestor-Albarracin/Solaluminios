@@ -21,3 +21,13 @@ export function parseMoney(value: string): string {
   if (/^\d{1,3}(\.\d{3})+$/.test(text)) return text.replace(/\./g, '')
   return text
 }
+
+// cents × percent / 100 rounded half up to a cent, exactly as the server
+// does it with decimals (floats would turn $205,205 into $205,20).
+export function percentOfCents(cents: number, percent: number | string): number {
+  const [whole, fraction] = Number(percent).toFixed(6).split('.')
+  const product = BigInt(Math.round(cents)) * BigInt(whole + fraction)
+  const divisor = 100_000_000n
+  return Number(product / divisor + ((product % divisor) * 2n >= divisor ? 1n : 0n))
+}
+

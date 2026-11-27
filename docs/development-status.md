@@ -3920,6 +3920,105 @@ cambio obligatorio en el primer ingreso. Diseño, protecciones y transición en
 - botón de cambio de contraseña para el operador China;
 - decidir cuándo dejar de aceptar el correo.
 
+## Auditoría QA: autorización de descuentos, SEC-01 (27/11/2026)
+
+**Origen:**
+- informe de QA del 27/11/2026 sobre `main` en `0c499be`: calificación 0/100
+  por el hallazgo SEC-01;
+- verificación, corrección y evidencia en `docs/auditoria-qa-2026-11-27.md`.
+
+**Verificación (antes de cambiar nada):**
+- **SEC-01 reproducido de punta a punta** con una prueba temporal en la base de
+  pruebas:
+  - el vendedor guardaba un precio manual sin autorizar con 50 %;
+  - lo volvía a guardar con el precio habilitado y el mismo 50 %;
+  - convertía la orden con 50 % de descuento;
+  - lo mismo funcionaba tras un rechazo (orden con 40 %);
+  - el 10 % de un administrador se conservaba con 1.000 perfiles en vez de 10.
+- **También ciertos:** la edición simultánea, el redondeo, la fecha
+  inexistente y el doble sondeo.
+- **Falso:** el «margen» divide por el precio, no por el costo.
+- **Secretos:** no hay en el repositorio ni en su historial.
+- **Decisión del usuario:** no tocar los archivos grandes ni las observaciones
+  de escalabilidad. Corregir SEC-01 con registro de quién autorizó.
+
+**Migración `20261127140000_discount_authorization`** (aditiva):
+- aplicada en `solaluminios_dev`, `solaluminios_ensayo_manual` y la base de
+  pruebas, sin diferencias con el esquema; 28 migraciones;
+- **Columnas:**
+  - `quote_lines` y `sales_order_lines`: `discountApprovedById` y
+    `discountApprovedAt`;
+  - `quotes`: `globalDiscountApproved{Percent,Base,ById,At}`;
+  - `sales_orders`: `globalDiscountApprovedById` y `globalDiscountApprovedAt`.
+- **CHECK:** quién y cuándo van juntos.
+- **Traslado:** las solicitudes globales ya aprobadas, ligadas a la base actual
+  de cada cotización.
+- **Disparadores:** al **insertar**, rechazan órdenes o renglones con más de
+  3 % sin autorización.
+- **No se rellenan** los descuentos por renglón antiguos: nada registra quién
+  los puso.
+
+**API:**
+- **Nuevo** `sales/discount-authorization.ts`: reglas puras con
+  `LineDiscountPool`, `globalApprovalCovers` y `sellerGlobalLimit`.
+- **Al guardar** (`writeQuoteLines`):
+  - un descuento de más de 3 % sobre el precio habilitado lo autoriza el
+    administrador que lo guarda;
+  - el vendedor lo conserva para el mismo material y porcentaje, sin más
+    perfiles, una vez por autorización.
+  - El descuento global se autoriza con su base y el vendedor lo conserva
+    mientras no suba. El mensaje explica cuando la base creció.
+- **Al aprobar:**
+  - aprobar la solicitud global registra la autorización;
+  - autorizar precios manuales que suben la base mueve la autorización
+    global a la nueva base, con auditoría.
+- **Al convertir:**
+  - se revisa otra vez: el vendedor recibe 409;
+  - si convierte un administrador, autoriza lo que falte (auditado);
+  - la orden copia quién autorizó.
+- **La orden** muestra `discountApprovedBy` y `globalDiscountApprovedBy`.
+
+**Web:**
+- **Misma regla** antes de guardar, con «Autorizado por …» en el descuento.
+- **Descuento global:**
+  - el límite se calcula con la base del borrador;
+  - si la base creció, se guarda lo que el vendedor puede aplicar solo y se
+    pide de nuevo, con un aviso.
+- **Redondeo exacto en la vista previa:** `percentOfCents` en
+  `lib/numbers.ts`. Sin eso, una diferencia de un centavo en la base podía
+  dar por perdida una autorización.
+
+**Pruebas:**
+- **Nuevas:**
+  - `test/discount-authorization.e2e-spec.ts` (7 casos);
+  - `discount-authorization.spec.ts` (6 unitarias);
+  - 9 casos de `percentOfCents`.
+- **Ajustada:** `quote-discounts`. El descuento antiguo sin autor ya no se
+  conserva; es el comportamiento que el informe objetó.
+- **API:**
+  - `build` y `oxlint` sin advertencias nuevas;
+  - `pnpm test` 84/84;
+  - `test:e2e --maxWorkers=2` **283/283** en 35 archivos.
+- **Web:** `tsc`, `oxlint`, pruebas (7/7 Chafon y 33/33 números) y `build`.
+- **Prueba temporal del informe**, repetida después: guardar responde 400 y
+  convertir 409 en los tres casos. Se borró del repositorio.
+
+**Navegador** (5174, como `prueba.cedula`, Ventas):
+- se creó COT-000044: 177 NP China, 2 perfiles, precio manual con 50 % y
+  solicitud a QA Admin;
+- al quitar el precio manual aparece «Puedes dar hasta 3 % por renglón» y
+  «Guardar cambios» queda deshabilitado;
+- **Limpieza:** COT-000044 se canceló y su solicitud quedó cancelada.
+- **No recorrido en el navegador:** el descuento global ligado a la base (lo
+  cubren las pruebas e2e).
+
+**Pendiente:**
+- antes de desplegar, contar los borradores afectados y revisar si la falla se
+  usó (consultas en `docs/auditoria-qa-2026-11-27.md`);
+- desplegar la migración;
+- entregar a QA el commit correctivo;
+- edición simultánea, vigencia con día inexistente y doble sondeo.
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

@@ -10,6 +10,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  Quote,
   QuoteDiscountRequest,
   QuoteLine,
   QuoteRequestKind,
@@ -53,6 +54,15 @@ import {
   withGlobalDiscount,
   type LineAmounts,
 } from './pricing.js';
+import {
+  LineDiscountPool,
+  globalApprovalCovers,
+  globalNeedsApproval,
+  lineNeedsApproval,
+  sellerGlobalLimit,
+  type GlobalApproval,
+  type LineDiscountApproval,
+} from './discount-authorization.js';
 import { renderSalesExport } from './sales-export.js';
 import { renderSalesPdf } from './sales-pdf.js';
 import { ReservationsService, type Allocation } from './reservations.service.js';
@@ -66,6 +76,7 @@ const orderInclude = {
   inventoryLocation: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   convertedBy: { select: { id: true, name: true } },
+  globalDiscountApprovedBy: { select: { id: true, name: true } },
   paymentStatusBy: { select: { id: true, name: true } },
   billedBy: { select: { id: true, name: true } },
   quote: { select: { id: true, number: true } },
@@ -91,6 +102,7 @@ const orderInclude = {
     include: {
       supplier: { select: { id: true, code: true, name: true } },
       manualApprovedBy: { select: { id: true, name: true } },
+      discountApprovedBy: { select: { id: true, name: true } },
       reservations: { where: { status: 'ACTIVE' }, select: { quantity: true, dispatchLineId: true } },
       dispatchLines: { select: { quantity: true, dispatchedQuantity: true, dispatch: { select: { status: true } } } },
     },
@@ -229,6 +241,18 @@ const describeManual = (line: QuoteLine) => ({
   priceReason: line.priceReason,
   approvedById: line.manualApprovedById,
 });
+
+// A line discount an administrator authorised (audit trail).
+const describeDiscount = (line: Pick<QuoteLine, 'lineNo' | 'referenceCode' | 'finishCode' | 'quantity' | 'discountPercent'>) => ({
+  lineNo: line.lineNo,
+  referenceCode: line.referenceCode,
+  finishCode: line.finishCode,
+  quantity: line.quantity,
+  discountPercent: line.discountPercent.toString(),
+});
+
+// Base of the global discount: subtotal − line discounts (no VAT, no services).
+const globalBase = (quote: { subtotal: Decimal; discountTotal: Decimal }) => quote.subtotal.minus(quote.discountTotal);
 // «2,5» for messages and task titles.
 const percentText = (value: Decimal) => Number(value.toString()).toLocaleString('es-CO', { maximumFractionDigits: 2 });
 const moneyText = (value: Decimal) =>
@@ -422,10 +446,11 @@ export class SalesService {
     const quote = await this.prisma.quote.findFirst({
       where: { id, ...this.quoteScope(user) },
       include: {
-        lines: { orderBy: { lineNo: 'asc' }, include: { manualApprovedBy: authorSelect } },
+        lines: { orderBy: { lineNo: 'asc' }, include: { manualApprovedBy: authorSelect, discountApprovedBy: authorSelect } },
         customer: true,
         order: { select: { id: true, number: true } },
         createdBy: { select: { id: true, name: true } },
+        globalDiscountApprovedBy: authorSelect,
         discountRequests: {
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: 10,
@@ -435,7 +460,7 @@ export class SalesService {
     });
     // Same answer for "does not exist" and "not yours".
     if (!quote) throw new NotFoundException('La cotización no existe');
-    const limit = user.role === 'ADMIN' ? new Decimal(100) : await this.sellerLimit(this.prisma, quote.id);
+    const limit = user.role === 'ADMIN' ? new Decimal(100) : sellerGlobalLimit(quote, globalBase(quote));
     // The open request shows what the quote would become if approved.
     const discountRequests = quote.discountRequests.map((request) => ({
       ...request,
@@ -453,34 +478,36 @@ export class SalesService {
     };
   }
 
-  // Highest global discount SALES may apply to this quote by itself: its own
-  // limit, or the largest one an administrator approved for it.
-  private async sellerLimit(client: Tx | PrismaService, quoteId: string | null) {
-    if (!quoteId) return SELLER_GLOBAL_DISCOUNT_LIMIT;
-    const approved = await client.quoteDiscountRequest.aggregate({
-      where: { quoteId, kind: 'GLOBAL_DISCOUNT', status: 'APPROVED' },
-      _max: { requestedPercent: true },
-    });
-    const max = approved._max.requestedPercent;
-    return max && max.greaterThan(SELLER_GLOBAL_DISCOUNT_LIMIT) ? max : SELLER_GLOBAL_DISCOUNT_LIMIT;
-  }
-
-  // Validates the global discount of a save: 0, or 0.1–100 %; SALES only up
-  // to its limit for this quote.
-  private async globalDiscount(tx: Tx, quoteId: string | null, value: string | undefined, user: SafeUser) {
+  // Validates the global discount of a save: 0, or 0.1–100 %. Whether this
+  // user may apply it is decided with the lines (it depends on their base).
+  private globalDiscount(value: string | undefined) {
     const percent = dec(value ?? '0');
     if (percent.isZero()) return percent;
     if (percent.lessThan(GLOBAL_DISCOUNT_MIN) || percent.greaterThan(100)) {
       throw new BadRequestException('El descuento global va de 0,1 % a 100 % (0 = sin descuento global)');
     }
-    if (user.role === 'ADMIN') return percent;
-    const limit = await this.sellerLimit(tx, quoteId);
-    if (percent.greaterThan(limit)) {
+    return percent;
+  }
+
+  // A global discount above the seller's 3 % at this base. ADMIN authorises
+  // it by saving it (returns the authorisation to record); SALES keeps one an
+  // administrator authorised while neither the percentage nor the base grows.
+  private async authoriseGlobal(tx: Tx, percent: Decimal, base: Decimal, approval: (GlobalApproval & { globalDiscountApprovedById: string | null }) | null, user: SafeUser) {
+    if (!globalNeedsApproval(percent) || globalApprovalCovers(approval, percent, base)) return null;
+    if (user.role === 'ADMIN') {
+      return { globalDiscountApprovedPercent: percent, globalDiscountApprovedBase: base, globalDiscountApprovedById: user.id, globalDiscountApprovedAt: new Date() };
+    }
+    const approved = approval?.globalDiscountApprovedPercent;
+    if (approved && approval.globalDiscountApprovedBase && approval.globalDiscountApprovedById && !percent.greaterThan(approved)) {
+      const approver = await tx.user.findUnique({ where: { id: approval.globalDiscountApprovedById }, select: { name: true } });
       throw new ForbiddenException(
-        `Puedes aplicar hasta ${percentText(limit)} % de descuento global. Para ${percentText(percent)} % envía una solicitud de autorización a un administrador.`,
+        `${approver?.name ?? 'Un administrador'} autorizó ${percentText(approved)} % de descuento global para un valor de materiales de hasta ${moneyText(approval.globalDiscountApprovedBase)} (sin IVA ni descuentos por renglón). Con estos cambios es ${moneyText(base)}: aplica hasta ${percentText(SELLER_GLOBAL_DISCOUNT_LIMIT)} % o envía una nueva solicitud de autorización a un administrador.`,
       );
     }
-    return percent;
+    const limit = sellerGlobalLimit(approval, base);
+    throw new ForbiddenException(
+      `Puedes aplicar hasta ${percentText(limit)} % de descuento global. Para ${percentText(percent)} % envía una solicitud de autorización a un administrador.`,
+    );
   }
 
   // Locks the quote row; SALES only reaches its own quotes (404 otherwise).
@@ -509,7 +536,7 @@ export class SalesService {
           createdById: user.id,
         },
       });
-      await this.writeQuoteLines(tx, quote.id, dto.lines, await this.globalDiscount(tx, null, dto.globalDiscountPercent, user), user, []);
+      await this.writeQuoteLines(tx, quote.id, dto.lines, this.globalDiscount(dto.globalDiscountPercent), user, [], null);
       return quote.id;
     });
     return this.getQuote(id, user);
@@ -521,10 +548,14 @@ export class SalesService {
     await this.prisma.$transaction(async (tx) => {
       const locked = await this.lockQuote(tx, id, user);
       if (locked.status !== 'DRAFT') throw new ConflictException('Solo se puede modificar una cotización en borrador');
-      const globalDiscount = await this.globalDiscount(tx, id, dto.globalDiscountPercent, user);
+      const globalDiscount = this.globalDiscount(dto.globalDiscountPercent);
       const customer = await this.requireCustomer(tx, dto.customerId);
-      // Authorised manual prices survive only on lines that did not change.
+      // Authorised manual prices and discounts survive only on lines that did not change.
       const previous = await tx.quoteLine.findMany({ where: { quoteId: id }, orderBy: { lineNo: 'asc' } });
+      const approval = await tx.quote.findUniqueOrThrow({
+        where: { id },
+        select: { globalDiscountApprovedPercent: true, globalDiscountApprovedBase: true, globalDiscountApprovedById: true },
+      });
       await tx.quoteLine.deleteMany({ where: { quoteId: id } });
       await tx.quote.update({
         where: { id },
@@ -538,7 +569,7 @@ export class SalesService {
           ...saleOf(dto),
         },
       });
-      const lost = await this.writeQuoteLines(tx, id, dto.lines, globalDiscount, user, previous);
+      const lost = await this.writeQuoteLines(tx, id, dto.lines, globalDiscount, user, previous, approval);
       if (lost.length > 0) {
         await audit(tx, {
           entity: 'Quote',
@@ -586,8 +617,19 @@ export class SalesService {
 
   // Writes the lines with their amounts. A manual price is authorised when
   // ADMIN saves it, or when it is unchanged from an authorised line of
-  // `previous`; returns the authorised manual lines that lost it.
-  private async writeQuoteLines(tx: Tx, quoteId: string, lines: QuoteLineDto[], globalDiscountPercent: Decimal, user: SafeUser, previous: QuoteLine[]) {
+  // `previous`; returns the authorised manual lines that lost it. Discounts
+  // above the seller's 3 % (per line on the enabled price, and global) are
+  // authorised the same way, bound to what was authorised (`approval`: the
+  // quote's global authorisation).
+  private async writeQuoteLines(
+    tx: Tx,
+    quoteId: string,
+    lines: QuoteLineDto[],
+    globalDiscountPercent: Decimal,
+    user: SafeUser,
+    previous: QuoteLine[],
+    approval: (GlobalApproval & { globalDiscountApprovedById: string | null }) | null,
+  ) {
     const rows: Omit<Prisma.QuoteLineUncheckedCreateInput, keyof LineAmounts>[] = [];
     const bases: (LineAmounts & { taxRatePercent: Decimal })[] = [];
     // Authorised manual lines that may be kept, by what was authorised.
@@ -598,6 +640,10 @@ export class SalesService {
       authorised.set(key, [...(authorised.get(key) ?? []), line]);
     }
     const appliedByAdmin: number[] = [];
+    // Discounts an administrator authorised on lines with the enabled price.
+    const discountPool = new LineDiscountPool(previous);
+    const discountsByAdmin: number[] = [];
+    const now = new Date();
     for (const [index, line] of lines.entries()) {
       const reference = await tx.reference.findUnique({ where: { id: line.referenceId }, include: withFamilyKind });
       if (!reference?.active) throw new BadRequestException(`Renglón ${index + 1}: la referencia no existe o está inactiva`);
@@ -618,20 +664,26 @@ export class SalesService {
         throw new BadRequestException(`Renglón ${index + 1}: los porcentajes no pueden superar 100`);
       }
       // A seller gives up to 3 % per line. More only on a manual-price line
-      // (the administrator authorises it with its discount) or when the line
-      // keeps, unchanged, a discount saved before (e.g. by an administrator).
-      if (user.role !== 'ADMIN' && line.manualUnitPrice === undefined && discountPercent.greaterThan(SELLER_LINE_DISCOUNT_LIMIT)) {
-        const kept = previous.some(
-          (saved) =>
-            saved.referenceId === line.referenceId &&
-            saved.finishId === line.finishId &&
-            saved.origin === line.origin &&
-            (saved.supplierId ?? null) === (line.supplierId ?? null) &&
-            dec(saved.discountPercent).equals(discountPercent),
-        );
-        if (!kept) {
+      // (the administrator authorises the price with its discount) or with a
+      // discount an administrator authorised on the enabled price: saving it
+      // as ADMIN authorises it, and a seller keeps it for the same material
+      // and discount with no more profiles. A discount saved without that
+      // authorisation (a manual price not authorised, a rejected request,
+      // older data) never counts as authorised.
+      let discountApproval: LineDiscountApproval | null = null;
+      if (line.manualUnitPrice === undefined && lineNeedsApproval(discountPercent)) {
+        const material = { referenceId: line.referenceId, finishId: line.finishId, origin: line.origin, supplierId: line.supplierId ?? null };
+        discountApproval = discountPool.take({ ...material, quantity: line.quantity }, discountPercent);
+        if (!discountApproval && user.role === 'ADMIN') {
+          discountApproval = { discountApprovedById: user.id, discountApprovedAt: now };
+          discountsByAdmin.push(index + 1);
+        }
+        if (!discountApproval) {
+          const upTo = discountPool.largest(material, discountPercent);
           throw new BadRequestException(
-            `Renglón ${index + 1}: puedes dar hasta ${SELLER_LINE_DISCOUNT_LIMIT.toString()} % de descuento por renglón. Para más, usa precio manual (lo autoriza un administrador) o pide un descuento global.`,
+            upTo === null
+              ? `Renglón ${index + 1}: puedes dar hasta ${SELLER_LINE_DISCOUNT_LIMIT.toString()} % de descuento por renglón. Para más, usa precio manual (lo autoriza un administrador) o pide un descuento global.`
+              : `Renglón ${index + 1}: un administrador autorizó ${percentText(discountPercent)} % de descuento para hasta ${upTo} perfiles de este material. Para ${line.quantity} perfiles deja máximo ${SELLER_LINE_DISCOUNT_LIMIT.toString()} %, usa precio manual (lo autoriza un administrador) o pide un descuento global.`,
           );
         }
       }
@@ -711,6 +763,8 @@ export class SalesService {
         ...identity,
         ...pricing,
         discountPercent,
+        discountApprovedById: discountApproval?.discountApprovedById ?? null,
+        discountApprovedAt: discountApproval?.discountApprovedAt ?? null,
         taxRatePercent,
         referenceCode: reference.code,
         referenceDescription: reference.description,
@@ -720,12 +774,30 @@ export class SalesService {
       });
     }
     // The global discount needs every line: it is split over them by base.
+    const base = bases.reduce((total, line) => total.plus(line.lineSubtotal).minus(line.discountAmount), ZERO);
+    const globalApproval = await this.authoriseGlobal(tx, globalDiscountPercent, base, approval, user);
     const amounts = withGlobalDiscount(bases, globalDiscountPercent);
     for (const [index, row] of rows.entries()) await tx.quoteLine.create({ data: { ...row, ...amounts[index] } });
-    await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts, await this.servicesOf(tx, quoteId)), globalDiscountPercent } });
+    await tx.quote.update({
+      where: { id: quoteId },
+      data: { ...documentTotals(amounts, await this.servicesOf(tx, quoteId)), globalDiscountPercent, ...globalApproval },
+    });
     if (appliedByAdmin.length > 0) {
       const applied = await tx.quoteLine.findMany({ where: { quoteId, lineNo: { in: appliedByAdmin } }, orderBy: { lineNo: 'asc' } });
       await audit(tx, { entity: 'Quote', entityId: quoteId, action: 'MANUAL_PRICE_APPLIED', userId: user.id, data: { lines: applied.map(describeManual) } });
+    }
+    if (discountsByAdmin.length > 0) {
+      const applied = await tx.quoteLine.findMany({ where: { quoteId, lineNo: { in: discountsByAdmin } }, orderBy: { lineNo: 'asc' } });
+      await audit(tx, { entity: 'Quote', entityId: quoteId, action: 'LINE_DISCOUNT_AUTHORISED', userId: user.id, data: { lines: applied.map(describeDiscount) } });
+    }
+    if (globalApproval) {
+      await audit(tx, {
+        entity: 'Quote',
+        entityId: quoteId,
+        action: 'GLOBAL_DISCOUNT_AUTHORISED',
+        userId: user.id,
+        data: { percent: globalDiscountPercent.toString(), base: base.toFixed(2) },
+      });
     }
     return [...authorised.values()].flat();
   }
@@ -758,6 +830,32 @@ export class SalesService {
       await tx.quoteLine.update({ where: { id: line.id }, data: { globalDiscountAmount, taxAmount, lineTotal } });
     }
     await tx.quote.update({ where: { id: quoteId }, data: { ...documentTotals(amounts, await this.servicesOf(tx, quoteId)), globalDiscountPercent } });
+  }
+
+  // After an administrator sets the final manual prices (the base may grow
+  // with a corrected price), an authorised global discount still applied
+  // follows the new base: that administrator authorises it, in the audit trail.
+  private async followGlobalApproval(tx: Tx, quoteId: string, user: SafeUser) {
+    const quote = await tx.quote.findUniqueOrThrow({
+      where: { id: quoteId },
+      select: { subtotal: true, discountTotal: true, globalDiscountPercent: true, globalDiscountApprovedPercent: true, globalDiscountApprovedBase: true },
+    });
+    const base = globalBase(quote);
+    const approved = quote.globalDiscountApprovedPercent;
+    if (!globalNeedsApproval(quote.globalDiscountPercent) || !approved || !quote.globalDiscountApprovedBase) return;
+    if (quote.globalDiscountPercent.greaterThan(approved) || !base.greaterThan(quote.globalDiscountApprovedBase)) return;
+    await tx.quote.update({
+      where: { id: quoteId },
+      data: { globalDiscountApprovedBase: base, globalDiscountApprovedById: user.id, globalDiscountApprovedAt: new Date() },
+    });
+    await audit(tx, {
+      entity: 'Quote',
+      entityId: quoteId,
+      action: 'GLOBAL_DISCOUNT_AUTHORISED',
+      userId: user.id,
+      reason: 'El administrador autorizó los precios manuales con este descuento global',
+      data: { percent: quote.globalDiscountPercent.toString(), base: base.toFixed(2), previousBase: quote.globalDiscountApprovedBase.toFixed(2) },
+    });
   }
 
   // Assembly and installation saved in the quote (added to its total).
@@ -831,7 +929,11 @@ export class SalesService {
           throw new ConflictException('Esta cotización ya tiene una solicitud de descuento pendiente; cancélala para enviar otra');
         }
         if (percent.greaterThan(100)) throw new BadRequestException('El descuento global no puede superar 100 %');
-        const limit = await this.sellerLimit(tx, quoteId);
+        const saved = await tx.quote.findUniqueOrThrow({
+          where: { id: quoteId },
+          select: { subtotal: true, discountTotal: true, globalDiscountApprovedPercent: true, globalDiscountApprovedBase: true },
+        });
+        const limit = sellerGlobalLimit(saved, globalBase(saved));
         if (!percent.greaterThan(limit)) {
           throw new BadRequestException(`Hasta ${percentText(limit)} % aplicas el descuento global tú mismo; la solicitud es para un descuento mayor`);
         }
@@ -886,7 +988,20 @@ export class SalesService {
       if (request.status !== 'PENDING') throw new ConflictException(`La solicitud ya está ${DISCOUNT_STATUS[request.status]}`);
       if (locked.status !== 'DRAFT') throw new ConflictException('La cotización ya no está vigente');
       await this.closeRequest(tx, request, decision, decision === 'REJECTED' ? resolution || null : null, user);
-      if (decision === 'APPROVED') await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent!);
+      if (decision === 'APPROVED') {
+        await this.reapplyGlobalDiscount(tx, quoteId, request.requestedPercent!);
+        // The authorisation covers this percentage at the current base.
+        const saved = await tx.quote.findUniqueOrThrow({ where: { id: quoteId }, select: { subtotal: true, discountTotal: true } });
+        await tx.quote.update({
+          where: { id: quoteId },
+          data: {
+            globalDiscountApprovedPercent: request.requestedPercent,
+            globalDiscountApprovedBase: globalBase(saved),
+            globalDiscountApprovedById: user.id,
+            globalDiscountApprovedAt: new Date(),
+          },
+        });
+      }
       const kind = decision === 'APPROVED' ? 'discount-approved' : 'discount-rejected';
       await enqueue(tx, [{ userId: request.requestedById, kind, dedupeKey: `${kind}:${request.id}` }]);
     });
@@ -1079,6 +1194,7 @@ export class SalesService {
           });
         }
         await this.recomputeQuote(tx, quoteId);
+        await this.followGlobalApproval(tx, quoteId, user);
         const approved = details.lines.map((item) => ({
           ...item,
           approvedUnitPrice: (corrections.get(item.lineNo) ?? dec(item.proposedUnitPrice)).toFixed(2),
@@ -1096,6 +1212,64 @@ export class SalesService {
       await enqueue(tx, [{ userId: request.requestedById, kind, dedupeKey: `${kind}:${request.id}` }]);
     });
     return this.getQuote(quoteId, user);
+  }
+
+  // Before issuing the order, the discounts above the seller's 3 % are
+  // checked again against their authorisation (per line on the enabled
+  // price, and global at the current base). SALES cannot convert without it;
+  // an administrator converting authorises them (recorded and audited).
+  // Returns the lines and the global authorisation the order copies.
+  private async authorisedDiscounts(tx: Tx, quote: Quote & { lines: QuoteLine[] }, user: SafeUser) {
+    const base = globalBase(quote);
+    const missing = quote.lines.filter((line) => line.pricingMethod !== 'MANUAL' && lineNeedsApproval(line.discountPercent) && !line.discountApprovedById);
+    const globalMissing = globalNeedsApproval(quote.globalDiscountPercent) && !globalApprovalCovers(quote, quote.globalDiscountPercent, base);
+    if (user.role !== 'ADMIN') {
+      if (missing.length > 0) {
+        const which = missing.length === 1 ? `El renglón ${missing[0].lineNo} tiene` : `Los renglones ${missing.map((line) => line.lineNo).join(', ')} tienen`;
+        throw new ConflictException(
+          `${which} más de ${SELLER_LINE_DISCOUNT_LIMIT.toString()} % de descuento sin autorización de un administrador: déjalo en máximo ${SELLER_LINE_DISCOUNT_LIMIT.toString()} % o usa precio manual y pide la autorización antes de convertir`,
+        );
+      }
+      if (globalMissing) {
+        throw new ConflictException(
+          `El descuento global de ${percentText(quote.globalDiscountPercent)} % no está autorizado para el valor actual de la cotización: déjalo en máximo ${percentText(SELLER_GLOBAL_DISCOUNT_LIMIT)} % o pide la autorización a un administrador antes de convertir`,
+        );
+      }
+    }
+    const now = new Date();
+    let lines = quote.lines;
+    if (missing.length > 0) {
+      const ids = missing.map((line) => line.id);
+      await tx.quoteLine.updateMany({ where: { id: { in: ids } }, data: { discountApprovedById: user.id, discountApprovedAt: now } });
+      lines = lines.map((line) => (ids.includes(line.id) ? { ...line, discountApprovedById: user.id, discountApprovedAt: now } : line));
+      await audit(tx, {
+        entity: 'Quote',
+        entityId: quote.id,
+        action: 'LINE_DISCOUNT_AUTHORISED',
+        userId: user.id,
+        reason: 'Autorizado al convertir la cotización en orden',
+        data: { lines: missing.map(describeDiscount) },
+      });
+    }
+    let approval = { globalDiscountApprovedById: quote.globalDiscountApprovedById, globalDiscountApprovedAt: quote.globalDiscountApprovedAt };
+    if (globalMissing) {
+      approval = { globalDiscountApprovedById: user.id, globalDiscountApprovedAt: now };
+      await tx.quote.update({
+        where: { id: quote.id },
+        data: { globalDiscountApprovedPercent: quote.globalDiscountPercent, globalDiscountApprovedBase: base, ...approval },
+      });
+      await audit(tx, {
+        entity: 'Quote',
+        entityId: quote.id,
+        action: 'GLOBAL_DISCOUNT_AUTHORISED',
+        userId: user.id,
+        reason: 'Autorizado al convertir la cotización en orden',
+        data: { percent: quote.globalDiscountPercent.toString(), base: base.toFixed(2) },
+      });
+    }
+    // The order records the authorisation only of a discount that needs it.
+    const globalApproval = globalNeedsApproval(quote.globalDiscountPercent) ? approval : { globalDiscountApprovedById: null, globalDiscountApprovedAt: null };
+    return { lines, globalApproval };
   }
 
   // One quote → one order. Idempotent: the same operationKey (double click,
@@ -1132,6 +1306,7 @@ export class SalesService {
         if (quote.lines.some((line) => line.pricingMethod === 'MANUAL' && !line.manualApprovedById)) {
           throw new ConflictException('La cotización tiene precios manuales sin autorizar: envía la solicitud a un administrador antes de convertir');
         }
+        const { lines, globalApproval } = await this.authorisedDiscounts(tx, quote, user);
         // The payment method is agreed when the customer buys: sent with the
         // conversion, or the one saved in the quote. It stays in the quote too.
         const paymentMethod = dto.paymentMethod ?? quote.paymentMethod;
@@ -1170,6 +1345,7 @@ export class SalesService {
             discountTotal: quote.discountTotal,
             globalDiscountPercent: quote.globalDiscountPercent,
             globalDiscountAmount: quote.globalDiscountAmount,
+            ...globalApproval,
             taxTotal: quote.taxTotal,
             // Services travel with the order; they are not lines, so they
             // are never reserved nor dispatched.
@@ -1188,7 +1364,7 @@ export class SalesService {
             createdById: quote.createdById,
             convertedById: user.id,
             lines: {
-              create: quote.lines.map((line) => ({
+              create: lines.map((line) => ({
                 lineNo: line.lineNo,
                 referenceId: line.referenceId,
                 finishId: line.finishId,
@@ -1212,6 +1388,8 @@ export class SalesService {
                 manualPrice: line.pricingMethod === 'MANUAL',
                 priceReason: line.pricingMethod === 'MANUAL' ? line.priceReason : null,
                 manualApprovedById: line.pricingMethod === 'MANUAL' ? line.manualApprovedById : null,
+                discountApprovedById: line.discountApprovedById,
+                discountApprovedAt: line.discountApprovedAt,
               })),
             },
           },

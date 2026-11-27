@@ -116,6 +116,23 @@ mostrador de Accesorios).
 - **Migración:** `20261125120000_sales_returns`, todavía no desplegada.
 - **Detalle, decisiones por confirmar y límites:** `docs/devoluciones.md`.
 
+### Hecho en local el 27/11/2026: auditoría QA, autorización de descuentos (SEC-01)
+
+- **Qué hace:** todo descuento de más de 3 % registra qué administrador lo
+  autorizó, se conserva solo para lo que se autorizó, se revisa otra vez al
+  convertir y la base de datos rechaza crear una orden sin autorización.
+- **Migración:** `20261127140000_discount_authorization`, todavía no
+  desplegada.
+- **Antes de desplegar:** correr las dos consultas de solo lectura de
+  `docs/auditoria-qa-2026-11-27.md`. Sirven para contar los borradores que
+  necesitarán un administrador y para revisar si la falla se usó.
+- **Pendientes del informe:**
+  - edición simultánea;
+  - vigencia con día inexistente;
+  - doble sondeo de avisos.
+- **Decisión del usuario:** no tocar los archivos grandes ni las observaciones
+  de escalabilidad sin medir.
+
 ### Hecho en local el 27/11/2026: ingreso por usuario y cédula como clave inicial
 
 - **Qué hace:**

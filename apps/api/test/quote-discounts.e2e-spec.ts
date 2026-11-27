@@ -338,7 +338,7 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
     for (const outcome of outcomes) expect(['200/200:5', '200/409:none']).toContain(outcome);
   });
 
-  it('line discount: SALES up to 3 % alone; more only with a manual price or kept unchanged; ADMIN any', async () => {
+  it('line discount: SALES up to 3 % alone; more only with a manual price or an administrator authorisation; ADMIN any', async () => {
     const withLine = (discountPercent: string, extra: object = {}) => ({
       ...body(),
       lines: [{ referenceId: ids.ref, finishId: ids.finishA, origin: 'NATIONAL', quantity: 2, discountPercent, taxRatePercent: '19', ...extra }],
@@ -354,10 +354,11 @@ describe('Global discount of quotes and its approval requests (e2e)', () => {
       .expect(201);
     expect(manual.body.lines[0]).toMatchObject({ discountPercent: '10', manualPrice: true });
     await http().post('/quotes').set(as('ADMIN')).send(withLine('10')).expect(201);
-    // A line saved earlier with more (older data) can be kept unchanged, not raised.
+    // A line saved earlier with more and nobody recorded as authorising it
+    // (older data) is not kept by the seller (QA SEC-01).
     const old = (await http().post('/quotes').set(as('SALES')).send(withLine('3')).expect(201)).body as QuoteBody & { lines: { id: string }[] };
     await prisma.quoteLine.update({ where: { id: old.lines[0].id }, data: { discountPercent: '10' } });
-    await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('10')).expect(200);
+    expect((await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('10')).expect(400)).body.message).toMatch(/hasta 3 % de descuento por renglón/);
     await http().patch(`/quotes/${old.id}`).set(as('SALES')).send(withLine('12')).expect(400);
   });
 

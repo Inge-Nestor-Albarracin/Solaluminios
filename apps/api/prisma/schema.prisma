@@ -256,6 +256,10 @@ model User {
   discountsToApprove        QuoteDiscountRequest[]   @relation("DiscountApprover")
   quoteLinePricesApproved   QuoteLine[]              @relation("QuoteLinePriceApprover")
   orderLinePricesApproved   SalesOrderLine[]         @relation("OrderLinePriceApprover")
+  quoteLineDiscountsApproved  QuoteLine[]            @relation("QuoteLineDiscountApprover")
+  orderLineDiscountsApproved  SalesOrderLine[]       @relation("OrderLineDiscountApprover")
+  quoteGlobalDiscountsApproved Quote[]               @relation("QuoteGlobalDiscountApprover")
+  orderGlobalDiscountsApproved SalesOrder[]          @relation("OrderGlobalDiscountApprover")
   ordersCreated             SalesOrder[]             @relation("OrderCreator")
   ordersConverted           SalesOrder[]             @relation("OrderConverter")
   orderPaymentStatuses      SalesOrder[]             @relation("OrderPaymentStatus")
@@ -923,6 +927,14 @@ model Quote {
   // approved QuoteDiscountRequest.
   globalDiscountPercent Decimal        @default(0) @db.Decimal(9, 4)
   globalDiscountAmount  Decimal        @default(0) @db.Decimal(18, 2)
+  // Authorisation of a global discount above the seller's 3 %: who gave it
+  // (saving as ADMIN or approving a request), up to which percentage and
+  // for which base (subtotal − line discounts). SALES keeps it while the
+  // base does not grow. The four together or none (CHECK).
+  globalDiscountApprovedPercent Decimal?   @db.Decimal(9, 4)
+  globalDiscountApprovedBase    Decimal?   @db.Decimal(18, 2)
+  globalDiscountApprovedById    String?
+  globalDiscountApprovedAt      DateTime?  @db.Timestamptz(3)
   taxTotal              Decimal        @default(0) @db.Decimal(18, 2)
   // «Detal» (RETAIL) or «Ventanería» (WINDOWS). Ventanería may add the
   // assembly and installation of the window: amounts typed by the seller,
@@ -939,6 +951,7 @@ model Quote {
 
   customer         Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
   createdBy        User                   @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  globalDiscountApprovedBy User?          @relation("QuoteGlobalDiscountApprover", fields: [globalDiscountApprovedById], references: [id], onDelete: Restrict)
   lines            QuoteLine[]
   order            SalesOrder?
   discountRequests QuoteDiscountRequest[]
@@ -1029,6 +1042,12 @@ model QuoteLine {
   manualApprovedAt     DateTime?      @db.Timestamptz(3)
   unitPrice            Decimal        @db.Decimal(18, 2)
   discountPercent      Decimal        @default(0) @db.Decimal(9, 4)
+  // Enabled price with a discount above the seller's 3 %: the administrator
+  // who authorised it (by saving it). SALES keeps it for the same material
+  // and discount with no more profiles (null = not authorised; a manual
+  // price carries its discount in manualApprovedById).
+  discountApprovedById String?
+  discountApprovedAt   DateTime?      @db.Timestamptz(3)
   taxRatePercent       Decimal        @db.Decimal(9, 4)
   lineSubtotal         Decimal        @db.Decimal(18, 2)
   discountAmount       Decimal        @db.Decimal(18, 2)
@@ -1052,6 +1071,7 @@ model QuoteLine {
   supplier         Supplier?  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   salePrice        SalePrice? @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
   manualApprovedBy User?      @relation("QuoteLinePriceApprover", fields: [manualApprovedById], references: [id], onDelete: Restrict)
+  discountApprovedBy User?    @relation("QuoteLineDiscountApprover", fields: [discountApprovedById], references: [id], onDelete: Restrict)
 
   @@unique([quoteId, lineNo])
   @@map("quote_lines")
@@ -1086,6 +1106,10 @@ model SalesOrder {
   // Copied from the quote (see Quote).
   globalDiscountPercent Decimal          @default(0) @db.Decimal(9, 4)
   globalDiscountAmount  Decimal          @default(0) @db.Decimal(18, 2)
+  // Who authorised a global discount above 3 % (copied from the quote;
+  // required on insert by a trigger; null on older orders).
+  globalDiscountApprovedById String?
+  globalDiscountApprovedAt   DateTime?    @db.Timestamptz(3)
   taxTotal              Decimal          @db.Decimal(18, 2)
   // Copied from the quote (see Quote): services are not lines, so they are
   // never reserved nor dispatched.
@@ -1128,6 +1152,7 @@ model SalesOrder {
   inventoryLocation InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: Restrict)
   createdBy         User               @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
   convertedBy       User?              @relation("OrderConverter", fields: [convertedById], references: [id], onDelete: Restrict)
+  globalDiscountApprovedBy User?       @relation("OrderGlobalDiscountApprover", fields: [globalDiscountApprovedById], references: [id], onDelete: Restrict)
   paymentStatusBy   User?              @relation("OrderPaymentStatus", fields: [paymentStatusById], references: [id], onDelete: Restrict)
   payments          SalesOrderPayment[]
   returns           SalesReturn[]
@@ -1170,6 +1195,10 @@ model SalesOrderLine {
   manualPrice          Boolean        @default(false)
   priceReason          String?
   manualApprovedById   String?
+  // Copied from the quote line: who authorised a discount above 3 % on the
+  // enabled price (required on insert by a trigger; null on older orders).
+  discountApprovedById String?
+  discountApprovedAt   DateTime?      @db.Timestamptz(3)
 
   salesOrder       SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
   reference        Reference          @relation(fields: [referenceId], references: [id], onDelete: Restrict)
@@ -1177,6 +1206,7 @@ model SalesOrderLine {
   supplier         Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   salePrice        SalePrice?         @relation(fields: [salePriceId], references: [id], onDelete: Restrict)
   manualApprovedBy User?              @relation("OrderLinePriceApprover", fields: [manualApprovedById], references: [id], onDelete: Restrict)
+  discountApprovedBy User?            @relation("OrderLineDiscountApprover", fields: [discountApprovedById], references: [id], onDelete: Restrict)
   reservations     StockReservation[]
   dispatchLines    DispatchLine[]
   returnLines      SalesReturnLine[]
