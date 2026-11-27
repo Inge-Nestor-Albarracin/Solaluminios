@@ -210,6 +210,56 @@ describe('Authorisation of discounts above the seller limit (e2e)', () => {
     expect((await orderOf(plain.id)).lines[0]).toMatchObject({ discountApprovedById: null });
   });
 
+  // QA SEC-02: when an administrator approves manual prices and the base
+  // grows, the new base is authorised only with the percentage applied (what
+  // that administrator saw), never with a higher one approved before.
+  const withManual = (unitPrice: string) => [line({ quantity: 10 }), line({ quantity: 1, manualUnitPrice: unitPrice, priceReason: 'Precio especial acordado con el cliente' })];
+  const globalThenManual = async (applied: string) => {
+    const q = (await create('SALES', withManual('5000')).expect(201)).body as QuoteBody;
+    await http().post(`/quotes/${q.id}/price-requests`).set(as('SALES')).send({ approverId: U.ADMIN }).expect(200);
+    await http().post(`/quotes/${q.id}/discount-requests`).set(as('SALES')).send({ percent: '10', approverId: U.ADMIN }).expect(200);
+    const global = await prisma.quoteDiscountRequest.findFirstOrThrow({ where: { quoteId: q.id, kind: 'GLOBAL_DISCOUNT', status: 'PENDING' } });
+    const approved = (await http().post(`/quotes/${q.id}/discount-requests/${global.id}/approve`).set(as('ADMIN')).send({}).expect(200)).body as QuoteBody;
+    if (applied !== '10') await save(q.id, 'SALES', withManual('5000'), { globalDiscountPercent: applied }).expect(200);
+    const price = await prisma.quoteDiscountRequest.findFirstOrThrow({ where: { quoteId: q.id, kind: 'MANUAL_PRICE', status: 'PENDING' } });
+    // The administrator corrects the manual price upwards: the base grows.
+    const after = (await http().post(`/quotes/${q.id}/price-requests/${price.id}/approve`).set(as('ADMIN')).send({ lines: [{ lineNo: 2, unitPrice: '500000' }] }).expect(200))
+      .body as QuoteBody;
+    return { q, approved, after };
+  };
+
+  it('SEC-02: a larger base is authorised with the percentage applied, not with a higher one approved before', async () => {
+    const { q, approved, after } = await globalThenManual('5');
+    const base = new Decimal(after.subtotal).minus(after.discountTotal);
+    expect(base.greaterThan(approved.globalDiscountApprovedBase!)).toBe(true);
+    // Percentage and base move together, by the administrator who approved the prices.
+    expect(after).toMatchObject({ globalDiscountPercent: '5', globalDiscountApprovedPercent: '5', globalDiscountApprovedById: U.ADMIN });
+    expect(new Decimal(after.globalDiscountApprovedBase!).equals(base)).toBe(true);
+    // The audit trail says the same as the control.
+    const event = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: q.id, action: 'GLOBAL_DISCOUNT_AUTHORISED', reason: { contains: 'precios manuales' } },
+    });
+    expect(event.data).toMatchObject({ percent: '5', base: base.toFixed(2), previousPercent: '10' });
+    // The old 10 % no longer applies: refused at the new base, and at the old one too.
+    expect((await save(q.id, 'SALES', withManual('500000'), { globalDiscountPercent: '10' }).expect(403)).body.message).toMatch(/Puedes aplicar hasta 5 %/);
+    // The 5 % authorised converts, and the order carries exactly it.
+    await save(q.id, 'SALES', withManual('500000'), { globalDiscountPercent: '5' }).expect(200);
+    await convert(q.id).expect(200);
+    expect(await orderOf(q.id)).toMatchObject({ globalDiscountApprovedById: U.ADMIN });
+    expect((await orderOf(q.id)).globalDiscountPercent.toString()).toBe('5');
+  });
+
+  it('SEC-02: the percentage approved and applied follows a larger base the administrator set, up to the order', async () => {
+    const { q, after } = await globalThenManual('10');
+    const base = new Decimal(after.subtotal).minus(after.discountTotal);
+    expect(after).toMatchObject({ globalDiscountPercent: '10', globalDiscountApprovedPercent: '10', globalDiscountApprovedById: U.ADMIN });
+    expect(new Decimal(after.globalDiscountApprovedBase!).equals(base)).toBe(true);
+    await convert(q.id).expect(200);
+    const order = await orderOf(q.id);
+    expect(order.globalDiscountPercent.toString()).toBe('10');
+    expect(order.globalDiscountApprovedById).toBe(U.ADMIN);
+  });
+
   it('the database refuses inserting an order with a discount nobody authorised', async () => {
     const q = (await create('SALES', [line()]).expect(201)).body as QuoteBody;
     await convert(q.id).expect(200);

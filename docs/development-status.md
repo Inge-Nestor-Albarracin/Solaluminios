@@ -4019,6 +4019,37 @@ cambio obligatorio en el primer ingreso. Diseño, protecciones y transición en
 - entregar a QA el commit correctivo;
 - edición simultánea, vigencia con día inexistente y doble sondeo.
 
+
+## Reauditoría QA: SEC-02, descuento global ampliado (27/11/2026)
+
+**Origen:** reauditoría de `nuevo-login` @ `5cd2495`. QA confirmó la corrección
+de SEC-01 y retiró el hallazgo del «margen». Mantuvo el 0 por SEC-02. Detalle
+en `docs/auditoria-qa-2026-11-27.md`.
+
+**Verificación:** reproducido con una prueba temporal, ya borrada.
+- Con 10 % aprobado y 5 % aplicado, al autorizar un precio manual corregido al
+  alza, `followGlobalApproval` ampliaba la base y conservaba el 10 %.
+- La auditoría decía 5 %; el vendedor subió a 10 % y la orden salió con 10 %.
+- Defecto introducido por la corrección de SEC-01.
+
+**Corrección** (`sales.service.ts`, `followGlobalApproval`):
+- al ampliar la base se guarda también el porcentaje aplicado: porcentaje y
+  base son una sola decisión;
+- la auditoría registra `previousPercent` y `previousBase`.
+- Sin migración ni cambios en la web.
+
+**Pruebas:**
+- 2 casos e2e nuevos en `discount-authorization.e2e-spec.ts`: ampliación
+  sin permiso (se rechaza el 10 % y la orden sale con 5 %) y aprobación
+  legítima (10 % hasta la orden).
+- El primero falla con el código de `5cd2495`.
+- API: `build`, `oxlint`, 84/84 unitarias y **285/285 e2e** en 35 archivos.
+
+**Pendiente (decisión del usuario):**
+- tratamiento de las aprobaciones globales trasladadas por la migración;
+- si cambiar origen o proveedor de una orden debe invalidar el descuento;
+- evidencia de pruebas ligada al commit (QA no la pudo correr).
+
 ## Pendiente
 
 1. ~~Familias~~ (hecho). Negocio: cargar familias reales; roles que crean

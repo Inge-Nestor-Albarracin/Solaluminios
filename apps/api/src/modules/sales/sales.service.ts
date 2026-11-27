@@ -835,6 +835,9 @@ export class SalesService {
   // After an administrator sets the final manual prices (the base may grow
   // with a corrected price), an authorised global discount still applied
   // follows the new base: that administrator authorises it, in the audit trail.
+  // Percentage and base are one decision (QA SEC-02): the new base is
+  // authorised only with the percentage applied, which the administrator saw;
+  // a higher percentage approved before for a smaller base is not carried.
   private async followGlobalApproval(tx: Tx, quoteId: string, user: SafeUser) {
     const quote = await tx.quote.findUniqueOrThrow({
       where: { id: quoteId },
@@ -846,7 +849,12 @@ export class SalesService {
     if (quote.globalDiscountPercent.greaterThan(approved) || !base.greaterThan(quote.globalDiscountApprovedBase)) return;
     await tx.quote.update({
       where: { id: quoteId },
-      data: { globalDiscountApprovedBase: base, globalDiscountApprovedById: user.id, globalDiscountApprovedAt: new Date() },
+      data: {
+        globalDiscountApprovedPercent: quote.globalDiscountPercent,
+        globalDiscountApprovedBase: base,
+        globalDiscountApprovedById: user.id,
+        globalDiscountApprovedAt: new Date(),
+      },
     });
     await audit(tx, {
       entity: 'Quote',
@@ -854,7 +862,12 @@ export class SalesService {
       action: 'GLOBAL_DISCOUNT_AUTHORISED',
       userId: user.id,
       reason: 'El administrador autorizó los precios manuales con este descuento global',
-      data: { percent: quote.globalDiscountPercent.toString(), base: base.toFixed(2), previousBase: quote.globalDiscountApprovedBase.toFixed(2) },
+      data: {
+        percent: quote.globalDiscountPercent.toString(),
+        base: base.toFixed(2),
+        previousPercent: approved.toString(),
+        previousBase: quote.globalDiscountApprovedBase.toFixed(2),
+      },
     });
   }
 

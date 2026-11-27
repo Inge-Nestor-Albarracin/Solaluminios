@@ -155,6 +155,50 @@ exacto del servidor.
 
 3. **Desplegar** las migraciones pendientes, incluida esta.
 
+## Reauditoría sobre `nuevo-login` @ `5cd2495`: SEC-02
+
+QA confirmó la corrección por renglón, retiró el hallazgo del «margen» y
+mantuvo el 0 por un caso distinto en el descuento global.
+
+**Qué fallaba:** al autorizar precios manuales con una corrección al alza, la
+base del descuento global crecía. `followGlobalApproval` ampliaba la base
+autorizada y la persona, pero **conservaba el porcentaje anterior**, que podía
+ser mayor que el aplicado. La auditoría registraba el porcentaje aplicado.
+
+**Reproducido en la base de pruebas:**
+1. El administrador aprueba 10 % sobre una base de $23.571,40.
+2. El vendedor baja a 5 %.
+3. El administrador autoriza el precio manual corregido. La base pasa a
+   $518.571,40 y la autorización queda en 10 %, mientras la auditoría dice 5 %.
+4. El vendedor sube a 10 % y convierte: la orden sale con 10 %.
+
+**Corrección:** porcentaje y base son una sola decisión. Al ampliar la base
+se guardan juntos el porcentaje **aplicado** (el que vio el administrador) y la
+nueva base. La auditoría registra los dos y los anteriores
+(`previousPercent`, `previousBase`).
+
+**Pruebas nuevas** en `test/discount-authorization.e2e-spec.ts`:
+- **Ampliación sin permiso:** con 10 % aprobado y 5 % aplicado, la nueva base
+  queda autorizada con 5 %. La auditoría coincide, el 10 % se rechaza (403) y
+  la orden sale con 5 %.
+- **Aprobación legítima:** con 10 % aprobado y aplicado, la nueva base queda
+  con 10 % y la orden lo copia con el administrador que autorizó.
+- La primera prueba **falla con el código de `5cd2495`** y pasa con la
+  corrección.
+
+**Suites después de la corrección:** API 84/84 unitarias y **285/285 e2e**
+(35 archivos), `build` y `oxlint` sin advertencias nuevas. Las pruebas de
+SEC-01 siguen pasando.
+
+**Otros puntos de la reauditoría, sin cambio todavía:**
+- **Aprobaciones trasladadas por la migración:** quedan ligadas a la base
+  actual de la cotización. Antes de desplegar, revisar los borradores con
+  descuento global aprobado. La decisión sobre su tratamiento está pendiente.
+- **Origen o proveedor de una orden en borrador:** cambiarlos conserva el
+  descuento. Es una decisión de negocio.
+- **Evidencia ligada al commit:** QA no pudo correr las pruebas del API y no
+  hay verificaciones publicadas en GitHub.
+
 ## Pendiente para la siguiente calificación
 
 - Edición simultánea: comprobar la versión al guardar y avisar del conflicto.
